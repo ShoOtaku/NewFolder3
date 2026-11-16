@@ -62,15 +62,6 @@ internal partial class FsdEngine
         }
 
         ImGui.Spacing();
-        ImGui.TextDisabled("新地圖會在副本內自動生成。");
-        Map.LiveTerrainCapture.UpdateExportStatus();
-        ImGui.BeginDisabled(Map.LiveTerrainCapture.Exporting);
-        if (ImGui.Button("導出地圖")) Map.LiveTerrainCapture.Export();
-        ImGui.EndDisabled();
-        if (Map.LiveTerrainCapture.ExportStatus.Length > 0)
-            ImGui.TextWrapped(Map.LiveTerrainCapture.ExportStatus);
-
-        ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
         DrawRotationSettings();

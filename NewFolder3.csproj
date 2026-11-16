@@ -26,6 +26,7 @@
     <!-- Public root sources. OfficialBuildProfile.g.cs is optional and ignored by git;
          private manual builds may stage it beside these files. -->
     <Compile Include="*.cs" />
+    <Compile Remove="OfficialBuildProfile.g.cs;*AntiResell*.cs" Condition="'$(PublicTestBuild)' == 'true'" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="shared\DeepDungeon.Fsd\Core\DeepDungeon.Fsd.Core.csproj" />

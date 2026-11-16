@@ -347,8 +347,16 @@ namespace DeepDungeon.Fsd.Dalamud
 							Service.Log.Error($"[FsdEngine] Run-log export failed: {ex}");
 						}
 					}
+					ImGui.SameLine();
+                    Map.LiveTerrainCapture.UpdateExportStatus();
+                    ImGui.BeginDisabled(Map.LiveTerrainCapture.Exporting);
+                    if (ImGui.Button("導出地圖##fsf_export_maps_top")) Map.LiveTerrainCapture.Export();
+                    ImGui.EndDisabled();
 					ImGui.Unindent();
 				}
+
+                if (Map.LiveTerrainCapture.ExportStatus.Length > 0)
+                    ImGui.TextWrapped(Map.LiveTerrainCapture.ExportStatus);
 
 				if (!string.IsNullOrEmpty(_runLogExportNotice))
 				{

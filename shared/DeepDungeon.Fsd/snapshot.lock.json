@@ -440,7 +440,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Companions.cs",
-      "sha256": "dfc8c9cd588c4dafc43a732f31289ce0cbeb5c483e5e083b9a6137dd74012eab"
+      "sha256": "94ae30a78e5ecedf0da3ea7fc1632945c770b6c3b879ee3ccd1586c94976e889"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.cs",
@@ -468,7 +468,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
-      "sha256": "5fde9ba7c077be8eef39475dea3cb94cf9c48673bddb8e9a5a96d81c58a15f1f"
+      "sha256": "810ab8e0942f555efb3869419ccf4de498fabf9a04db944952c0e8a2dea5bcf6"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.DebugStarts.cs",
