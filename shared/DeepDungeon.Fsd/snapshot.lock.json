@@ -468,7 +468,7 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
-      "sha256": "810ab8e0942f555efb3869419ccf4de498fabf9a04db944952c0e8a2dea5bcf6"
+      "sha256": "ce844fcaa990e9ee59dcae63f5821118e1add5f74b85de19bfa7b1df20aca0ba"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.DebugStarts.cs",
@@ -16877,6 +16877,10 @@
     {
       "path": "Native/FFXIVClientStructs.Expansion/GlobalUsings.cs",
       "sha256": "cde3b848a165bfebe0a8ac6a2a8488f5c0f63c189909bbc3a074fc3bc0844303"
+    },
+    {
+      "path": "Native/FFXIVClientStructs.Expansion/packages.lock.json",
+      "sha256": "5cc1f6caad02f19b7b03143c9e0237c4dae8b8a81e27f1c48c0b530a4b30462c"
     },
     {
       "path": "Native/LICENSE",

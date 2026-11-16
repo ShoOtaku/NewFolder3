@@ -376,7 +376,6 @@ namespace DeepDungeon.Fsd.Dalamud
                 DrawFarmingOptions();
 
                     ImGui.Separator();
-                    ImGui.TextUnformatted("自動選中已啟用；請由輸出外掛主動攻擊。");
 
                 // FSD controls moved under scenario selection
 
