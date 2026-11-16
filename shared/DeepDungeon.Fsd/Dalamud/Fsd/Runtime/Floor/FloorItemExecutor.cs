@@ -94,6 +94,10 @@ internal sealed class FloorItemExecutor : IDisposable
                         slotIndex is FloorInitPlanner.StrengthPomanderSlotIndex or FloorInitPlanner.SteelPomanderSlotIndex or FloorInitPlanner.HastePomanderSlotIndex) ||
             !DeepDungeonFloorItemUsePolicy.CanUsePomanders(
                 dd->DeepDungeonBanId) ||
+            !DeepDungeonFloorItemUsePolicy.AllowsNextFloorEffect(
+                slotIndex,
+                !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId,
+                    (byte)(dd->Floor + 1))) ||
             !IsPomanderAvailableForFloorUse(slotIndex))
             return false;
 
@@ -171,9 +175,10 @@ internal sealed class FloorItemExecutor : IDisposable
         FloorItemUsePurpose purpose)
     {
         if (_disposed ||
-            !CanAttemptPomanderUse(allowCombat: purpose == FloorItemUsePurpose.BossSerenity && _ctx?.Duty.IsBossFloor == true) ||
-            !DeepDungeonFloorItemUsePolicy.CanUsePtIncense(
-                dd->DeepDungeonBanId) ||
+            !CanAttemptPomanderUse(allowCombat:
+                purpose == FloorItemUsePurpose.BossSerenity && _ctx.Duty.IsBossFloor ||
+                dd->DeepDungeonId == 2 && _ctx.Duty.CurrentFloorKind == DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Mob) ||
+            !DeepDungeonFloorItemUsePolicy.CanUseStones(dd->DeepDungeonId, dd->DeepDungeonBanId) ||
             GetStoneCountAvailableForFloorUse(stoneId) <= 0)
         {
             return false;
@@ -201,7 +206,7 @@ internal sealed class FloorItemExecutor : IDisposable
             0,
             0);
         Service.Log.Info(
-            $"[FloorPhase] Dispatched PT incense {stoneId} request ({reason}) on floor {dd->Floor}; awaiting confirmation");
+            $"[FloorPhase] Dispatched stone {stoneId} request ({reason}) in dungeon {dd->DeepDungeonId} floor {dd->Floor}; awaiting confirmation");
         RecordReplayEvent("floor-item-use-dispatched", new
         {
             floor = dd->Floor,
@@ -233,7 +238,7 @@ internal sealed class FloorItemExecutor : IDisposable
             } &&
             (_chatWatchers?.SightLogSequence ?? 0) >
             pending.SightLogSequenceBeforeDispatch ||
-            pending.Key is
+            dd->DeepDungeonId == 4 && pending.Key is
             {
                 Kind: FloorItemUseKind.Stone,
                 ItemId: 2

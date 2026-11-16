@@ -1,4 +1,5 @@
 using System.Numerics;
+using DeepDungeon.Fsd.Core;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
@@ -9,6 +10,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 internal sealed class ControlledPtSaveVerificationFlow
 {
     private readonly ControlledPtSurveySession _session;
+    private EntranceWindowCleanup _cleanup = new();
     private RunContext? _context;
     private NavigationHelper? _navigation;
     private DateTime _nextActionAt;
@@ -22,6 +24,7 @@ internal sealed class ControlledPtSaveVerificationFlow
     public void Prepare(RunContext context)
     {
         _context = context;
+        _cleanup = new();
         _navigation = new NavigationHelper(context.Navigator);
         _nextActionAt = DateTime.MinValue;
         _openedMenu = false;
@@ -35,6 +38,8 @@ internal sealed class ControlledPtSaveVerificationFlow
             return true;
         if (DateTime.UtcNow < _nextActionAt)
             return false;
+
+        if (!_cleanup.Ready(context)) return false;
 
         if (DeepDungeonUi.TryGetSelectYesNo(out _))
             return Fail("Controlled PT save verification stopped: an unowned confirmation prompt was open.");
@@ -83,13 +88,13 @@ internal sealed class ControlledPtSaveVerificationFlow
             return false;
         }
 
-        float distance = Vector3.Distance(player.Position, npc.Position);
-        if (distance > NpcInteractionGuard.MaxInteractDistance)
+        float distance = NpcInteractionGuard.InteractionRange.Distance(player.Position, npc.Position);
+        if (!NpcInteractionGuard.InteractionRange.HasArrived(player.Position, npc.Position))
         {
             var state = _navigation?.Navigate(
                 npc.Position,
                 player.Position,
-                NpcInteractionGuard.MaxInteractDistance - 0.4f) ?? NavigationState.Failed;
+                NpcInteractionGuard.InteractionRange) ?? NavigationState.Failed;
             if (state is NavigationState.Failed or NavigationState.StuckGiveUp)
                 return Fail("Controlled PT save verification navigation failed.");
             Delay();
@@ -125,5 +130,5 @@ internal sealed class ControlledPtSaveVerificationFlow
         return true;
     }
 
-    private void Delay() => _nextActionAt = DateTime.UtcNow.AddMilliseconds(350);
+    private void Delay() => _nextActionAt = DateTime.UtcNow.Add(InteractionTiming.GetRetryInterval());
 }

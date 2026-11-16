@@ -7,7 +7,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState;
 
 internal enum DetailedMapRuntimePolicy
 {
-    PalacePalOnly,
+    PalantirOnly,
     DetailedMap
 }
 
@@ -59,7 +59,7 @@ internal sealed class DetailedMapRunSnapshot
     internal string? ReleaseId => Catalog?.ReleaseId;
     internal string Status => Policy == DetailedMapRuntimePolicy.DetailedMap
         ? $"detailed map {Catalog!.ReleaseId}"
-        : "PalacePal only";
+        : "Palantir only";
 
     internal bool TryGetPresentation(
         int layoutIndex,
@@ -129,6 +129,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         DetailedMapHostOptions hostOptions,
         HttpMessageHandler? httpMessageHandler = null)
     {
+        Active = this;
         ArgumentException.ThrowIfNullOrWhiteSpace(pluginConfigDirectory);
         ArgumentNullException.ThrowIfNull(hostOptions);
 
@@ -195,6 +196,11 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         SelectPresentationCatalog(_activeRun, _currentCatalog);
     internal string? ActiveRunReleaseId => _activeRun?.ReleaseId;
     internal DetailedMapRunSnapshot? ActiveRunSnapshot => _activeRun;
+
+    /// <summary>The live instance — the catalog is terrain-level data,
+    /// always current, readable with or without a run. Mid-run release
+    /// swaps are deliberately allowed (daily update cadence).</summary>
+    internal static DetailedMapCatalogManager? Active { get; private set; }
 
     internal static DetailedMapCatalog? SelectPresentationCatalog(
         DetailedMapRunSnapshot? activeRun,
@@ -293,7 +299,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         if (!useDetailedMap || !IsSupportedScenario(scenarioKey))
         {
             snapshot = new DetailedMapRunSnapshot(
-                DetailedMapRuntimePolicy.PalacePalOnly,
+                DetailedMapRuntimePolicy.PalantirOnly,
                 scenarioKey,
                 null);
             _activeRun = snapshot;
@@ -1154,6 +1160,8 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     {
         if (_disposed)
             return;
+        if (Active == this)
+            Active = null;
         _activeRun = null;
         _httpClient?.Dispose();
         _disposed = true;

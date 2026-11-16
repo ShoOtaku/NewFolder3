@@ -10,7 +10,7 @@ internal sealed class ControlledPt21To30Scenario : IScenario
     private readonly ControlledPtSurveySession _session;
     private RunContext? _context;
     private ControlledPtOccupiedEntryFlow? _entry;
-    private PilgrimsTraverseRestExitFlow? _restExit;
+    private DungeonExitController? _restExit;
     private ControlledPtSaveVerificationFlow? _verification;
     private bool _wasInDuty;
     private bool _entryValidated;
@@ -83,12 +83,6 @@ internal sealed class ControlledPt21To30Scenario : IScenario
             if (context.Duty.IsTransitioning || context.Duty.Floor == 0)
                 return;
 
-            // Cleanup is independent of floor automation: it runs on the same stable
-            // update and does not gate item use, but never dispatches addon callbacks
-            // while the game is zoning.
-            DeepDungeonUi.TryCloseAddon("DeepDungeonSaveData");
-            DeepDungeonUi.TryCloseAddon("DeepDungeonMenu");
-
             if (!_entryValidated)
             {
                 _entryValidated = true;
@@ -122,10 +116,10 @@ internal sealed class ControlledPt21To30Scenario : IScenario
             return;
         }
 
-        _restExit ??= new PilgrimsTraverseRestExitFlow(requireValidatedConfirmation: true);
+        _restExit ??= new DungeonExitController(returnToEntrance: true);
         if (!_restExit.IsPrepared)
             _restExit.Prepare(context);
-        if (!_restExit.Update(framework))
+        if (_restExit.Update() != ExitOutcome.Completed)
             return;
 
         _verification ??= new ControlledPtSaveVerificationFlow(_session);

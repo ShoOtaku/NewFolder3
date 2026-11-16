@@ -29,13 +29,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		public readonly INavigator Navigator;
 		public readonly IRunOptionsProvider RunOptions;
 		internal readonly DetailedMapRunSnapshot DetailedMap;
+		/// <summary>Scoped run/floor knowledge — the single owner of hoard
+		/// facts, work completion truth and the observed collection rate.</summary>
+		internal RunKnowledge Knowledge { get; } = new();
 		internal readonly CombatAssistPolicy CombatAssist;
 		internal CombatRecoveryBudget CombatRecoveryBudget = new();
 		internal readonly FsdChestInteraction ChestInteraction;
 		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
-        internal Func<bool, bool>? SetBossMovementOverride;
-        internal Action<bool>? SetBossRotationSuppressed;
         internal Action<string, object>? RecordDiagnostic;
         internal long CombatPreparationSequence { get; private set; }
         private ulong _preparedCombatTarget;
@@ -65,6 +66,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		// Status
 		public string StatusLine = string.Empty;
 		public bool StatusIsError = false;
+		internal bool EntryReadyForDuty = true;
 		public bool DutyCompletionObserved { get; private set; }
 		internal long DutyCompletionSequence { get; private set; }
 		public bool DutyFailureObserved { get; private set; }
@@ -141,7 +143,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 	public void Dispose()
 	{
-		SetBossRotationSuppressed?.Invoke(false);
+		Knowledge.Reset();
 		Cancel();
 		try { (Navigator as IDisposable)?.Dispose(); }
 		catch (Exception ex)

@@ -8,7 +8,7 @@ public enum FloorItemUsePurpose
 {
     Automatic, GoldChestOvercap, SilverChestOvercap, ControlledStrength,
     NaturalReveal, ControlledReveal, NaturalPoisonfruit, NaturalPassageMazeroot,
-    ControlledPoisonfruit, BossSerenity
+    ControlledPoisonfruit, BossSerenity, FloorClear
 }
 
 public readonly record struct FloorItemUseKey(FloorItemUseKind Kind, uint ItemId);

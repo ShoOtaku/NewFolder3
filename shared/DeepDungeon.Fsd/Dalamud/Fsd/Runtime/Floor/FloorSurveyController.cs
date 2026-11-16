@@ -179,7 +179,7 @@ internal sealed class FloorSurveyController : IDisposable
     private HashSet<ControlledTrapWitnessKey> ControlledObservedTrapWitnesses { get; } = [];
     private float ControlledMaximumTrapWitnessDistance { get; set; }
     /// <summary>
-    /// TEMPORARY controlled-survey research only: fixed PalacePal candidate audit universe.
+    /// TEMPORARY controlled-survey research only: fixed Palantir candidate audit universe.
     /// </summary>
     public bool ControlledCandidateObjectAuditArmed { get; private set; }
     public ControlledCandidateAuditPoint[] ControlledCandidateObjectAuditUniverse { get; private set; } = [];
@@ -343,7 +343,7 @@ internal sealed class FloorSurveyController : IDisposable
     }
 
     /// <summary>
-    /// TEMPORARY controlled-survey research only: build a fixed PalacePal candidate audit
+    /// TEMPORARY controlled-survey research only: build a fixed Palantir candidate audit
     /// universe for all reachable rooms once graph/executor exist. Position coincidence only;
     /// does not infer from Sight timing / load distance.
     /// </summary>
@@ -368,7 +368,7 @@ internal sealed class FloorSurveyController : IDisposable
     	{
     		int roomIndex = rooms[roomOffset];
     		IReadOnlyList<Vector3> candidates =
-    			executor.GetPalacePalCandidatesForRoom(dd, roomIndex);
+    			executor.GetPalantirCandidatesForRoom(dd, roomIndex);
     		for (int candidateIndex = 0; candidateIndex < candidates.Count; candidateIndex++)
     		{
     			Vector3 candidate = candidates[candidateIndex];
@@ -601,7 +601,7 @@ internal sealed class FloorSurveyController : IDisposable
 
     	if (!BandedChestLocator.TryFindNearestToPlayer(snapshot, out Vector3? bandedPosition) ||
     		!bandedPosition.HasValue ||
-    		!IsPalacePalCandidatePosition(dd, bandedPosition.Value))
+    		!IsPalantirCandidatePosition(dd, bandedPosition.Value))
     	{
     		return null;
     	}
@@ -610,7 +610,7 @@ internal sealed class FloorSurveyController : IDisposable
     	return bandedPosition.Value;
     }
 
-    private unsafe bool IsPalacePalCandidatePosition(
+    private unsafe bool IsPalantirCandidatePosition(
     	InstanceContentDeepDungeon* dd,
     	Vector3 position)
     {
@@ -623,7 +623,7 @@ internal sealed class FloorSurveyController : IDisposable
     		return false;
 
     	IReadOnlyList<Vector3>? candidates =
-    		_executor?.GetPalacePalCandidatesForRoom(dd, roomIndex);
+    		_executor?.GetPalantirCandidatesForRoom(dd, roomIndex);
     	if (candidates == null)
     		return false;
 
@@ -825,15 +825,15 @@ internal sealed class FloorSurveyController : IDisposable
     		if (hoardRoomIndex < 0)
     			return;
 
-    		IReadOnlyList<Vector3>? palacePalCandidates =
-    			_executor?.GetPalacePalCandidatesForRoom(dd, hoardRoomIndex);
-    		if (palacePalCandidates == null || palacePalCandidates.Count == 0)
+    		IReadOnlyList<Vector3>? palantirCandidates =
+    			_executor?.GetPalantirCandidatesForRoom(dd, hoardRoomIndex);
+    		if (palantirCandidates == null || palantirCandidates.Count == 0)
     			return;
 
-    		var candidates = new RawWorldPosition[palacePalCandidates.Count];
-    		for (int i = 0; i < palacePalCandidates.Count; i++)
+    		var candidates = new RawWorldPosition[palantirCandidates.Count];
+    		for (int i = 0; i < palantirCandidates.Count; i++)
     		{
-    			Vector3 candidate = palacePalCandidates[i];
+    			Vector3 candidate = palantirCandidates[i];
     			candidates[i] = new RawWorldPosition(
     				candidate.X,
     				candidate.Y,
@@ -1207,22 +1207,22 @@ internal sealed class FloorSurveyController : IDisposable
 
     			if (!ControlledCandidateUniverseResolved)
     			{
-    				var palacePalCandidates =
-    					_executor?.GetPalacePalCandidatesForRoom(
+    				var palantirCandidates =
+    					_executor?.GetPalantirCandidatesForRoom(
     						dd,
     						ControlledHoardRoomIndex);
-    				if (palacePalCandidates == null || palacePalCandidates.Count == 0)
+    				if (palantirCandidates == null || palantirCandidates.Count == 0)
     				{
     					CompleteControlledJointSampleIncomplete(
     						dd,
-    						$"Controlled PT floor {dd->Floor} has no PalacePal T/H candidate universe for H room {ControlledHoardRoomIndex}.");
+    						$"Controlled PT floor {dd->Floor} has no Palantir T/H candidate universe for H room {ControlledHoardRoomIndex}.");
     					return;
     				}
 
-    				var candidates = new RawWorldPosition[palacePalCandidates.Count];
-    				for (int i = 0; i < palacePalCandidates.Count; i++)
+    				var candidates = new RawWorldPosition[palantirCandidates.Count];
+    				for (int i = 0; i < palantirCandidates.Count; i++)
     				{
-    					var candidate = palacePalCandidates[i];
+    					var candidate = palantirCandidates[i];
     					candidates[i] = new RawWorldPosition(
     						candidate.X,
     						candidate.Y,
@@ -1319,7 +1319,7 @@ internal sealed class FloorSurveyController : IDisposable
     				CompleteControlledJointSampleIncomplete(
     					dd,
     					trapWitnessAvailable
-    						? $"Controlled PT floor {dd->Floor} T witness radius {safeRadius:F1}m did not cover every PalacePal candidate after reaching H room {ControlledHoardRoomIndex}."
+    						? $"Controlled PT floor {dd->Floor} T witness radius {safeRadius:F1}m did not cover every Palantir candidate after reaching H room {ControlledHoardRoomIndex}."
     						: $"Controlled PT floor {dd->Floor} obtained no T visibility witness after reaching H room {ControlledHoardRoomIndex}.");
     				return;
     			}

@@ -1,5 +1,7 @@
 using System;
 using System.Numerics;
+using DeepDungeon.Fsd.Core;
+using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using DeepDungeon.Fsd.Dalamud.Runtime.Floor;
@@ -38,7 +40,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     if (obj == null)
                         continue;
 
-                    if (!IsPassageBase(obj.BaseId))
+                    if (!IsAvailablePassage(obj))
                         continue;
 
                     float d2;
@@ -86,6 +88,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
             for (int i = 0; i < evidence.PassageActors.Count; i++)
             {
                 var actor = evidence.PassageActors[i];
+                if (!NativePassageAvailability.IsAvailable(actor.BaseId, actor.SharedTimelineState)) continue;
                 float d2 = player == null ? 0f : Vector3.DistanceSquared(player.Position, actor.Position);
                 if (found && d2 >= bestD2)
                     continue;
@@ -190,6 +193,17 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     return true;
             }
             return false;
+        }
+
+        internal static unsafe bool IsAvailablePassage(IGameObject obj)
+        {
+            if (!IsPassageBase(obj.BaseId)) return false;
+            // The removed false beacon keeps its entity, position and targetability.
+            // Read the event timeline; generic render flags do not change.
+            return obj.BaseId != 2009507 ||
+                obj.ObjectKind == global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj &&
+                obj.Address != IntPtr.Zero && NativePassageAvailability.IsAvailable(
+                    obj.BaseId, ((EventObject*)obj.Address)->SharedTimelineState);
         }
 
         private static unsafe bool TryGetRoomCenter(InstanceContentDeepDungeon* dd, int roomIndex, out Vector3 center)

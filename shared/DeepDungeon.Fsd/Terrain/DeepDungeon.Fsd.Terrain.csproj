@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>annotations</Nullable>
+    <LangVersion>preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Dev>$(DALAMUD_HOME)</Dev>
+    <Dev Condition="'$(Dev)' == ''">$(APPDATA)/XIVLauncherCN/addon/Hooks/dev</Dev>
+    <VnavSource>Upstream/vnavmesh</VnavSource>
+    <RecastSource>$(VnavSource)/../DotRecast/src</RecastSource>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="*.cs" />
+    <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
+    <Compile Include="$(VnavSource)/Build/Scene/SceneExtractor.cs" Link="Vnav/SceneExtractor.cs" />
+    <Compile Include="$(VnavSource)/Build/Ground/NavmeshBitmap.cs" Link="Vnav/NavmeshBitmap.cs" />
+    <Compile Include="$(VnavSource)/../vnavmesh.Common/**/*.cs;$(RecastSource)/DotRecast.Core/**/*.cs;$(RecastSource)/DotRecast.Detour/**/*.cs;$(RecastSource)/DotRecast.Detour.Extras/**/*.cs;$(RecastSource)/DotRecast.Recast/**/*.cs" Exclude="**/obj/**;**/bin/**" LinkBase="Vnav" />
+    <Reference Include="$(Dev)/Lumina.dll;$(Dev)/FFXIVClientStructs.dll;$(Dev)/InteropGenerator.Runtime.dll;$(Dev)/Newtonsoft.Json.dll" Private="false" />
+    <PackageReference Include="SharpDX" Version="4.2.0" />
+  </ItemGroup>
+</Project>

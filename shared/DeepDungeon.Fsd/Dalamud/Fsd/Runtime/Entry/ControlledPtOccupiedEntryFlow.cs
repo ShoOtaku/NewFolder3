@@ -1,4 +1,5 @@
 using System.Numerics;
+using DeepDungeon.Fsd.Core;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
@@ -8,11 +9,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 
 internal sealed class ControlledPtOccupiedEntryFlow
 {
-    private static readonly TimeSpan RetryInterval = TimeSpan.FromMilliseconds(350);
     private readonly ControlledPtSurveySession _session;
+    private EntranceWindowCleanup _cleanup = new();
     private RunContext? _context;
     private NavigationHelper? _navigation;
     private DateTime _nextActionAt;
+    private long _panelsAbsentSince;
     private bool _openedMenu;
     private bool _clickedOccupiedSlot;
 
@@ -24,8 +26,10 @@ internal sealed class ControlledPtOccupiedEntryFlow
     public void Prepare(RunContext context)
     {
         _context = context;
+        _cleanup = new();
         _navigation = new NavigationHelper(context.Navigator);
         _nextActionAt = DateTime.MinValue;
+        _panelsAbsentSince = 0;
         _openedMenu = false;
         _clickedOccupiedSlot = false;
         context.StatusLine = "Controlled PT 21-30: opening prepared save";
@@ -38,11 +42,13 @@ internal sealed class ControlledPtOccupiedEntryFlow
             return false;
 
         if (context.Duty.IsInDuty)
-            return true;
+            return !context.Duty.IsTransitioning && DeepDungeonUi.WaitAndCloseSaveAndMenuAfterEntry(ref _panelsAbsentSince);
         if (context.StatusIsError || _session.Fatal)
             return true;
         if (DateTime.UtcNow < _nextActionAt)
             return false;
+
+        if (!_cleanup.Ready(context)) return false;
 
         if (DeepDungeonUi.TryGetSelectYesNo(out _))
             return Fail("Controlled PT entry stopped: an unowned confirmation prompt was open.");
@@ -51,13 +57,6 @@ internal sealed class ControlledPtOccupiedEntryFlow
 
         if (DeepDungeonUi.TryGetAddon("ContentsFinderConfirm", out _))
         {
-            if (DeepDungeonUi.IsAddonOpen("DeepDungeonSaveData"))
-            {
-                DeepDungeonUi.TryCloseAddon("DeepDungeonSaveData");
-                Delay();
-                return false;
-            }
-
             if (!DeepDungeonUi.ClickCommenceButton())
                 return Fail("Controlled PT entry could not click the duty Commence button.");
             context.StatusLine = "Controlled PT 21-30: commencing prepared save";
@@ -135,13 +134,13 @@ internal sealed class ControlledPtOccupiedEntryFlow
             return false;
         }
 
-        float distance = Vector3.Distance(player.Position, npc.Position);
-        if (distance > NpcInteractionGuard.MaxInteractDistance)
+        float distance = NpcInteractionGuard.InteractionRange.Distance(player.Position, npc.Position);
+        if (!NpcInteractionGuard.InteractionRange.HasArrived(player.Position, npc.Position))
         {
             var state = _navigation?.Navigate(
                 npc.Position,
                 player.Position,
-                NpcInteractionGuard.MaxInteractDistance - 0.4f) ?? NavigationState.Failed;
+                NpcInteractionGuard.InteractionRange) ?? NavigationState.Failed;
             if (state is NavigationState.Failed or NavigationState.StuckGiveUp)
                 return Fail("Controlled PT entry navigation to the NPC failed.");
             context.StatusLine = $"Controlled PT 21-30: moving to entry NPC ({distance:F1}m)";
@@ -186,6 +185,6 @@ internal sealed class ControlledPtOccupiedEntryFlow
 
     private void Delay()
     {
-        _nextActionAt = DateTime.UtcNow.Add(RetryInterval);
+        _nextActionAt = DateTime.UtcNow.Add(InteractionTiming.GetRetryInterval());
     }
 }

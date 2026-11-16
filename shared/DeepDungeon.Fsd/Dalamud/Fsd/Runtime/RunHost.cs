@@ -13,7 +13,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	/// Layer 1: Container with flat state for FSD mode.
 	/// Layer 2: MultiLoopState (FSD only) - survives loop completions.
 	/// Layer 3: RunContext - per dungeon run lifecycle.
-	/// DutyState and general assists (auto-spin, recovery potion) are owned by FsdEngine,
+	/// DutyState and recovery potion assistance are owned by FsdEngine,
 	/// not by this host. RunHost receives DutyState as a dependency.
 	/// </summary>
 	public sealed class RunHost : IDisposable
@@ -49,12 +49,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			DutyState dutyState,
 			NativeDeepDungeonLogMessageSource logMessageSource,
 			IFloorEvidenceObserver? floorEvidenceObserver = null,
-			IRunTelemetryObserver? runTelemetryObserver = null)
+			IRunTelemetryObserver? runTelemetryObserver = null,
+            Func<IBossMovementStrategy>? spinBossMovementFactory = null)
 		{
 			_configuration = configuration;
 			_dutyState = dutyState;
 			ArgumentNullException.ThrowIfNull(logMessageSource);
-			_floorController = new FloorPhaseController(logMessageSource, floorEvidenceObserver, runTelemetryObserver);
+			_floorController = new FloorPhaseController(logMessageSource, floorEvidenceObserver, runTelemetryObserver,
+                spinBossMovementFactory);
 		_exit = new ExitPolicyController();
 	}
 
@@ -103,7 +105,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				_multiLoopDriver = multiLoopDriver;
 				_lastStatus = string.Empty;
 				_lastStatusIsError = false;
-				DeepDungeonUi.CloseDeepDungeonEntryWindows();
 				DeepDungeonFloorsetTracker.Reset();
 
 			// Initialize Layer 3: RunContext
@@ -172,7 +173,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			_context = null;
 
 			_multiLoopDriver = null;
-			DeepDungeonUi.CloseDeepDungeonEntryWindows();
+			if (!_dutyState.IsInDuty) DeepDungeonUi.CloseDeepDungeonEntryWindows();
 
 			Service.Log.Info("[RunHost] FSD stopped");
 		}
@@ -218,8 +219,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				_lastStatus = _context.StatusLine ?? string.Empty;
 				_lastStatusIsError = _context.StatusIsError;
 
-				if (_context.Duty.IsInDuty && !_context.StatusIsError)
+				if (_context.Duty.IsInDuty && _context.EntryReadyForDuty && !_context.StatusIsError)
 					UpdateControllers(framework);
+                else
+                    _floorController.SuspendBossMovement();
 
 				if (_attachedScenario.IsComplete)
 				{
@@ -333,6 +336,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 		bool assistActive = AssistModeActive;
 		_inDutyControllersActive = true;
+		bool wasLeaving = _exit.IsLeaveActive;
 
 		if (assistActive)
 		{
@@ -348,8 +352,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 		if (_exit.IsLeaveActive)
 		{
-			try { _floorController.CancelActiveMovement(); } catch { }
-			try { _context.Navigator.CancelAll(); } catch { }
+			// Release floor movement once. The leave flow may now navigate to a
+			// native terminal exit; cancelling every frame would kill its route.
+			if (!wasLeaving)
+			{
+				try { _floorController.CancelActiveMovement(); } catch { }
+				try { _context.Navigator.CancelAll(); } catch { }
+			}
 			try
 			{
 				_exit.Update(framework);
@@ -414,6 +423,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		var player = Service.LocalPlayer;
 		if (player == null || !player.IsDead)
 			return;
+
+        // Raising can revive a dead player without failing the attempt. The
+        // floor controller pauses movement; DutyWiped owns the final result.
+        if (_context.FarmingPlan != null) return;
 
         _context.MarkDutyFailed();
         if (_context.TryHoldFailedAttempt("角色死亡"))
@@ -595,7 +608,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				}
 
 				var player = Service.LocalPlayer;
-				if (player != null && player.IsDead)
+				if (player != null && player.IsDead && attemptContext.FarmingPlan == null)
 				{
 					MarkDutyWipeFatal(attemptContext, "Deep Dungeon run failed: duty completion event arrived while the player was dead.");
 					return;

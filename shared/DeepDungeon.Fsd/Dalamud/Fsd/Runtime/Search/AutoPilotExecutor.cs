@@ -22,7 +22,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		private readonly List<RoomPlanEntry> _roomPlan = new();
 		private readonly List<RoomPlanEntry> _retainedNonHoardRoute = new();
 		private readonly Func<int, (bool HoardSearched, bool ChestsSearched, bool IntelVisited)> _getRoomProgress;
-		private readonly PalacePalProvider _palacePalProvider;
+		private readonly PalantirProvider _palantirProvider;
 		private readonly DetailedMapRunSnapshot _detailedMap;
 		private readonly List<Vector3> _observedSightTrapPositions = new();
 		private readonly HashSet<int> _blindHoardProbeSuppressedRooms = new();
@@ -38,6 +38,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		private FloorPlanTrace _lastPlanTrace;
 		private bool _hasPlanningSnapshot;
 		private bool _inheritedNoHoardInferred;
+		// Normal-coordination compatibility projections: when bound, hoard
+		// facts and work progress read from run knowledge — it stays the
+		// single owner; the legacy caches above stay untouched then.
+		private RunKnowledge? _knowledge;
 
 		internal AutoPilotExecutor(
 			Func<int, (bool HoardSearched, bool ChestsSearched, bool IntelVisited)> getRoomProgress,
@@ -46,15 +50,24 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			_getRoomProgress = getRoomProgress;
 			_detailedMap = detailedMap ??
 				throw new ArgumentNullException(nameof(detailedMap));
-			_palacePalProvider = new PalacePalProvider();
+			_palantirProvider = new PalantirProvider();
 			_configSnapshot = new RunOptions();
 		}
 
 		// ===== Query properties =====
 
-		public bool IsComplete => _hasPlanningSnapshot && _roomPlan.Count == 0 && _roomContext == null;
+		/// <summary>Bind run knowledge for compatibility projections. Pure
+	/// reads — the knowledge remains the single owner of these facts.</summary>
+	internal void AttachKnowledge(RunKnowledge knowledge) => _knowledge = knowledge;
 
-		internal bool HasPlanningSnapshot => _hasPlanningSnapshot;
+	private FloorKnowledge? K => _knowledge?.Floor;
+
+	public bool IsComplete => _knowledge != null
+		? (K?.WorkDecisionInitialized == true && (K?.PendingWorkCount ?? 0) == 0)
+		: _hasPlanningSnapshot && _roomPlan.Count == 0 && _roomContext == null;
+
+		internal bool HasPlanningSnapshot =>
+			K?.WorkDecisionInitialized ?? _hasPlanningSnapshot;
 
 		internal RoomPlanEntry? CurrentPlanEntry => _roomPlan.Count > 0 ? _roomPlan[0] : null;
 
@@ -63,45 +76,70 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		internal RoomWaypoint? CurrentWaypoint => _roomContext?.CurrentWaypoint;
 
 		internal int RemainingWaypointCount => _roomContext?.RemainingWaypointCount ?? 0;
-		internal int PlannedRouteCount => _roomPlan.Count;
+		internal int PlannedRouteCount =>
+		_knowledge != null ? K?.RequiredWorkRemaining ?? 0 : _roomPlan.Count;
 		internal IReadOnlyList<RoomPlanEntry> PlannedRoute => _roomPlan;
 		internal IReadOnlyList<RoomPlanEntry> RetainedNonHoardRoute => _retainedNonHoardRoute;
 		internal FloorPlanTrace LastPlanTrace => _lastPlanTrace;
 
-		public bool HasOpenedHoardThisFloor => _hoardOpenedThisFloor;
+		public bool HasOpenedHoardThisFloor => K?.HoardAcquired ?? _hoardOpenedThisFloor;
 
 		public bool CanAcceptHoardIndicator => HoardIndicatorLifecyclePlanner.Decide(new HoardIndicatorLifecycleSnapshot(
-			_hoardOpenedThisFloor,
-			_floorHoardBaseline,
-			_observedHoardCount)).AcceptIndicator;
+			K?.HoardAcquired ?? _hoardOpenedThisFloor,
+			K?.HoardBaseline ?? _floorHoardBaseline,
+			K?.LatestHoardCount ?? _observedHoardCount)).AcceptIndicator;
 
 		public RunOptions ConfigSnapshot => _configSnapshot;
 
 		internal RoomSearchContext? RoomContext => _roomContext;
 
-		public Vector3? CachedHoardIndicatorPos => _cachedHoardIndicatorPos;
+		public Vector3? CachedHoardIndicatorPos => K?.ExactHoardPosition ?? _cachedHoardIndicatorPos;
 
-		public IReadOnlyList<Vector3> ObservedSightTrapPositions => _observedSightTrapPositions;
+		// Stable projection cache — rebuilt only when the knowledge's sight
+		// count changes, so hot-path readers never allocate per getter call.
+		private readonly List<Vector3> _sightProjection = new();
+		private int _sightProjectionSourceCount = -1;
+
+		public IReadOnlyList<Vector3> ObservedSightTrapPositions
+		{
+			get
+			{
+				var k = K;
+				if (k == null)
+					return _observedSightTrapPositions;
+				if (_sightProjectionSourceCount != k.ObservedSightPositions.Count)
+				{
+					_sightProjection.Clear();
+					foreach (var p in k.ObservedSightPositions)
+						_sightProjection.Add(new Vector3(p.X, p.Y, p.Z));
+					_sightProjectionSourceCount = k.ObservedSightPositions.Count;
+				}
+				return _sightProjection;
+			}
+		}
 
 		public bool OpenChestsEnabled => _configSnapshot.OpenBronze || _configSnapshot.OpenSilver || _configSnapshot.OpenGold;
 
-		public HoardEvidenceState HoardEvidenceState => _lastHoardEvidenceState;
+		public HoardEvidenceState HoardEvidenceState =>
+		K?.EvidenceState ?? _lastHoardEvidenceState;
 
-		internal unsafe IReadOnlyList<Vector3> GetPalacePalCandidatesForRoom(
+		internal unsafe IReadOnlyList<Vector3> GetPalantirCandidatesForRoom(
 			InstanceContentDeepDungeon* dd,
 			int roomIndex) =>
-			_palacePalProvider.GetCandidatePositionsForRoom(dd, roomIndex);
+			_palantirProvider.GetCandidatePositionsForRoom(dd, roomIndex);
 
 		public void MarkInheritedNoHoardInferred()
 		{
 			_inheritedNoHoardInferred = true;
+			K?.MarkInheritedNoHoard();
 		}
 
 		public bool IsHoardEvidenceUnstable =>
-			_lastHoardEvidenceState is HoardEvidenceState.IntuitionPending or HoardEvidenceState.IntuitionWaitingForIndicator;
+			(K?.EvidenceState ?? _lastHoardEvidenceState) is HoardEvidenceState.IntuitionPending or HoardEvidenceState.IntuitionWaitingForIndicator;
 
 		public bool IsHoardWorkResolved =>
-			_hasPlanningSnapshot &&
+			K?.SearchObligationsResolved ??
+			(_hasPlanningSnapshot &&
 			(!_configSnapshot.BandedEnabled ||
 			 _hoardOpenedThisFloor ||
 			 _lastHoardEvidenceState is HoardEvidenceState.FloorsetMaxed or
@@ -110,22 +148,30 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			 (_lastHoardEvidenceState == HoardEvidenceState.IntuitionActiveUnconfirmed && !HasPendingIntelWork) ||
 			 ((_lastHoardEvidenceState == HoardEvidenceState.BlindSearch ||
 			   _lastHoardEvidenceState == HoardEvidenceState.IntuitionDirect) &&
-			  !_roomPlan.Any(entry => entry.ShouldProbeHoard)));
+			  !_roomPlan.Any(entry => entry.ShouldProbeHoard))));
 
 		internal bool HasAuthoritativeHoardResolution =>
-			_hasPlanningSnapshot &&
-			(!_configSnapshot.BandedEnabled ||
-			 _hoardOpenedThisFloor ||
-			 _lastHoardEvidenceState is HoardEvidenceState.FloorsetMaxed or
-				 HoardEvidenceState.FloorsetDistributionExcluded ||
-			 _lastHoardEvidenceState == HoardEvidenceState.IntuitionNoHoard);
+			K != null
+				? (K.WorkDecisionInitialized && (K.HoardAcquired ||
+				   K.EvidenceState is HoardEvidenceState.FloorsetMaxed or
+					   HoardEvidenceState.FloorsetDistributionExcluded or
+					   HoardEvidenceState.IntuitionNoHoard))
+				: _hasPlanningSnapshot &&
+				(!_configSnapshot.BandedEnabled ||
+				 _hoardOpenedThisFloor ||
+				 _lastHoardEvidenceState is HoardEvidenceState.FloorsetMaxed or
+					 HoardEvidenceState.FloorsetDistributionExcluded ||
+				 _lastHoardEvidenceState == HoardEvidenceState.IntuitionNoHoard);
 
-		internal bool HasPendingBandedWaypoint => CurrentWaypoint?.Type == RoomObjectiveType.ChestBanded;
+		internal bool HasPendingBandedWaypoint =>
+			K?.PendingBandedWork ?? (CurrentWaypoint?.Type == RoomObjectiveType.ChestBanded);
 
 		internal bool HasPendingIntelWork
 		{
 			get
 			{
+				if (K is { } k)
+					return k.PendingIntelWork;
 				for (int i = 0; i < _roomPlan.Count; i++)
 				{
 					if (_roomPlan[i].ShouldVisitForIntel)
@@ -171,6 +217,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 
 		public void ObserveHoardCount(int hoardCount)
 		{
+			if (_knowledge != null)
+			{
+				_knowledge.ObserveHoardCount(hoardCount);
+				return;
+			}
 			_observedHoardCount = hoardCount;
 			var decision = HoardIndicatorLifecyclePlanner.Decide(new HoardIndicatorLifecycleSnapshot(
 				_hoardOpenedThisFloor,
@@ -185,11 +236,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 
 		public void UpdateCachedHoardIndicator(Vector3 indicatorPosition)
 		{
+			if (K is { } k)
+			{
+				k.SetExactHoard(indicatorPosition, null);
+				return;
+			}
 			_cachedHoardIndicatorPos = indicatorPosition;
 		}
 
 		public bool ClearCachedHoardIndicator()
 		{
+			if (K is { } k)
+				return k.ClearExactHoard();
+
 			if (!_cachedHoardIndicatorPos.HasValue)
 				return false;
 
@@ -199,9 +258,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 
 		internal void ObserveSightTrapIndicators(FloorObjectEvidenceSnapshot objectEvidence)
 		{
+			var k = K;
 			for (int indicatorIndex = 0; indicatorIndex < objectEvidence.SightTrapIndicators.Count; indicatorIndex++)
 			{
 				Vector3 position = objectEvidence.SightTrapIndicators[indicatorIndex].Position;
+				if (k != null)
+				{
+					k.ObserveSightPosition(new RawWorldPosition(position.X, position.Y, position.Z));
+					continue;
+				}
 				bool duplicate = false;
 				for (int existingIndex = 0; existingIndex < _observedSightTrapPositions.Count; existingIndex++)
 				{
@@ -278,7 +343,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				entry.Value.ShouldVisitForIntel,
 				entry.Value.HoardEvidenceState,
 				_configSnapshot,
-				_palacePalProvider,
+				_palantirProvider,
 				_detailedMap,
 				_cachedHoardIndicatorPos,
 				_observedSightTrapPositions,
@@ -291,7 +356,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				Service.Log.Info(
 					$"[AutoPilot] Suppressed blind hoard probe in room {entry.Value.RoomIndex}: " +
 					$"catalog={_roomContext.FallbackCatalogCandidateCount} " +
-					$"palacePal={_roomContext.FallbackPalacePalCandidateCount} " +
+					$"palantir={_roomContext.FallbackPalantirCandidateCount} " +
 					$"union={_roomContext.FallbackUnionCandidateCount}");
 			}
 			return _roomContext != null;

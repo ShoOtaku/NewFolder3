@@ -8,16 +8,18 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios;
 /// <summary>One entry/exit attempt. Session owns continuation, prepared source and climb progress.</summary>
 internal sealed class FarmingScenario(FarmingSession session) : IScenario
 {
+    private readonly DungeonData _dungeon = DungeonCatalog.TryGetByDungeonId(session.Plan.DungeonId, out var d)
+        ? d
+        : DungeonCatalog.PilgrimsTraverse;
     private RunContext? _context;
-    private GenericEntryFlow? _create;
-    private PreparedSaveFlow? _prepared;
-    private PreparedSaveFlow? _verification;
-    private PilgrimsTraverseRestExitFlow? _rest;
+    private DungeonEntryController? _entry;
+    private DungeonEntryController? _verification;
+    private DungeonExitController? _exit;
     private GenericDeleteSaveFlow? _delete;
-    private bool _entered, _restDone, _complete, _recoverFailure, _aborted;
+    private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
 
-    public string Name => $"PT {session.Plan.DisplayName} ({(session.Plan.SaveUse == SaveUse.Prepared ? session.Source.Description : $"{session.NextFloor} 層")})";
+    public string Name => $"{DungeonShortLabel(session.Plan.DungeonId)} {session.Plan.DisplayName} ({(session.Plan.SaveUse == SaveUse.Prepared ? session.Source.Description : $"{session.NextFloor} 層")})";
     public bool IsComplete => _complete;
     public bool ShouldLoop => !_aborted;
     public bool CountsAsCycle { get; private set; }
@@ -41,25 +43,9 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             LeaveMode = LeaveMode.AfterFinishDungeon,
             RequireValidatedAbandonPrompt = true
         });
-        if (session.ResumeCurrentDuty)
-        {
-            _entryFloor = session.NextFloor;
-            _entered = true;
-            context.TerminalRewardsRequired = _entryFloor == 91;
-            context.PreparedSaveDescription = $"原副本接續，存檔 {session.OwnedSlot + 1}，起點 {_entryFloor} 層";
-            context.StatusLine = $"原副本接續：第 {context.Duty.Floor} 層。";
-            Service.Log.Info($"[Farming] Resumed existing duty: floor={context.Duty.Floor}, entryFloor={_entryFloor}, ownedSlot={session.OwnedSlot}, holdOnFailure={plan.HoldOnFailure}");
-        }
-        else if (plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
-        {
-            _prepared = new PreparedSaveFlow(session.PrepareSource());
-            _prepared.Prepare(context);
-        }
-        else
-        {
-            _create = new GenericEntryFlow(DungeonCatalog.PilgrimsTraverse, session.NextFloor, 0);
-            _create.Prepare(context);
-        }
+        // Entry/attachment is selected from fresh observations in Update.
+        // Until then no floor controller may act on this attempt.
+        context.EntryReadyForDuty = false;
     }
 
     public void Update(IFramework framework)
@@ -73,40 +59,21 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _complete = true;
             return;
         }
-        if (!_entered)
+        if (!_entered && !TryEnterDuty(ctx)) return;
+        if (ctx.Duty.StateReadFailed || ctx.Duty.IsTransitioning || DutyState.IsClientTransitioning) return;
+        ObserveDutyCompletion(ctx);
+        if (session.Plan.HoldAfterClear && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
         {
-            if (!ctx.Duty.IsInDuty)
-            {
-                if (_prepared != null) _prepared.Update(framework);
-                else _create?.Update(framework);
-                return;
-            }
-            if (ctx.Duty.IsTransitioning || ctx.Duty.Floor == 0) return;
-            _entryFloor = _prepared?.SourceFloor ?? session.NextFloor;
-            ctx.TerminalRewardsRequired = _entryFloor == 91;
-            _entered = true;
-            if (ctx.Duty.DungeonId != 4 || ctx.Duty.Floor != _entryFloor)
-            {
-                ctx.StatusLine = "入場地宮／樓層與來源不符；請手動退本並檢查存檔。";
-                ctx.StatusIsError = true;
-                return;
-            }
-            if (_create != null)
-            {
-                if (!session.BindCreatedSave(ctx.SaveSlots.LastUsedSlotIndex))
-                {
-                    ctx.StatusLine = "入場來源未由本任務建立；停止自動化，請手動退本。";
-                    ctx.StatusIsError = true;
-                    return;
-                }
-            }
+            ctx.EntryReadyForDuty = false;
+            ctx.Navigator.CancelAll();
+            ctx.StatusLine = "王戰已通關；保留副本現場，未退本、未清理存檔。";
+            _aborted = true;
+            _complete = true;
+            Service.Log.Info("[Farming] HoldAfterClear: retaining duty and owned save for exit validation");
+            return;
         }
-        if (ctx.Duty.IsTransitioning) return;
         if (ctx.Duty.IsInDuty)
         {
-            _create?.CleanupAfterDutyEntry();
-            DeepDungeonUi.TryCloseAddon("DeepDungeonSaveData");
-            DeepDungeonUi.TryCloseAddon("DeepDungeonMenu");
             if (ctx.AttemptAborted)
             {
                 _aborted = true;
@@ -141,17 +108,17 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         if (ctx.TerminalRewardsRequired && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
         {
             ctx.StatusLine = ctx.TerminalRoomObserved
-                ? "最終獎勵房尚未完成驗收；FSD 已停止，請檢查100層獎勵紀錄。"
-                : "尚未觀測到最終獎勵房；FSD 已停止並保留現場，請檢查100層物件與獎勵。";
+                ? "最終獎勵房尚未完成驗收；FSD 已停止，請檢查終局獎勵紀錄。"
+                : "尚未觀測到最終獎勵房；FSD 已停止並保留現場，請檢查終局物件與獎勵。";
             ctx.StatusIsError = true;
             _complete = true;
             return;
         }
-        _rest ??= new PilgrimsTraverseRestExitFlow(requireValidatedConfirmation: true);
+        _exit ??= new(returnToEntrance: true, entranceNpcBaseId: _dungeon.NpcDataId);
         if (!_restDone)
         {
-            if (!_rest.IsPrepared) _rest.Prepare(ctx);
-            if (!_rest.Update(framework)) return;
+            if (!_exit.IsPrepared) _exit.Prepare(ctx);
+            if (_exit.Update() != ExitOutcome.Completed) return;
             _restDone = true;
         }
         _aborted |= ctx.AttemptAborted;
@@ -168,9 +135,9 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         var decision = FarmingSessionPolicy.Decide(session.Plan, result);
         if (session.Plan.ReusesSave)
         {
-            _verification ??= new PreparedSaveFlow(session.Source, verifyOnly: true);
-            if (!_verificationPrepared) { _verification.Prepare(ctx); _verificationPrepared = true; }
-            if (!_verification.Update(framework)) return;
+            _verification ??= new(_dungeon, session.Source.ExpectedFloor ?? 0, prepared: session.Source, verifyOnly: true);
+            if (!_verification.IsPrepared) _verification.Prepare(ctx);
+            if (_verification.Update().Outcome == EntryOutcome.Pending) return;
             if (ctx.StatusIsError) { _complete = true; return; }
         }
         if (decision.DeleteOwnedSave)
@@ -184,7 +151,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (_delete == null)
             {
-                _delete = new GenericDeleteSaveFlow(DungeonCatalog.PilgrimsTraverse,
+                _delete = new GenericDeleteSaveFlow(_dungeon,
                     session.OwnedSlot, slots => ValidateOwnedSave(slots));
                 _delete.Prepare(ctx);
             }
@@ -208,17 +175,108 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _complete = true;
     }
 
+    private bool TryEnterDuty(RunContext ctx)
+    {
+        // An entry controller owns its selected source and UI confirmation.
+        // Do not bypass it by attaching when its own entry arrives in-game.
+        if (_entry == null)
+        {
+            var facts = new FarmingEntryFacts(
+                !ctx.Duty.StateReadFailed && !ctx.Duty.IsTransitioning && !DutyState.IsClientTransitioning,
+                ctx.Duty.IsInDuty, ctx.Duty.DungeonId, ctx.Duty.Floor);
+            var decision = FarmingEntryPolicy.Decide(facts, _dungeon.DutyDungeonId, session.NextFloor, session.OwnedSlot);
+            ctx.StatusLine = decision.Reason;
+            if (decision.Action == FarmingEntryAction.Wait) return false;
+            ctx.RecordDiagnostic?.Invoke("farming-entry-observed", new
+            {
+                action = decision.Action.ToString(), facts, expectedDungeon = _dungeon.DutyDungeonId,
+                entryFloor = session.NextFloor, ownedSlot = session.OwnedSlot
+            });
+            if (decision.Action == FarmingEntryAction.Conflict)
+            {
+                ctx.StatusIsError = true;
+                return false;
+            }
+            if (decision.Action == FarmingEntryAction.Attach)
+            {
+                BeginDuty(ctx, session.NextFloor);
+                ctx.PreparedSaveDescription = $"原副本接續，存檔 {session.OwnedSlot + 1}，起點 {_entryFloor} 層";
+                ctx.StatusLine = $"原副本接續：第 {ctx.Duty.Floor} 層。";
+                Service.Log.Info($"[Farming] Resumed existing duty: floor={ctx.Duty.Floor}, entryFloor={_entryFloor}, ownedSlot={session.OwnedSlot}, holdOnFailure={session.Plan.HoldOnFailure}");
+                return true;
+            }
+            if (session.Plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
+            {
+                var source = session.PrepareSource();
+                _entry = new(_dungeon, source.ExpectedFloor ?? 0, prepared: source);
+            }
+            else
+            {
+                _creatingSave = true;
+                _entry = new(_dungeon, session.NextFloor, preferredSlot: 0);
+            }
+            _entry.Prepare(ctx);
+        }
+        var entry = _entry.Update();
+        if (entry.Outcome != EntryOutcome.Entered) return false;
+        if (ctx.Duty.DungeonId != _dungeon.DutyDungeonId || ctx.Duty.Floor != entry.Floor)
+        {
+            ctx.StatusLine = "入場地宮／樓層與來源不符；請手動退本並檢查存檔。";
+            ctx.StatusIsError = true;
+            return false;
+        }
+        if (_creatingSave && !session.BindCreatedSave(entry.Slot))
+        {
+            ctx.StatusLine = "入場來源未由本任務建立；停止自動化，請手動退本。";
+            ctx.StatusIsError = true;
+            return false;
+        }
+        BeginDuty(ctx, entry.Floor);
+        return true;
+    }
+
+    private void BeginDuty(RunContext ctx, int entryFloor)
+    {
+        _entryFloor = entryFloor;
+        _entered = true;
+        ctx.TerminalRewardsRequired =
+            _entryFloor == 91 && ResultAltarPolicy.TryGet(_dungeon.DungeonId, 100, out _) ||
+            _entryFloor == 191 && Potd200RewardPolicy.IsTerminal(_dungeon.DungeonId, 200);
+        ctx.EntryReadyForDuty = true;
+    }
+
+    private void ObserveDutyCompletion(RunContext ctx)
+    {
+        // This result can predate FSD attachment. Use the same current evidence
+        // for normal entry and attachment, then retain it through exit/cleanup.
+        if (ctx.DutyCompletionObserved || ctx.DutyFailureObserved || !ctx.Duty.IsInDuty ||
+            ctx.Duty.DungeonId != _dungeon.DutyDungeonId || ctx.Duty.Floor < _entryFloor ||
+            ctx.Duty.Floor >= _entryFloor + 10 || !ctx.Duty.IsBossFloor || !ctx.Duty.PassageOpen ||
+            Service.DutyState.IsDutyStarted ||
+            Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat] ||
+            Service.LocalPlayer is not { IsDead: false }) return;
+        ctx.MarkDutyCompleted();
+        ctx.RecordDiagnostic?.Invoke("observed-completed-duty", new
+        {
+            floor = ctx.Duty.Floor, passageOpen = ctx.Duty.PassageOpen, ownedSlot = session.OwnedSlot
+        });
+    }
+
     internal FarmingSession Session => session;
+    private static string DungeonShortLabel(uint dungeonId) => dungeonId switch
+    {
+        1 => "死宮",
+        2 => "天宮",
+        _ => "PT"
+    };
     private string? ValidateOwnedSave(IReadOnlyList<SaveSlotSnapshot> slots) =>
         OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned);
-    private bool _verificationPrepared;
     private void RequestLeave() => _context?.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
     public void Dispose()
     {
-        _create?.Reset();
-        _prepared?.Reset();
-        _verification?.Reset();
-        _rest?.Dispose();
+        _entry?.Dispose();
+        _verification?.Dispose();
+        _exit?.Dispose();
         _context = null;
     }
 }

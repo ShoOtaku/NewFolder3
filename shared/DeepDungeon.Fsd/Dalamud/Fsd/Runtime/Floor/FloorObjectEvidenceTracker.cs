@@ -25,7 +25,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		Vector3 Position,
 		bool IsTargetable,
 		string ObjectKind,
-		byte NativeCurrentDistance);
+		byte NativeCurrentDistance,
+        ushort SharedTimelineState = 0);
 
 	internal readonly record struct FloorChestEvidence(
 		FloorObjectEvidence Object,
@@ -43,7 +44,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		string Address);
 
 	/// <summary>
-	/// TEMPORARY controlled-survey research only: fixed PalacePal candidate audit point.
+	/// TEMPORARY controlled-survey research only: fixed Palantir candidate audit point.
 	/// Does not participate in trap classification, planning, or community upload.
 	/// </summary>
 	internal readonly record struct ControlledCandidateAuditPoint(
@@ -160,7 +161,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						obj.Position,
 						obj.IsTargetable,
 						obj.ObjectKind.ToString(),
-						obj.CurrentDistance);
+						obj.CurrentDistance,
+                        obj.ObjectKind == global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj &&
+                            PassageLocator.IsPassageBase(obj.BaseId)
+                            ? ((EventObject*)obj.Address)->SharedTimelineState : (ushort)0);
 
 					if (FsdChestInteraction.TryClassify(obj, out var chestKind))
 					{
@@ -355,6 +359,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			left.BaseId == right.BaseId &&
 			left.Position == right.Position &&
 			left.IsTargetable == right.IsTargetable &&
-			left.ObjectKind == right.ObjectKind;
+			left.ObjectKind == right.ObjectKind &&
+            left.SharedTimelineState == right.SharedTimelineState;
 	}
 }

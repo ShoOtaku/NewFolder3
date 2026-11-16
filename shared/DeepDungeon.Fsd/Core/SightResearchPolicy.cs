@@ -70,7 +70,7 @@ public static class SightResearchPolicy
 
         // A visible, targetable Banded coffer is an authoritative terminal hoard
         // observation even when Intuition was not used (or its chat result was
-        // not observed).  PalacePal matching is performed by the caller before
+        // not observed).  Palantir matching is performed by the caller before
         // this bit is supplied; this policy must not create a new hoard-position
         // collection path.
         if (snapshot.IntuitionResolution != IntuitionFloorResolution.Positive &&

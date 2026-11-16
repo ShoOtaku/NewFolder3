@@ -22,8 +22,13 @@
     <DalamudLibPath Condition="$(DALAMUD_HOME) != ''">$(DALAMUD_HOME)/</DalamudLibPath>
   </PropertyGroup>
   <ItemGroup>
+    <InternalsVisibleTo Include="FsdInteractionChecks" />
+    <EmbeddedResource Include="Resources/FloorMaps/*.map.gz" LogicalName="Fsd.FloorMaps.%(Filename)%(Extension)" />
     <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
     <ProjectReference Include="..\Runtime\DeepDungeon.Fsd.Runtime.csproj" />
+    <ProjectReference Include="..\Terrain\DeepDungeon.Fsd.Terrain.csproj" />
+    <ProjectReference Include="..\Native\FFXIVClientStructs.Expansion\FFXIVClientStructs.Expansion.csproj" />
+    <ProjectReference Include="..\MechanicRuntime\DeepDungeon.MechanicRuntime.csproj" />
     <ProjectReference Include="..\..\..\third_party\OmenTools\OmenTools.csproj" />
   </ItemGroup>
   <ItemGroup>

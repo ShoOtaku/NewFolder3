@@ -3,6 +3,7 @@ using System.Numerics;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
+using DeepDungeon.Fsd.Dalamud.Utilities;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.SubKinds;
 using global::Dalamud.Game.ClientState.Objects.Types;
@@ -11,7 +12,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
 /// <summary>Owns one floor's boss navigation, combat buffs and diagnostic cadence.</summary>
-internal sealed class FloorBossController
+internal sealed class FloorBossController : IDisposable
 {
     private const float BossNavigationArrivalTolerance = 3f;
     private const uint SteelStatusId = 1100;
@@ -22,42 +23,143 @@ internal sealed class FloorBossController
     private readonly NavigationHelper _navHelper;
     private readonly PomanderManager _pomanderManager;
     private readonly FloorItemExecutor _items;
-    private readonly TerminalRoomController _terminalRooms;
+    private readonly DirectMovementController _preparationHold = new("boss preparation");
+    private bool _preparing;
     // These helpers retain their run lifetime; this floor owner does not dispose or recreate them.
-    private readonly Pt30DivineFavorFlashHelper? _pt30DivineFavorFlashHelper;
-    private readonly Pt50ChaseOutputGuard? _pt50ChaseOutputGuard;
     private readonly Func<string, FloorObjectiveKind, bool> _requireMovementPermission;
     private readonly Action<string> _setStatus;
     private readonly Action<string, object> _recordReplayEvent;
     private readonly Action<byte, IPlayerCharacter> _recordBossSnapshot;
     private DateTime _nextBossDiagnosticAtUtc = DateTime.MinValue;
+    private readonly Func<bool>? _coordEscapeActive;
+    private readonly IBossMovementStrategy _movementStrategy;
+    private bool _movementStarted;
+    internal bool UsesSpinStrategy { get; }
+    internal string MovementStrategyName => _movementStrategy.Name;
+    internal bool MovementStarted => _movementStarted;
+    internal bool RequestsNorthCamera => _movementStarted && _movementStrategy.RequestsNorthCamera;
     private bool BossNavigationResolved { get; set; }
     public bool BossSerenityAwaitingBuff { get; private set; }
     private string Status { set => _setStatus(value); }
     private FarmingItemPolicy ItemPolicy => FarmingItemPolicy.For(_ctx.FarmingPlan?.Mode);
 
     public FloorBossController(byte floor, RunContext context, NavigationHelper navigation,
-        PomanderManager pomanders, FloorItemExecutor items, TerminalRoomController terminalRooms,
-        Pt30DivineFavorFlashHelper? pt30, Pt50ChaseOutputGuard? pt50,
+        PomanderManager pomanders, FloorItemExecutor items,
         Func<string, FloorObjectiveKind, bool> requireMovementPermission, Action<string> setStatus,
-        Action<string, object> recordReplayEvent, Action<byte, IPlayerCharacter> recordBossSnapshot)
+        Action<string, object> recordReplayEvent, Action<byte, IPlayerCharacter> recordBossSnapshot,
+        FloorExplorationController floorRuntime,
+        Func<IBossMovementStrategy>? spinBossMovementFactory = null,
+        Func<bool>? coordEscapeActive = null)
     {
         _floor = floor;
         _ctx = context;
         _navHelper = navigation;
+        _coordEscapeActive = coordEscapeActive;
         _pomanderManager = pomanders;
         _items = items;
-        _terminalRooms = terminalRooms;
-        _pt30DivineFavorFlashHelper = pt30;
-        _pt50ChaseOutputGuard = pt50;
         _requireMovementPermission = requireMovementPermission;
         _setStatus = setStatus;
         _recordReplayEvent = recordReplayEvent;
         _recordBossSnapshot = recordBossSnapshot;
+        UsesSpinStrategy = floorRuntime.Kind == FloorRuntimeKind.Boss &&
+            DeepDungeonBossPolicy.UsesSpin(floorRuntime.DungeonId, floor) && spinBossMovementFactory != null;
+        _movementStrategy = UsesSpinStrategy
+            ? spinBossMovementFactory!()
+            : new NormalBossMovementStrategy(floorRuntime);
     }
 
     public void OnSerenityConfirmed() => BossSerenityAwaitingBuff = true;
 
+    public void Dispose()
+    {
+        try { SuspendMovement(); }
+        finally { _preparationHold.Dispose(); }
+    }
+
+    private void StopMovement()
+    {
+        if (!_movementStarted) return;
+        _movementStarted = false;
+        try { _movementStrategy.Stop(); }
+        finally { _navHelper.Cancel(); }
+        _recordReplayEvent("boss-movement-stopped", new { floor = _floor, strategy = _movementStrategy.Name });
+    }
+
+    internal void SuspendMovement()
+    {
+        try { StopMovement(); }
+        finally
+        {
+            _preparing = false;
+            _preparationHold.SuppressInput = false;
+        }
+    }
+
+    public unsafe void Update(InstanceContentDeepDungeon* dd)
+    {
+        if (Service.LocalPlayer is not { IsDead: false } || _ctx.Duty.IsTransitioning ||
+            Service.Condition[ConditionFlag.BetweenAreas] || Service.Condition[ConditionFlag.BetweenAreas51])
+        {
+            SuspendMovement();
+            Status = "Boss floor - waiting for player or floor";
+            return;
+        }
+        if (_ctx.Duty.PassageOpen)
+        {
+            SuspendMovement();
+            return;
+        }
+        if (!_requireMovementPermission("boss objective", FloorObjectiveKind.DefeatBoss))
+        {
+            SuspendMovement();
+            return;
+        }
+        // Preparation owns the hold before either movement strategy can start.
+        if (TryPrepareApproach(dd))
+        {
+            StopMovement();
+            return;
+        }
+        if (!_movementStarted)
+        {
+            _navHelper.Cancel();
+            _movementStarted = true;
+            _movementStrategy.Start();
+            _recordReplayEvent("boss-movement-started", new { floor = _floor, strategy = _movementStrategy.Name });
+        }
+        var status = _movementStrategy.Update(dd);
+        if (status != null) Status = status;
+        if (UsesSpinStrategy)
+            UpdateManagedEncounter(dd, status, liveEncounter: true);
+    }
+
+    // Finish items before approaching: a cast/animation lock after spin has
+    // established its phase can let the boss face the player and start a skill.
+    internal unsafe bool TryPrepareApproach(InstanceContentDeepDungeon* dd)
+    {
+        var actions = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        bool beforeCombat = !_ctx.Duty.PassageOpen && !Service.Condition[ConditionFlag.InCombat] &&
+            Service.LocalPlayer is { IsDead: false };
+        bool needed = beforeCombat && (_items.Session.Pending != null ||
+            Service.LocalPlayer?.IsCasting == true || Service.Condition[ConditionFlag.Casting] ||
+            actions != null && actions->AnimationLock > 0 ||
+            CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex) &&
+                FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(SteelStatusId)) ||
+            CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex) &&
+                FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(StrengthStatusId)));
+        if (_preparing != needed)
+        {
+            _preparing = needed;
+            _preparationHold.SuppressInput = needed;
+            _recordReplayEvent("boss-preparation", new { floor = _floor, waiting = needed });
+        }
+        if (!needed) return false;
+        TryMaintainBossBuffs(dd);
+        Status = "Boss floor - preparing items before approach";
+        return true;
+    }
+
+    // Keep the existing one-second diagnostic cadence for both strategies.
     private void RecordBossCombatSnapshot()
     {
         var player = Service.LocalPlayer;
@@ -67,7 +169,22 @@ internal sealed class FloorBossController
         _recordBossSnapshot(_floor, player);
     }
 
-    public unsafe void Update(InstanceContentDeepDungeon* dd)
+    /// <summary>Maintenance-only update for the selected boss movement
+    /// path: keeps the combat snapshot and buff maintenance while a live
+    /// observed boss exists, sets status — NO Navigate/Cancel on the
+    /// shared travel helper.</summary>
+    public unsafe void UpdateManagedEncounter(InstanceContentDeepDungeon* dd,
+        string? status, bool liveEncounter)
+    {
+        Status = status ?? "Boss floor - managed encounter";
+        if (liveEncounter)
+        {
+            RecordBossCombatSnapshot();
+            TryMaintainBossBuffs(dd);
+        }
+    }
+
+    internal unsafe void UpdateApproach(InstanceContentDeepDungeon* dd)
     {
         var player = Service.LocalPlayer;
         if (player == null)
@@ -81,29 +198,18 @@ internal sealed class FloorBossController
         {
             Status = "Boss floor - waiting for floor load to complete";
             _navHelper?.Cancel();
-            _pt30DivineFavorFlashHelper?.Reset();
-            _pt50ChaseOutputGuard?.Reset();
             return;
         }
-        if (_terminalRooms.TryUpdatePt99ResultTransfer(dd)) return;
         if (!_requireMovementPermission("boss objective", FloorObjectiveKind.DefeatBoss))
-        {
-            _pt30DivineFavorFlashHelper?.Reset();
-            _pt50ChaseOutputGuard?.Reset();
             return;
-        }
 
         RecordBossCombatSnapshot();
-        bool externalMovement = _ctx?.Configuration.BossMechanicsActive == true;
-        bool bmrBossHandling = _ctx?.Configuration.BossMechanics.UsesBmrBossHandling() == true;
-        if (bmrBossHandling) _pt30DivineFavorFlashHelper?.Update(dd);
-        else _pt30DivineFavorFlashHelper?.Reset();
-        _pt50ChaseOutputGuard?.Update(dd, externalMovement && bmrBossHandling);
-        if (dd->DeepDungeonId == 4 && dd->Floor == 99 && externalMovement && bmrBossHandling)
+        // Coord escape owns movement through the shared boundary — every
+        // _navHelper write below (Navigate AND Cancel, they share the helper)
+        // must stay silent while it holds.
+        if (_coordEscapeActive?.Invoke() == true)
         {
-            _navHelper?.Cancel();
-            TryMaintainBossBuffs(dd);
-            Status = "PT99 - external color/mechanic movement; dual-boss targeting active";
+            Status = "Boss floor - internal mechanic escape";
             return;
         }
 
@@ -117,22 +223,13 @@ internal sealed class FloorBossController
                 Service.Log.Info("[FloorPhase] Boss combat started -> canceling boss navigation");
             }
 
-            Status = _pt30DivineFavorFlashHelper?.IsDivineFavorMovementActive == true
-                ? "Boss floor - PT30 Divine Favor movement override active"
-                : "Boss floor - combat assist active";
+            Status = "Boss floor - combat assist active";
             return;
         }
 
         var boss = Runtime.Helpers.CombatTargetingHelpers.PickNearestHostile(60f, out _);
         if (boss == null)
         {
-            if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30EngageStatus) == true)
-            {
-                _navHelper?.Cancel();
-                Status = pt30EngageStatus;
-                return;
-            }
-
             Status = "Boss floor - waiting for boss target";
             return;
         }
@@ -158,13 +255,6 @@ internal sealed class FloorBossController
                 bossId = boss.GameObjectId,
                 currentTargetId = currentTarget?.GameObjectId ?? 0
             });
-        }
-
-        if (bmrBossHandling && !externalMovement && _pt30DivineFavorFlashHelper?.TryUpdateBossEngageMovement(dd, player.Position, out var pt30BossEngageStatus) == true)
-        {
-            _navHelper?.Cancel();
-            Status = pt30BossEngageStatus;
-            return;
         }
 
         var withinRange = IsWithinBossEngageRadius(player.Position, boss.Position);
@@ -228,6 +318,7 @@ internal sealed class FloorBossController
 
     private unsafe void TryMaintainBossBuffs(InstanceContentDeepDungeon* dd)
     {
+        if (_movementStrategy.SuppressCombatItems && Service.Condition[ConditionFlag.InCombat]) return;
         if (_ctx?.ControlledPtSurvey != null || !_items.CanAttemptPomanderUse(allowCombat: true)) return;
         // Defence first. Refresh shortly before expiry rather than repeatedly overwriting active buffs.
         if (CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex) &&

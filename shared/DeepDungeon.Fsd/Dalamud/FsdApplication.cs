@@ -2,6 +2,7 @@ using global::Dalamud.Plugin;
 using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Runtime;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 namespace DeepDungeon.Fsd.Dalamud;
 
@@ -13,6 +14,7 @@ public sealed partial class FsdApplication : IFsdApplication
     private readonly FsdSettings _settings;
     private readonly FsdExecutionLease _lease;
     private readonly FsdEngine _module;
+    private readonly Func<float>? _playerYOffsetProvider;
     private readonly FsdFacadeLifecycle _lifecycle = new();
 
     public FsdApplication(
@@ -24,7 +26,10 @@ public sealed partial class FsdApplication : IFsdApplication
         IFloorEvidenceObserver? floorEvidenceObserver = null,
         IRunTelemetryObserver? runTelemetryObserver = null,
         FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
-        Func<string?>? fsdStartDenialNoticeProvider = null)
+        Func<string?>? fsdStartDenialNoticeProvider = null,
+        Func<float>? playerYOffsetProvider = null,
+        Func<IBossMovementStrategy>? spinBossMovementFactory = null,
+        Action<DeepDungeonStateSnapshot>? stateObserver = null)
     {
         ArgumentNullException.ThrowIfNull(pluginInterface);
         ArgumentNullException.ThrowIfNull(settingsStore);
@@ -45,12 +50,13 @@ public sealed partial class FsdApplication : IFsdApplication
             _settings = settingsStore.Load()
                 ?? throw new InvalidOperationException("The FSD settings store returned null.");
             _settings.AttachStore(settingsStore);
-            _settings.BossMechanics ??= new();
             _settings.Rotation ??= new();
             _settings.Rotation.NormalizeProvider();
             FsdSettingsValidator.ValidateOrThrow(_settings);
             lease = new FsdExecutionLease($"{hostIdentity}/{hostVersion}");
             _lease = lease;
+            _playerYOffsetProvider = playerYOffsetProvider;
+            CombatPositionNavigation.SetYOffsetProvider(playerYOffsetProvider);
             module = new FsdEngine(
                 _settings,
                 _lease,
@@ -61,14 +67,18 @@ public sealed partial class FsdApplication : IFsdApplication
                 floorEvidenceObserver,
                 runTelemetryObserver,
                 tryAuthorizeFsdStart,
-                fsdStartDenialNoticeProvider);
+                fsdStartDenialNoticeProvider,
+                spinBossMovementFactory,
+                stateObserver);
             _module = module;
             _module.Initialize();
             Service.Log.Info($"[FSD] Host {hostIdentity}/{hostVersion}; engine {FsdEngineIdentity.InformationalVersion}.");
+            Service.Log.Info($"[FSD] builds engineMvid={typeof(FsdApplication).Assembly.ManifestModule.ModuleVersionId}; coreMvid={typeof(DeepDungeon.Fsd.Core.NativeTreasureCompletionPlanner).Assembly.ManifestModule.ModuleVersionId}; runtimeMvid={typeof(DeepDungeon.Fsd.Runtime.FsdRotationController).Assembly.ManifestModule.ModuleVersionId}; mechanicMvid={typeof(MasterPlayer.MechanicRuntime.EncounterHintPlanner).Assembly.ManifestModule.ModuleVersionId}");
         }
         catch (Exception startupError)
         {
             var rollbackErrors = new List<Exception>();
+            try { CombatPositionNavigation.ClearYOffsetProvider(playerYOffsetProvider); } catch (Exception error) { rollbackErrors.Add(error); }
             try { module?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
             try { lease?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
 
@@ -103,12 +113,23 @@ public sealed partial class FsdApplication : IFsdApplication
     {
         ThrowIfDisposed();
         ArgumentNullException.ThrowIfNull(framework);
-        _settings.Refresh();
-        FsdSettingsValidator.ValidateOrThrow(_settings);
-        _module.Update(framework);
+        try
+        {
+            _settings.Refresh();
+            FsdSettingsValidator.ValidateOrThrow(_settings);
+            _module.Update(framework);
+            _losDebug?.Update();
+        }
+        catch
+        {
+            _module.SuspendBossMovement();
+            throw;
+        }
     }
 
     public void Update() => Update(Service.Framework);
+
+    public void SuspendBossMovement() { ThrowIfDisposed(); _module.SuspendBossMovement(); }
 
     public void Draw()
     {
@@ -127,6 +148,13 @@ public sealed partial class FsdApplication : IFsdApplication
             _module.GetMobPilotSnapshot());
     }
 
+    public void DrawOverlay()
+    {
+        try { _module?.DrawSitePoolOverlay(); }
+        catch (Exception ex) { Service.Log.Error($"[FSD] site-pool overlay: {ex}"); }
+        _losDebug?.Draw();
+    }
+
     public void DrawDeepDungeonFormalPanel() { ThrowIfDisposed(); _module.DrawDeepDungeonFormalPanel(); }
     public void DrawGeneralAssistantSettings() { ThrowIfDisposed(); _module.DrawGeneralAssistantSettings(); }
     public void DrawCompanionSettings() { ThrowIfDisposed(); _module.DrawCompanionSettings(); }
@@ -134,6 +162,7 @@ public sealed partial class FsdApplication : IFsdApplication
     public object GetMobPilotSnapshot() { ThrowIfDisposed(); return _module.GetMobPilotSnapshot(); }
     public object GetPilgrimsTraverseFsdPreflight(int startFloor) { ThrowIfDisposed(); return _module.GetPilgrimsTraverseFsdPreflight(startFloor); }
     public object StartPilgrimsTraverseFsd(int startFloor, int targetLoops, bool infinite, string? confirmation, string? leaveModeOverride = null) { ThrowIfDisposed(); return _module.StartPilgrimsTraverseFsd(startFloor, targetLoops, infinite, confirmation, leaveModeOverride); }
+
     public FsdControlResult StartFarming(FsdFarmingRequest request)
     {
         ThrowIfDisposed();
@@ -170,6 +199,7 @@ public sealed partial class FsdApplication : IFsdApplication
     {
         if (!_lifecycle.TryDispose())
             return;
+        CombatPositionNavigation.ClearYOffsetProvider(_playerYOffsetProvider);
         try { _module.Dispose(); }
         finally { _lease.Dispose(); }
     }

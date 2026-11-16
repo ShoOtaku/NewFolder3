@@ -167,12 +167,18 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
 
 		public void MarkOutsideDuty()
 		{
-			ResetDutyFields(isTransporting: false, isTransitioning: false);
+			bool transitioning = IsClientTransitioning;
+			ResetDutyFields(isTransporting: transitioning, isTransitioning: transitioning);
 			_lastKnownFloor = 0;
 			_lastKnownDungeonId = 0;
 			_lastFloorChangeAt = DateTime.MinValue;
 			ClearStateReadFailure();
 		}
+
+		// Read live conditions: the duty object can disappear before zoning finishes.
+		public static bool IsClientTransitioning => Service.LocalPlayer == null ||
+			Service.Condition[ConditionFlag.BetweenAreas] ||
+			Service.Condition[ConditionFlag.BetweenAreas51];
 
 		public double GetStabilizationTimeRemaining()
 		{

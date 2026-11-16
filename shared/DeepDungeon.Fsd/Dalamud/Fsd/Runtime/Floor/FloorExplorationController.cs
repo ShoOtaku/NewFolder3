@@ -3,10 +3,12 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using DeepDungeon.Fsd.Core;
+using MasterPlayer.MechanicRuntime;
 using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Game.ClientState.Objects.SubKinds;
 using Dalamud.Game.ClientState.Objects.Types;
 using Dalamud.Plugin.Services;
+using DeepDungeon.Fsd.Dalamud.Coord;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
@@ -51,8 +53,6 @@ internal sealed partial class FloorExplorationController : IDisposable
     private readonly HoardWaitEnder EndHoardEvidenceWait;
     private readonly Func<RunOptions> SnapshotRunOptions;
     private readonly Func<long> _nextRoomSearchRequestId;
-    private readonly Func<int> ReadMobForbiddenZoneCount;
-    private readonly Func<Vector3, object> ReadBossMovementDiagnostics;
     private readonly PassageExitRecorder RecordPassageExitDelayedByCombat;
     private readonly Action<string, EnemyChaseTarget> RecordChaseTargetEvent;
     private readonly ChaseFailureRecorder RecordChaseAcquisitionFailure;
@@ -61,6 +61,7 @@ internal sealed partial class FloorExplorationController : IDisposable
     private FloorPhase _phase { get => _getPhase(); set => _setPhase(value); }
     private string _status { get => _getStatus(); set => _setStatus(value); }
     private bool _nativeIntuitionActive => _getNativeIntuition();
+    internal Vector3? CameraChestPosition => _coordPipeline?.ActiveChestAttempt?.Waypoint.Position;
     internal TaskPhase CurrentTaskPhase => _taskRunner?.Phase ?? TaskPhase.Idle;
     internal void ResetTaskRunner(bool cancelNavigation = true) => _taskRunner?.Reset(cancelNavigation);
     internal void ClearActiveWaypoint() => _activeWaypoint = null;
@@ -70,6 +71,11 @@ internal sealed partial class FloorExplorationController : IDisposable
     private string _blockedMovementOperation = string.Empty;
     private string _blockedTransitionOperation = string.Empty;
     private static readonly TimeSpan GeneralTickInterval = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan RoomMismatchReenterDelay = TimeSpan.FromSeconds(3);
+    private const int RoomReentryAbortLimit = 3;
+    private RoomSearchContext? _roomPresenceContext;
+    private DateTime _roomMismatchSinceUtc = DateTime.MinValue;
+    private int _roomReentryAbortCount;
     private ObjectiveArbiterDecision CurrentObjectiveDecision => Objectives.ObjectiveDecision;
     private bool AllowsChestSidecarInteraction => Objectives.HasObjectiveDecision &&
         Objectives.ObjectiveDecision.Channels.Interaction != CommandChannelPermission.Blocked;
@@ -100,7 +106,7 @@ internal sealed partial class FloorExplorationController : IDisposable
         Action cancelMovement, Action<string, object> record,
         NativeStateRecorder recordNative, HoardWaitRecorder recordHoardWait,
         HoardWaitEnder endHoardWait, Func<RunOptions> snapshotRunOptions,
-        Func<long> nextRoomRequest, Func<int> readMobForbiddenZoneCount, Func<Vector3, object> readBossMovementDiagnostics,
+        Func<long> nextRoomRequest,
         PassageExitRecorder recordPassageExit, Action<string, EnemyChaseTarget> recordChaseTarget,
         ChaseFailureRecorder recordChaseFailure, PassageNavigationRecorder recordPassageNavigation, Action clearChaseAcquisitionFailure, NativeStateSnapshotRecorder recordNativeSnapshot)
     {
@@ -114,11 +120,19 @@ internal sealed partial class FloorExplorationController : IDisposable
         Executor = kind == FloorRuntimeKind.Normal
             ? new AutoPilotExecutor(Objectives.GetRoomProgress, detailedMap)
             : null;
+        // Floor-scoped knowledge binds before any normal decision; the
+        // spawn room and hoard baseline seal on the first native ingest.
+        context.Knowledge.BeginFloor(generation, dungeonId, floor, -1, -1);
         NativeIntuitionActive = nativeIntuitionActive;
         ObjectEvidence = new FloorObjectEvidenceTracker();
         RunTelemetry = runTelemetry;
         Items = items;
         _ctx = context; _navHelper = navigation; _navDriver = navigationDriver;
+        // Knowledge projections bind only where coordination actually
+        // drives the floor — controlled survey and boss paths keep their
+        // own executor behavior untouched.
+        if (UsesSiteCoordination)
+            Executor?.AttachKnowledge(context.Knowledge);
         _chaseHelper = chase; _pomanderManager = pomanders; _chatWatchers = watchers;
         context.CombatRecoveryBudget = RecoveryBudget;
         chase.IsTargetBlocked = context.IsCombatTargetSuppressed;
@@ -128,7 +142,7 @@ internal sealed partial class FloorExplorationController : IDisposable
         RecordReplayEvent = record; RecordNativeIntuitionState = recordNative;
         RecordHoardEvidenceWait = recordHoardWait; EndHoardEvidenceWait = endHoardWait;
         SnapshotRunOptions = snapshotRunOptions; _nextRoomSearchRequestId = nextRoomRequest;
-        ReadMobForbiddenZoneCount = readMobForbiddenZoneCount; ReadBossMovementDiagnostics = readBossMovementDiagnostics; RecordPassageExitDelayedByCombat = recordPassageExit;
+        RecordPassageExitDelayedByCombat = recordPassageExit;
         RecordChaseTargetEvent = recordChaseTarget; RecordChaseAcquisitionFailure = recordChaseFailure;
         RecordPassageNavigationEvent = recordPassageNavigation; ClearChaseAcquisitionFailure = clearChaseAcquisitionFailure; RecordNativeIntuitionSnapshot = recordNativeSnapshot;
     }
@@ -147,10 +161,6 @@ internal sealed partial class FloorExplorationController : IDisposable
     public PendingIntuitionState PendingIntuition => Items.PendingIntuition;
     public FloorItemExecutor Items { get; }
     public FloorItemUseSession ItemUse => Items.Session;
-    private MobMechanicsMovementGuard MobMechanicsGuard { get; } = new();
-    private bool MobMechanicsYielding { get; set; }
-    private DateTime NextMobMechanicsCheckUtc { get; set; }
-    private DateTime NextMobMechanicsDiagnosticUtc { get; set; }
     private FloorSearchState SearchState { get; } = new();
     public FloorObjectEvidenceTracker ObjectEvidence { get; }
     public RunFloorTelemetryTrace? RunTelemetry { get; }
@@ -165,16 +175,11 @@ internal sealed partial class FloorExplorationController : IDisposable
     public void AttachSurvey(FloorSurveyController survey) => Survey = survey;
     public bool IsDisposed { get; private set; }
 
-    private void ReplaceObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation,
-        RunContext context, EnemyChaseHelper chase, Action<string> setStatus, Action<string, object> record)
+    private void ReplaceObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation)
     {
         ActiveExecution?.Dispose();
-        ActiveExecution = objective == FloorObjectiveKind.None
-            ? null
-            : new ObjectiveExecution(objective, navigation,
-                new CombatPositionRecoveryController(context, navigation, chase, NormalGraph, RecoveryBudget, RunTelemetry, setStatus, record));
+        ActiveExecution = objective == FloorObjectiveKind.None ? null : new ObjectiveExecution(objective, navigation);
     }
-
 
     public void Dispose()
     {
@@ -188,10 +193,31 @@ internal sealed partial class FloorExplorationController : IDisposable
         ActiveRoomNavigationTarget = null;
         BandedRevealExpectation = null;
         Survey.Dispose();
+        Boss?.Dispose();
         Items.Dispose();
         ActiveExecution?.Dispose();
         ActiveExecution = null;
         ObjectEvidence.Dispose();
+        // Retire work, release the shared navigator, then drop floor-local data.
+        _coordPipeline?.Reset();
+        _navigation?.Cancel();
+        _navigation?.Dispose();
+        _siteDriver?.Dispose();
+        _coordRecoveryController = null;
+        // Clear the diagnostics publication only while THIS owner still
+        // owns it — never erase a newer publication.
+        if (Coord.NavDiag.Navigation == _navigation)
+            Coord.NavDiag.Navigation = null;
+        if (Coord.NavDiag.Map == _navBitmap)
+            Coord.NavDiag.Map = null;
+        _navFailureReported.Clear();
+        _coordOvercapRequest = null;
+        _coordOvercapAttempt = null;
+        _siteSearch = null;
+        _coordPipeline = null;
+        _siteDriver = null;
+        _navigation = null;
+        _ctx?.Knowledge.EndFloor(Generation);
         RunFloorStatePublisher = null;
         Objectives.Dispose();
     }
@@ -242,57 +268,475 @@ bool primaryOwnsOperation = true)
                (this.ActiveExecution?.ObjectiveRecords.Count ?? 0) > 0;
     }
 
+    /// <summary>Coord-facing room finish: runs the real FinalizeRoomSearch
+    /// domain path (outcome → progress marks → plan regen → context clear).
+    /// Rejected when there's no active objective execution to apply outcomes
+    /// to (terminal for the room — caller force-advances, not a wait);
+    /// Deferred while evidence is pending; Done when the room finalized.</summary>
+    private DateTime _coordFinishRejectedLogAt = DateTime.MinValue;
+
+    /// <summary>
+    /// The floor-scope profile: nav impls, danger source, bitmap/coverage and
+    /// the boundary are ensured here for ANY floor kind — boss floors get the
+    /// same scope so the escape claim path is live everywhere. Backend
+    /// selection happens once per floor; switching cancels the old backend.
+    /// </summary>
+    private EncounterPlanningSnapshot? ReadNavigationSnapshot() =>
+        Kind == FloorRuntimeKind.Normal
+            ? EncounterPlanningSnapshotRegistry.ReadLocalHazards()
+            : EncounterPlanningSnapshotRegistry.Read();
+
+    private unsafe void EnsureCoordScope(InstanceContentDeepDungeon* dd)
+    {
+        _scopeDd = dd;
+        _coordPipeline ??= new CoordPipeline(RecordReplayEvent);
+        _navigation ??= new Coord.NavigationSurface(() => _navBitmap, RecordReplayEvent, ReadNavigationSnapshot)
+        { AttackSuspended = () => _coordRecoveryController?.Suspend() };
+        // Rebuild floor terrain and coverage once per floor. All movement
+        // uses the same navigator, irrespective of the selected task.
+        var mapKey = dd == null ? null : FloorMapKey.For(dd);
+        if (dd != null && (Floor != _navBitmapFloor || (mapKey.HasValue ? _navBitmap?.Matches(mapKey, dd) != true : _navBitmap != null)))
+        {
+            if (mapKey is { } key)
+            {
+                var map = FloorMap.Get(key) ?? throw new InvalidDataException(FloorMap.Error);
+                _navBitmap = Coord.NavBitmap.Create(map, dd);
+                _coverage = new Coord.CoverageSet(
+                    _navBitmap.SampleCoverageAnchors(_navBitmap.RoomAnchors),
+                    _navBitmap.RoomFlags,
+                    RoomGraph.GetLocalPlayerRoomIndex(dd));
+                RecordReplayEvent("coord-floor-map", new
+                {
+                    floor = dd->Floor, territory = key.Territory, layout = key.Layout,
+                    anchors = _navBitmap.RoomAnchors.Count, closedBoxes = _navBitmap.ClosedBoxes
+                });
+            }
+            else
+            {
+                _navBitmap = null;
+                _coverage = null;
+            }
+            _navBitmapFloor = Floor;
+            Coord.NavDiag.Map = _navBitmap;
+            _navFailureReported.Clear();   // dedup is per floor+target
+            _siteDriver ??= new Coord.ObjectiveSiteDriver();
+            // Quota-position preview is a read-only last-target
+            // observation — the driver must never ACQUIRE a target just
+            // to describe the work.
+            _siteDriver.ChasePositionProvider =
+                () => _chaseHelper?.LastTarget is { } lt ? lt.LivePosition : null;
+            var siteOpts = SnapshotRunOptions();
+            _siteDriver.Configure(new Coord.ObjectiveSiteSource.ObjectiveSiteFilter(
+                OpenBronze: siteOpts.OpenBronze,
+                OpenSilver: siteOpts.OpenSilver,
+                OpenGold: siteOpts.OpenGold,
+                Banded: siteOpts.BandedEnabled,
+                HuntMobs: true, ProbeRooms: true, Exit: true),
+                new Coord.ObjectiveTunables());
+            _siteDriver.SetNormalGraph(NormalGraph);
+            if (UsesSiteCoordination && _ctx != null)
+            {
+                // Knowledge-driven path: run-pinned map policy/catalog,
+                // shared run knowledge, mode policy — never the live
+                // catalog manager or a second evidence scan.
+                _siteDriver.ConfigureWork(
+                    _ctx.DetailedMap, _ctx.Knowledge,
+                    () => FloorWorkPolicyBuilder.Build(
+                        _ctx.FarmingPlan, SnapshotRunOptions()),
+                    () => _ctx.Duty.PassageOpen == true,
+                    RecordReplayEvent);
+            }
+            _siteSearch = new Coord.SiteSearchBoundary(
+                _siteDriver, () => _scopeDd,
+                () => Service.LocalPlayer?.Position ?? Vector3.Zero,
+                () => ObjectEvidence.Current);
+            _navigation?.Cancel();
+            UpdateEncounterTask();
+            Coord.NavDiag.Navigation = _navigation;
+        }
+        _coordReal ??= new RealNativeBoundary(
+            () => _navigation!,
+            () => Service.LocalPlayer?.Position ?? Vector3.Zero,
+            () => _ctx?.ChestInteraction,
+            () => _siteSearch,
+            // The full chase target — identity, leg endpoint and live
+            // position travel together; the boundary never flattens them.
+            (pos, allowNew) => _chaseHelper?.GetClearingTarget(
+                _scopeDd, this.NormalGraph, this.LastObservedRoomIndex, pos,
+                out _, allowNew),
+            NavigateToAttack,
+            id => _chaseHelper?.CompleteChaseLeg(id),
+            ResolveCoordChestOvercap,
+            snapshot => _ctx?.CombatAssist.SelectForNavigation(_ctx, snapshot));
+    }
+
+    private static object V(Vector3 p) => new { p.X, p.Y, p.Z };
+
+    /// <summary>Bounded local bitmap window for a failure replay event —
+    /// ±half meters of cell states around the player, one char per cell
+    /// ('#' blocked, '.' free), capped to keep the payload sane.</summary>
+    private static object? BitmapWindow(
+        Coord.NavBitmap? map, Vector3 center, float half)
+    {
+        if (map == null)
+            return null;
+        var (xa, ya) = map.WorldToGrid(center + new Vector3(-half, 0, -half));
+        var (xb, yb) = map.WorldToGrid(center + new Vector3(half, 0, half));
+        // min/max come from the ORIGINAL pair, before either bound is
+        // assigned — the previous clamped-x0 comparison was wrong.
+        var x0 = Math.Clamp(Math.Min(xa, xb), 0, map.Width - 1);
+        var x1 = Math.Clamp(Math.Max(xa, xb), 0, map.Width - 1);
+        var yA = Math.Clamp(Math.Min(ya, yb), 0, map.Height - 1);
+        var yB = Math.Clamp(Math.Max(ya, yb), 0, map.Height - 1);
+        var truncated = false;
+        if (x1 - x0 > 256) { x1 = x0 + 256; truncated = true; }
+        if (yB - yA > 256) { yB = yA + 256; truncated = true; }
+        var rows = new List<string>(yB - yA + 1);
+        for (var y = yA; y <= yB; y++)
+        {
+            var sb = new System.Text.StringBuilder(x1 - x0 + 1);
+            for (var x = x0; x <= x1; x++)
+                sb.Append(map.IsFree(x, y) ? '.' : '#');
+            rows.Add(sb.ToString());
+        }
+        // World origin + dimensions + truncation keep the window
+        // spatially reconstructible.
+        var origin = map.GridToWorld(x0, yA);
+        return new
+        {
+            x0, y0 = yA, x1, y1 = yB, pixel = map.PixelSize,
+            origin = new { origin.X, origin.Y, origin.Z },
+            width = x1 - x0 + 1, height = yB - yA + 1, truncated, rows,
+        };
+    }
+
+    private NavOutcome NavigateToAttack(AttackTargetVerb goal)
+    {
+        if (_ctx == null || Service.LocalPlayer is not { IsDead: false } player ||
+            CombatTargetingHelpers.GetBattleCharaByGameObjectId(goal.TargetId) is not { IsDead: false, CurrentHp: > 0 } target)
+        {
+            _navigation!.Cancel();
+            return NavOutcome.Pending;
+        }
+        _coordRecoveryController ??= new(_ctx, _chaseHelper, RecoveryBudget, RunTelemetry,
+            status => _status = status, RecordReplayEvent);
+        var range = _ctx.CombatAssist.GetEngageRange();
+        if (!float.IsFinite(range) || range <= 0) range = CombatPositionPolicy.DefaultAttackRange(player.ClassJob.RowId);
+        return _coordRecoveryController.Navigate(_navigation!, target, player.Position, goal.Position, range, DateTime.UtcNow);
+    }
+
+    /// <summary>True while the coord escape claim owns movement — boss
+    /// controllers suppress their own movement on this flag.</summary>
+    internal bool CoordEscapeActive { get; private set; }
+
+    /// <summary>Normal-floor site coordination: the committed site-work
+    /// pipeline owns decisions and movement. Controlled PT capture keeps
+    /// its separate specialized workflow.</summary>
+    internal bool UsesSiteCoordination =>
+        Kind == FloorRuntimeKind.Normal && _ctx?.ControlledPtSurvey == null;
+
+    /// <summary>Internal boss navigation becomes available when the shared
+    /// mechanic host recognizes the encounter. A bound encounter retains
+    /// ownership during missing frames; unsupported bosses keep their flow.</summary>
+    internal bool UsesEncounterCoordination =>
+        Kind == FloorRuntimeKind.Boss
+        && _ctx?.ControlledPtSurvey == null
+        && (_coordPipeline?.CurrentEncounterOp != null
+            || MasterPlayer.MechanicRuntime.EncounterPlanningSnapshotRegistry.Read() is { Hints: not null } snapshot
+            && snapshot.Territory == (ushort)Service.ClientState.TerritoryType);
+
+    // Task selection does not select a different navigator.
+    private void UpdateEncounterTask()
+    {
+        if (!UsesEncounterCoordination) _coordPipeline?.RetireEncounter();
+        _navBackend = _navigation?.Solver ?? "navigation";
+        Coord.NavDiag.Navigation = _navigation;
+    }
+
+    /// <summary>Encounter-driven tick for the supported profile. Returns
+    /// false only for another profile — this profile owns the flow even
+    /// while waiting for data or a blocked channel. A settings-mode
+    /// switch mid-floor still unwinds the wrapper before returning.</summary>
+    internal unsafe bool UpdateBossEncounter(InstanceContentDeepDungeon* dd)
+    {
+        if (!UsesEncounterCoordination)
+        {
+            if (_coordPipeline?.CurrentEncounterOp != null)
+                UpdateEncounterTask();
+            return false;
+        }
+        if (Service.Condition[ConditionFlag.BetweenAreas]
+            || Service.Condition[ConditionFlag.BetweenAreas51])
+        {
+            _navigation?.Cancel();
+            _coordPipeline?.SuspendEncounter();
+            _status = "boss encounter - waiting for floor load";
+            return true;
+        }
+        if (Service.LocalPlayer is not { } p || p.IsDead)
+        {
+            _navigation?.Cancel();
+            _coordPipeline?.SuspendEncounter();
+            _status = "boss encounter - waiting for player";
+            return true;
+        }
+        if (!RequireMovementPermission("boss encounter", FloorObjectiveKind.DefeatBoss))
+        {
+            _navigation?.Cancel();
+            _coordPipeline?.SuspendEncounter();
+            return true;
+        }
+        EnsureCoordScope(dd);
+        UpdateEncounterTask();
+        var snap = MasterPlayer.MechanicRuntime.EncounterPlanningSnapshotRegistry.Read();
+        if (snap != null && snap.Territory != (ushort)Service.ClientState.TerritoryType)
+            snap = null;
+        _coordPipeline?.TickEncounter(this.Floor, RoomGraph.GetLocalPlayerRoomIndex(dd),
+            DateTime.UtcNow, p.Position,
+            Service.Condition[ConditionFlag.InCombat], p.IsDead,
+            snap, _coordSnapshot, ObjectEvidence.Current, _coordReal!);
+        // Buffs only while a FRESH live boss remains and the op runs —
+        // a stale-but-alive snapshot never consumes them.
+        var live = snap is { BossDead: false }
+            && DateTime.UtcNow - snap.CapturedAt <= TimeSpan.FromMilliseconds(500)
+            && _coordPipeline?.EncounterStatus == Coord.OpStatus.Running;
+        Boss.UpdateManagedEncounter(dd,
+            _coordPipeline?.CurrentEncounterOp is { } encOp
+                ? $"{encOp.Describe()}|nav:{_navigation?.Status ?? _navBackend}"
+                : _status, live);
+        return true;
+    }
+
+    /// <summary>
+    /// Boss-floor escape path: same claim arbitration as normal floors,
+    /// escape slice only — the single movement owner on every floor kind.
+    /// </summary>
+    internal unsafe void UpdateBossEscape(InstanceContentDeepDungeon* dd)
+    {
+        CoordEscapeActive = false;
+        if (Service.LocalPlayer is not { } p)
+            return;
+        EnsureCoordScope(dd);
+        _coverage?.Update(p.Position);
+        CoordEscapeActive = !p.IsDead && _navigation!.NeedsSafetyPlan;
+        _coordPipeline!.ExecuteFloorMovement(_coordReal!, null, CoordEscapeActive, p.Position);
+    }
+
+    /// <summary>Normal coord decision prep — invoked by the outer update
+    /// once per frame AFTER ingest and BEFORE the completion check and the
+    /// pipeline tick: coord scope, options, intuition timeout, general
+    /// pomander cadence, then the site scheduler's decision tick. The
+    /// driver is not ticked a second time inside UpdateFloorActive.</summary>
+    internal unsafe void PrepareNormalDecision(InstanceContentDeepDungeon* dd)
+    {
+        if (Service.LocalPlayer is { } coordPlayer)
+        {
+            EnsureCoordScope(dd);
+            ResolveCurrentFloorIntuitionTimeoutIfNeeded(dd);
+            SyncLiveRunOptions(dd, coordPlayer);
+            if (ShouldRunGeneralTick())
+                TryUseGeneralAutoPomander(dd);
+            // One activity sample per decision tick — the same booleans
+            // feed the driver rebuild, the pipeline tick and channel
+            // permissions; a transition dirties the route immediately.
+            _normalActivity = new Coord.FloorActivity(
+                _ctx?.Duty.PassageOpen == true,
+                Service.Condition[ConditionFlag.InCombat]);
+            _siteSearch?.SetActivity(_normalActivity);
+            _siteSearch?.Tick();
+            // Diagnostic snapshot built from current knowledge + the
+            // captured activity — never fabricated from legacy executor
+            // defaults (the coord path skips that branch entirely).
+            var fk = _ctx?.Knowledge?.Floor;
+            if (fk != null)
+            {
+                _coordSnapshot = new ObjectiveArbiterSnapshot(
+                    BossObjective: false,
+                    VisibleBandedChest: fk.PendingBandedWork ||
+                        fk.ObservedBandedPositions.Count > 0,
+                    KnownOrConfirmedHoard: fk.EvidenceState is
+                        HoardEvidenceState.IntuitionDirect or
+                        HoardEvidenceState.IntuitionWaitingForIndicator,
+                    RequiredHoardDiscovery: fk.EvidenceState is
+                        HoardEvidenceState.BlindSearch or
+                        HoardEvidenceState.IntuitionActiveUnconfirmed &&
+                        !fk.SearchObligationsResolved,
+                    MandatoryHoardTerminal: fk.SearchObligationsResolved,
+                    PassageOpen: _normalActivity.PassageOpen,
+                    PassageActivationRequired: !_normalActivity.PassageOpen &&
+                        fk.SearchObligationsResolved,
+                    CombatInProgress: _normalActivity.InCombat,
+                    RoutineCombatAllowed: _normalActivity.InCombat ||
+                        !_normalActivity.PassageOpen,
+                    ActiveChestInteraction: CurrentInteractionAttempt != null,
+                    SuppressCombat: _ctx?.FarmingPlan?.ReusesSave == true,
+                    RequiredChestWork: fk.RequiredWorkRemaining > 0);
+            }
+        }
+    }
+
     internal unsafe void UpdateFloorActive(InstanceContentDeepDungeon* dd)
     {
-        if (YieldToMobMechanics())
+        // Coord floors (UsesSiteCoordination): the committed work pipeline
+        // owns movement + interaction; the non-coord path retains its
+        // compatibility behavior and the pipeline runs as comparison only.
+        if (Service.LocalPlayer is { } coordPlayer)
         {
-            ActiveExecution?.Recovery.YieldMovement();
-            if (Service.LocalPlayer is { } player && ShouldRunGeneralTick()) SyncLiveRunOptions(dd, player);
-            return;
-        }
-        if (this.Survey.TryUpdateControlledActive(dd, CurrentObjectiveDecision.PrimaryObjective))
-            return;
-
-        var objective = CurrentObjectiveDecision.PrimaryObjective;
-        if (!EnsureObjectiveExecution(objective))
-            return;
-        if (TryActivateVisibleBandedObjective(dd))
-            return;
-
-        bool continuePlannedRoute = ShouldContinuePlannedRouteForPassageActivation(objective);
-        if (!IsSearchObjective(objective) && !continuePlannedRoute && HasActiveSearchExecution() && !StopActiveSearchExecution(objective))
-            return;
-
-        if (IsSearchObjective(objective) || continuePlannedRoute)
-        {
-            UpdateSearchMechanics(dd);
-            return;
-        }
-
-        if (objective is FloorObjectiveKind.ActivatePassage or FloorObjectiveKind.FinishCombatBeforePassage)
-        {
-            if (_ctx?.FarmingPlan?.ReusesSave == true)
+            if (!UsesSiteCoordination)
             {
-                CancelActiveMovement();
-                _ctx.ClearPreferredAggroTarget();
-                _status = "速刷：等待跳層道具生效／脫離戰鬥";
+                EnsureCoordScope(dd);
+                _siteSearch?.Tick();
+            }
+            _coverage?.Update(coordPlayer.Position);
+            Vector3? passageDest = null, passageCenter = null, passageActorPos = null;
+            int passageRoomIdx = -1;
+            var evidence = this.ObjectEvidence.Current;
+            if (evidence?.Available == true &&
+                _siteSearch is { KnowledgeDriven: true, Head: { } passageHead } &&
+                passageHead.Kind == Coord.ObjectiveSiteKind.Passage)
+            {
+                // Execute the committed entity. A fresh nearest-actor lookup can
+                // silently navigate to another beacon on HoH's large floors.
+                var position = passageHead.Position;
+                foreach (var actor in evidence.PassageActors)
+                    if (actor.GameObjectId == passageHead.ActorId)
+                    {
+                        position = actor.Position;
+                        passageActorPos = position;
+                        break;
+                    }
+                passageDest = passageHead.ActorId != 0
+                    ? ResolvePassageWalkingPosition(position) : position;
+                passageRoomIdx = passageHead.RoomIndex;
+                if (MapPos.TryGetRoomCenter(dd, passageRoomIdx, out var center))
+                    passageCenter = center;
+            }
+            else if (evidence?.Available == true &&
+                PassageLocator.TryResolvePassageDestination(dd, evidence, out var pd, out bool usedActor, out var passageRoom))
+            {
+                // Raw actor position stays a distinct fact from the
+                // projected walking point — ExitPassageOp needs both.
+                passageDest = usedActor ? ResolvePassageWalkingPosition(pd) : pd;
+                if (usedActor)
+                    passageActorPos = pd;
+                passageRoomIdx = passageRoom;
+                if (MapPos.TryGetRoomCenter(dd, passageRoom, out var center))
+                    passageCenter = center;
+            }
+            RoomWaypoint? chestWaypoint = null;
+            // Fact-driven: a visible banded chest is an opportunistic entity,
+            // not something the domain decision must schedule.
+            if (evidence != null &&
+                BandedChestLocator.TryFindNearestToPlayer(evidence, out var bandedPos) &&
+                bandedPos.HasValue)
+            {
+                chestWaypoint = new RoomWaypoint(bandedPos.Value, RoomObjectiveType.ChestBanded);
+            }
+            // Coord is the floor driver on every normal floor with a coverage
+            // set — ops are selected from facts inside the pipeline.
+            bool takeover = this.Kind == FloorRuntimeKind.Normal && _coverage != null;
+            // Ownership is published BEFORE the pipeline tick — a chest
+            // interaction dispatched inside it can synchronously raise an
+            // overcap event whose handlers read CurrentInteractionAttempt.
+            var takeoverChanged = takeover != _coordTookOver;
+            _coordTookOver = takeover;
+            var boundary = (INativeBoundary)_coordReal!;
+            _coordPipeline!.Tick(
+                this.Floor,
+                RoomGraph.GetLocalPlayerRoomIndex(dd),
+                DateTime.UtcNow,
+                coordPlayer.Position,
+                _normalActivity.InCombat,
+                coordPlayer.IsDead,
+                _normalActivity.PassageOpen,
+                _navigation!.NeedsSafetyPlan,
+                _coordSnapshot,
+                passageDest,
+                passageCenter,
+                passageRoomIdx,
+                evidence,
+                chestWaypoint,
+                _coverage,
+                boundary,
+                passageActorPos);
+            if (takeoverChanged)
+            {
+                RecordReplayEvent("coord-takeover", new
+                {
+                    floor = this.Floor,
+                    active = takeover,
+                    op = _coordPipeline.CurrentObjective.ToString(),
+                    nav = _navBackend
+                });
+            }
+            // First no-progress failure for a work target/floor: capture
+            // the local bitmap window + BOTH paths + the follow state
+            // while they still exist (before any cancel clears them).
+            if (_navigation?.Failure is { Length: > 0 } navFailure &&
+                navFailure.StartsWith("no-progress", StringComparison.Ordinal) &&
+                _navFailureReported.Add(
+                    $"{this.Floor}|{_siteDriver?.HeadToken.FloorGeneration}|" +
+                    $"{_siteDriver?.HeadToken.Key}|" +
+                    $"{_siteDriver?.HeadToken.Attempt}"))
+            {
+                var raw = _navigation.RawPath;
+                var smoothed = _navigation.SmoothedPath;
+                Utilities.DirectMovementController.TryReadNativeMotion(out var mot);
+                RecordReplayEvent("coord-nav-no-progress", new
+                {
+                    floor = this.Floor,
+                    reason = navFailure,
+                    headToken = _siteDriver?.HeadToken,
+                    movementOwner = _coordPipeline?.MovementOwner,
+                    leg = _navigation.LegIndex,
+                    legs = smoothed.Count,
+                    player = V(coordPlayer.Position),
+                    desired = V(_navigation.CommandedTarget),
+                    final = V(_navigation.FinalDestination),
+                    radius = _navigation.ArrivalRadius,
+                    inputEnabled = _navigation.InputEnabled,
+                    nativeInput = new { mot.HasInput, mot.Speed },
+                    rawCount = raw.Count,
+                    rawTruncated = raw.Count > 4096,
+                    rawPath = raw.Take(4096).Select(p => V(p)).ToArray(),
+                    smoothedCount = smoothed.Count,
+                    smoothedTruncated = smoothed.Count > 4096,
+                    smoothedPath = smoothed.Take(4096).Select(p => V(p)).ToArray(),
+                    bitmap = BitmapWindow(
+                        _navigation.CurrentBitmap, coordPlayer.Position, 10f),
+                });
+            }
+            if (UsesSiteCoordination)
+            {
+                // Committed site work executes through the pipeline only —
+                // no legacy waypoint execution, no class-wide blocking that
+                // could cancel the freshly bound op.
                 return;
             }
-            UpdateClearingMechanics(dd);
-            return;
+            if (_coordPipeline.IsObjectiveBlocked(_coordPipeline.SelectedObjective))
+            {
+                // No fallback: a blocked objective fails explicitly instead of
+                // silently handing back to the legacy path.
+                _status = $"coord objective failed (no fallback): {_coordPipeline.SelectedObjective}";
+                return;
+            }
+            if (takeover)
+            {
+                // Outcome accounting belongs to the observation layer, not the
+                // execution path — the ledger must stay open while coord ops
+                // drive, otherwise outcomes are silently dropped. Keyed on
+                // the op the pipeline actually selected from facts.
+                if (_coordPipeline.CurrentObjective != FloorObjectiveKind.None)
+                    EnsureObjectiveExecution(_coordPipeline.CurrentObjective);
+                return;
+            }
+            // On non-coord floors (boss/terminal) the pipeline still ticks for
+            // hazard-aware movement; objective status stays with the floor's
+            // own controller.
+            if (this.Kind == FloorRuntimeKind.Normal)
+                _status = "objective unhandled (no coverage): " +
+                    _coordPipeline.SelectedObjective;
         }
-
-        if (objective == FloorObjectiveKind.EnterPassage)
-        {
-            UpdatePassageNavigation(dd);
-            return;
-        }
-
-        CancelActiveMovement();
-        _chaseHelper.Reset();
-        ResetPatrolPlan();
-        _ctx?.ClearPreferredAggroTarget();
-        _status = $"Floor active, waiting for objective ({CurrentObjectiveDecision.PrimaryObjective})";
     }
 
     private bool EnsureObjectiveExecution(FloorObjectiveKind objective)
@@ -323,45 +767,134 @@ bool primaryOwnsOperation = true)
             _ctx?.ClearPreferredAggroTarget();
         }
 
-        this.ReplaceObjectiveExecution(objective, _navHelper, _ctx!, _chaseHelper, status => _status = status, RecordReplayEvent);
+        ReplaceObjectiveExecution(objective, _navHelper);
         return true;
     }
 
-    private unsafe bool TryActivateVisibleBandedObjective(InstanceContentDeepDungeon* dd)
+    /// <summary>Cancel the coord movement surface — the real surface, not
+    /// only the legacy nav helper. Claims resolve fresh next tick.</summary>
+    internal void CancelCoordMovement()
     {
-        if (CurrentObjectiveDecision.PrimaryObjective != FloorObjectiveKind.OpenVisibleBandedChest ||
-            (_activeWaypoint ?? _executor?.CurrentWaypoint)?.Type == RoomObjectiveType.ChestBanded)
-        {
-            return false;
-        }
-        var player = Service.LocalPlayer;
-        if (this.NormalGraph == null || player == null || this.ObjectEvidence.Current is not { } evidence)
-        {
-            _status = "Waiting to activate visible banded objective...";
-            return true;
-        }
-        if (!BandedChestLocator.TryFindNearestToPlayer(evidence, out var bandedPosition))
-        {
-            _status = "Waiting for banded chest evidence...";
-            return true;
-        }
-        if (!bandedPosition.HasValue)
-            return false;
-
-        int roomIndex = RoomGraph.GetRoomIndexForPosition(
-            dd,
-            bandedPosition.Value,
-            this.NormalGraph.ReachableRooms,
-            -1);
-        if (roomIndex < 0)
-        {
-            _status = "Waiting to resolve visible banded chest room...";
-            return true;
-        }
-
-        HandleVisibleBandedDetection(dd, player, roomIndex, bandedPosition.Value);
-        return true;
+        _navigation?.Cancel();
+        if (UsesEncounterCoordination || _coordPipeline?.CurrentEncounterOp != null)
+            _coordPipeline?.SuspendEncounter();
     }
+
+    private readonly int[] _pomanderStock = new int[RunKnowledge.PomanderSlotCount];
+    private readonly bool[] _pomanderActive = new bool[RunKnowledge.PomanderSlotCount];
+
+    /// <summary>
+    /// Outer-update knowledge ingest: seal floor facts once, refresh the
+    /// pomander/native snapshot, chat-derived intuition facts, the hoard
+    /// counter (acquisition = native delta) and shared object evidence —
+    /// sight positions, observed banded, exact reveal. Knowledge updates
+    /// only mark the route dirty; nothing here replans or moves.
+    /// </summary>
+    internal unsafe void IngestKnowledge(InstanceContentDeepDungeon* dd)
+    {
+        var knowledge = _ctx?.Knowledge;
+        var fk = knowledge?.Floor;
+        if (knowledge == null || fk == null || dd == null)
+            return;
+        // The floor baseline seals before any count-derived lifecycle
+        // observation — a -1 baseline must never be eligible.
+        fk.SealFloor(RoomGraph.GetLocalPlayerRoomIndex(dd), dd->HoardCount);
+        for (var i = 0; i < RunKnowledge.PomanderSlotCount; i++)
+        {
+            _pomanderStock[i] = _pomanderManager.GetCount((uint)i);
+            _pomanderActive[i] = _pomanderManager.IsActive((uint)i);
+        }
+        knowledge.SetPomanderSnapshot(_pomanderStock, _pomanderActive);
+        fk.ObserveNativeIntuition(_nativeIntuitionActive);
+        fk.ObserveSightState(_chatWatchers?.SightState ?? SightUseState.None);
+        fk.ObserveIntuitionFacts(
+            _chatWatchers?.UsedIntuitionThisFloor == true,
+            _chatWatchers?.IntuitionUsePendingThisFloor == true,
+            _chatWatchers?.ChatSaysHoard == true,
+            _chatWatchers?.ChatSaysNoHoard == true);
+        if (_chatWatchers?.ChatSaysNoHoard == true)
+            _executor?.ClearCachedHoardIndicator();
+        ObserveHoardCount(dd, "coord-ingest");
+
+        var evidence = ObjectEvidence.Current;
+        if (evidence?.Available != true)
+            return;
+        _executor?.ObserveSightTrapIndicators(evidence);
+        // Chest entities/kind/position persist across object unload — the
+        // point is knowledge, never a live pointer.
+        foreach (var chest in evidence.Chests)
+        {
+            fk.ObserveChest(chest.Object.EntityId, (int)chest.Kind,
+                chest.Object.Position,
+                RoomIndexOf(dd, chest.Object.Position) ?? -1);
+            if (chest.Kind == FloorChestKind.Banded)
+                fk.ObserveBanded(chest.Object.Position);
+        }
+        // Exact reveal: a position fact that survives object unload — only
+        // accepted while the lifecycle still wants indicators and no
+        // accepted/inherited NoHoard stands; after acquisition a lingering
+        // loaded marker must not re-add reveal work.
+        if (BandedChestLocator.TryFindHoardIndicatorMatch(evidence, out var indicator) &&
+            indicator.HasValue && !fk.HoardAcquired &&
+            !fk.ChatSaysNoHoard && !fk.InheritedNoHoardInferred &&
+            (_executor?.CanAcceptHoardIndicator ?? true))
+        {
+            var had = fk.ExactHoardPosition;
+            fk.SetExactHoard(indicator.Value.Position,
+                RoomIndexOf(dd, indicator.Value.Position));
+            if (!had.HasValue && fk.ExactHoardPosition.HasValue)
+                RecordReplayEvent("cached-hoard-indicator-updated", new
+                {
+                    x = indicator.Value.Position.X,
+                    y = indicator.Value.Position.Y,
+                    z = indicator.Value.Position.Z
+                });
+        }
+    }
+
+    private unsafe int? RoomIndexOf(InstanceContentDeepDungeon* dd, Vector3 pos)
+    {
+        // Nearest center within the 30m disk — adjacent room centers'
+        // disks overlap, so first-match order must not pick the room.
+        var best = -1;
+        var bestD = 30f * 30f;
+        for (var r = 0; r < RoomGraph.MaxRooms; r++)
+            if (MapPos.TryGetRoomCenter(dd, r, out var c))
+            {
+                var dx = c.X - pos.X;
+                var dz = c.Z - pos.Z;
+                var d = dx * dx + dz * dz;
+                if (d < bestD) { bestD = d; best = r; }
+            }
+        return best < 0 ? null : best;
+    }
+
+    /// <summary>Coord-mode permissions: movement and the primary channel
+    /// belong to the pipeline's actual objective; combat permission derives
+    /// from real combat/passage state, and chest interaction stays
+    /// op-owned (no legacy waypoint sidecar).</summary>
+    private void RefreshCoordObjectiveDecision()
+    {
+        var primary = _coordPipeline?.SelectedObjective ?? FloorObjectiveKind.None;
+        var passageOpen = _normalActivity.PassageOpen;
+        var inCombat = _normalActivity.InCombat;
+        var combat = primary == FloorObjectiveKind.FinishCombatBeforePassage
+            ? CommandChannelPermission.PrimaryObjective
+            : inCombat || !passageOpen
+                ? CommandChannelPermission.CompatibleSidecar
+                : CommandChannelPermission.Blocked;
+        var channels = new ObjectiveChannelPermissions(
+            primary == FloorObjectiveKind.None
+                ? CommandChannelPermission.Blocked
+                : CommandChannelPermission.PrimaryObjective,
+            combat,
+            CommandChannelPermission.Blocked,
+            primary == FloorObjectiveKind.EnterPassage
+                ? CommandChannelPermission.PrimaryObjective
+                : CommandChannelPermission.Blocked);
+        Objectives.SetObjectiveDecision(new ObjectiveArbiterDecision(primary, channels));
+    }
+
 
     internal bool RequireTransitionPermission(string operation, FloorObjectiveKind requiredObjective)
     {
@@ -466,6 +999,11 @@ bool primaryOwnsOperation = true)
         {
             return;
         }
+        if (UsesSiteCoordination)
+        {
+            RefreshCoordObjectiveDecision();
+            return;
+        }
         var objectEvidence = this.Kind == FloorRuntimeKind.Normal
             ? this.ObjectEvidence.Current
             : null;
@@ -538,6 +1076,7 @@ bool primaryOwnsOperation = true)
             RequiredChestWork: _ctx?.RunOptions.Current.HarvestChestsRequired == true &&
                 (executor?.PlannedRouteCount > 0 || executor?.RoomContext != null ||
                  _activeWaypoint.HasValue || (_taskRunner != null && _taskRunner.Phase != TaskPhase.Idle)));
+        _coordSnapshot = snapshot;
         if (!this.Objectives.RefreshObjectiveDecision(
                 snapshot,
                 objectEvidence?.Version ?? 0,
@@ -578,6 +1117,10 @@ bool primaryOwnsOperation = true)
             return;
 
         PlanningState.RequestRefresh(this.Floor, this.DungeonId, reason);
+        // Coord path: a refresh request marks the route dirty only — never
+        // a synchronous replan or movement callback.
+        if (UsesSiteCoordination)
+            _siteDriver?.MarkRouteDirty();
     }
 
     internal void ObserveFloorRuntimeNativeIntuitionEdge()
@@ -908,37 +1451,65 @@ bool primaryOwnsOperation = true)
                     $"Waiting for {pendingFloorItemUse.Key.Kind} {pendingFloorItemUse.Key.ItemId} use confirmation";
                 return;
             }
-            if (!RefreshCachedHoardIndicator(dd))
+            if (UsesSiteCoordination)
             {
-                _status = "Waiting for hoard indicator evidence...";
-                return;
+                // Coord floors have no generated room queue: knowledge is
+                // sealed by the outer ingest and the route is committed
+                // lazily by the site scheduler on the first active tick.
+                // A positive Intuition with an unloaded position becomes
+                // room-intel work, not a setup gate.
+                PlanningState.MarkSetupPlanGenerated();
+                RecordNativeIntuitionSnapshot("first-floor-plan-generated", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
+                RecordReplayEvent("floor-plan-generated", new
+                {
+                    floor = dd->Floor,
+                    reason = "floor-setup-generated",
+                    coordination = "site-work"
+                });
+                PublishInitialRunFloorState(dd, player.Position);
             }
-            long evidenceVersion = PlanningState.PendingEvidenceVersion;
-            _executor.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
-            MarkPlanRefreshConsumed(evidenceVersion);
-            PlanningState.MarkSetupPlanGenerated(_executor.HasPlanningSnapshot);
-            if (!PlanningState.SetupPlanGenerated)
+            else
             {
-                _status = "Waiting for floor planning evidence...";
-                return;
+                if (!RefreshCachedHoardIndicator(dd))
+                {
+                    _status = "Waiting for hoard indicator evidence...";
+                    return;
+                }
+                long evidenceVersion = PlanningState.PendingEvidenceVersion;
+                _executor.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
+                MarkPlanRefreshConsumed(evidenceVersion);
+                PlanningState.MarkSetupPlanGenerated(_executor.HasPlanningSnapshot);
+                if (!PlanningState.SetupPlanGenerated)
+                {
+                    _status = "Waiting for floor planning evidence...";
+                    return;
+                }
+                RecordNativeIntuitionSnapshot("first-floor-plan-generated", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
+                RecordReplayEvent("floor-plan-generated", BuildPlanReplayPayload(dd->Floor, "floor-setup-generated"));
+                PublishInitialRunFloorState(dd, player.Position);
             }
-            RecordNativeIntuitionSnapshot("first-floor-plan-generated", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
-            RecordReplayEvent("floor-plan-generated", BuildPlanReplayPayload(dd->Floor, "floor-setup-generated"));
-            PublishInitialRunFloorState(dd, player.Position);
         }
         else
         {
-            if (!RefreshCachedHoardIndicator(dd))
+            if (UsesSiteCoordination)
             {
-                _status = "Waiting for hoard indicator evidence...";
-                return;
+                if (PlanningState.RefreshRequested)
+                    MarkPlanRefreshConsumed(PlanningState.PendingEvidenceVersion);
             }
-            if (PlanningState.RefreshRequested)
+            else
             {
-                long evidenceVersion = PlanningState.PendingEvidenceVersion;
-                _executor!.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
-                MarkPlanRefreshConsumed(evidenceVersion);
-                RecordReplayEvent("floor-plan-regenerated-evidence", BuildPlanReplayPayload(dd->Floor, "floor-setup-evidence-refresh"));
+                if (!RefreshCachedHoardIndicator(dd))
+                {
+                    _status = "Waiting for hoard indicator evidence...";
+                    return;
+                }
+                if (PlanningState.RefreshRequested)
+                {
+                    long evidenceVersion = PlanningState.PendingEvidenceVersion;
+                    _executor!.GeneratePlan(dd, normalGraph, _chatWatchers, player.Position, _nativeIntuitionActive);
+                    MarkPlanRefreshConsumed(evidenceVersion);
+                    RecordReplayEvent("floor-plan-regenerated-evidence", BuildPlanReplayPayload(dd->Floor, "floor-setup-evidence-refresh"));
+                }
             }
         }
 
@@ -949,7 +1520,21 @@ bool primaryOwnsOperation = true)
             return;
         }
 
-        if (executor.HoardEvidenceState == HoardEvidenceState.IntuitionPending ||
+        if (UsesSiteCoordination)
+        {
+            // Preserve the pending-chat resolution wait only: positive
+            // Intuition with an unloaded position must NOT gate here — it
+            // becomes room-intel work under the scheduler.
+            var intuitionPending = _chatWatchers?.UsedIntuitionThisFloor == true &&
+                _chatWatchers.ChatSaysHoard != true && _chatWatchers.ChatSaysNoHoard != true;
+            if (intuitionPending)
+            {
+                _status = $"Waiting for hoard evidence ({HoardEvidenceState.IntuitionPending})";
+                RecordHoardEvidenceWait("floor-setup-waiting-hoard-evidence");
+                return;
+            }
+        }
+        else if (executor.HoardEvidenceState == HoardEvidenceState.IntuitionPending ||
             (executor.IsComplete && !executor.IsHoardWorkResolved))
         {
             _status = $"Waiting for hoard evidence ({executor.HoardEvidenceState})";
@@ -1003,6 +1588,16 @@ bool primaryOwnsOperation = true)
 
     internal bool HandleNoHoardEvidenceInvalidated(string reason)
     {
+        if (UsesSiteCoordination)
+        {
+            // Knowledge path: the chat/inherited resolver already wrote the
+            // observation — clear the cached reveal point and mark the
+            // route dirty. No old objective completion or movement cancel.
+            RecordReplayEvent("cached-hoard-indicator-cleared", new { reason });
+            _executor?.ClearCachedHoardIndicator();
+            _siteDriver?.MarkRouteDirty();
+            return true;
+        }
         var currentPlanEntry = _executor?.CurrentPlanEntry;
         bool activeChestObjective =
             this.ActiveExecution?.ObjectiveRecords.Any(
@@ -1228,11 +1823,10 @@ bool primaryOwnsOperation = true)
 
     private sealed class ObjectiveExecution : IDisposable
     {
-        public ObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation, CombatPositionRecoveryController recovery)
+        public ObjectiveExecution(FloorObjectiveKind objective, NavigationHelper navigation)
         {
             Objective = objective;
             TaskRunner = new WaypointTaskRunner(navigation);
-            Recovery = recovery;
         }
 
         public FloorObjectiveKind Objective { get; set; }
@@ -1245,11 +1839,9 @@ bool primaryOwnsOperation = true)
         public List<int> PatrolRooms { get; } = new();
         public int PatrolIndex;
         public int CurrentPatrolRoom = -1;
-        public CombatPositionRecoveryController Recovery { get; }
 
         public void Dispose()
         {
-            Recovery.Dispose();
             TaskRunner.Reset(cancelNavigation: false);
             ActiveWaypoint = null;
             WaypointTelemetry = null;
@@ -1327,73 +1919,28 @@ bool primaryOwnsOperation = true)
     }
     private ChestInteractionAttempt? ActiveChestAttempt => this.ActiveExecution?.ChestAttempt;
 
+    /// <summary>Coord drives this floor's work — the knowledge pipeline or
+    /// a legacy floor that took over the pipeline path.</summary>
+    private bool CoordOwnsWork => UsesSiteCoordination || _coordTookOver;
+
+    /// <summary>The chest attempt the actual work pipeline owns: the coord
+    /// op's attempt while coordination drives this floor — never a stale
+    /// legacy sidecar when coord owns work and has no active chest —
+    /// else the legacy execution's attempt.</summary>
+    private ChestInteractionAttempt? CurrentInteractionAttempt =>
+        CoordOwnsWork ? _coordPipeline?.ActiveChestAttempt : ActiveChestAttempt;
+
     private const float TrapStandDurationSeconds = 3.0f;
     private const float IntelSettleDurationSeconds = 1.0f;
-    private const float SilverWaitTimeoutSeconds = 30.0f;
+    // Shared with Coord.OpenChestOp — the EXISTING silver precondition
+    // wait, not a new limit.
+    internal const float SilverWaitTimeoutSeconds = 30.0f;
     private const float PostRoomPomanderRetrySeconds = 3.0f;
     private const float BandedRevealExpectationSeconds = 3.0f;
     internal const uint StrengthStatusId = 687;
     internal const uint SteelStatusId = 1100;
     internal const uint DeepDungeonCurseStatusId = 1087;
 
-    private unsafe void UpdateSearchMechanics(InstanceContentDeepDungeon* dd)
-    {
-        var player = Service.LocalPlayer;
-        if (player == null) return;
-        if (SearchState.ObjectiveOutcomeRejected)
-            return;
-
-        if (ShouldRunGeneralTick())
-        {
-            if (RunGeneralSearchTick(dd, player))
-                return;
-        }
-
-        if (ShouldPauseForObjectiveRetry())
-            return;
-
-        if (TryApplyPassageWorkPolicy(dd, player))
-            return;
-
-        if (TryCompleteSearchExecution())
-            return;
-
-        RegeneratePlanForEvidenceIfIdle(dd, player);
-        if (!RequireMovementPermission(
-                "search task or room navigation",
-                primaryOwnsOperation: IsSearchObjective(CurrentObjectiveDecision.PrimaryObjective) ||
-                                          ShouldContinuePlannedRouteForPassageActivation(CurrentObjectiveDecision.PrimaryObjective)))
-        {
-            return;
-        }
-
-        if (_taskRunner!.Phase != TaskPhase.Idle)
-        {
-            UpdateActiveTask(dd, player);
-            return;
-        }
-
-        if (_executor!.RoomContext != null)
-        {
-            ContinueRoomSearch(dd, player);
-            return;
-        }
-
-        var targetRoom = _executor.CurrentTargetRoomIndex;
-        if (targetRoom.HasValue)
-        {
-            int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-            if (playerRoom == targetRoom.Value)
-            {
-                BeginPlannedRoomSearch(dd, player);
-            }
-            else
-            {
-                NavigateToRoom(dd, targetRoom.Value, player);
-            }
-        }
-
-    }
 
     private unsafe bool TryApplyPassageWorkPolicy(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
     {
@@ -1628,7 +2175,7 @@ bool primaryOwnsOperation = true)
                 : new
                 {
                     catalog = _executor.RoomContext.FallbackCatalogCandidateCount,
-                    palacePal = _executor.RoomContext.FallbackPalacePalCandidateCount,
+                    palantir = _executor.RoomContext.FallbackPalantirCandidateCount,
                     union = _executor.RoomContext.FallbackUnionCandidateCount
                 },
             planEntry = _executor.CurrentPlanEntry.HasValue
@@ -1921,6 +2468,72 @@ bool primaryOwnsOperation = true)
         };
     }
 
+    private enum RoomPresenceDecision
+    {
+        Continue,
+        Reenter,
+        GiveUp
+    }
+
+    private RoomPresenceDecision EvaluateRoomPresence(RoomSearchContext roomContext, int playerRoom)
+    {
+        if (!ReferenceEquals(_roomPresenceContext, roomContext))
+        {
+            _roomPresenceContext = roomContext;
+            _roomReentryAbortCount = 0;
+            _roomMismatchSinceUtc = DateTime.MinValue;
+        }
+
+        if (playerRoom == roomContext.RoomIndex)
+        {
+            _roomMismatchSinceUtc = DateTime.MinValue;
+            return RoomPresenceDecision.Continue;
+        }
+
+        if (playerRoom < 0)
+            return RoomPresenceDecision.Continue;
+
+        var now = DateTime.UtcNow;
+        if (_roomMismatchSinceUtc == DateTime.MinValue)
+        {
+            _roomMismatchSinceUtc = now;
+            return RoomPresenceDecision.Continue;
+        }
+
+        if (now - _roomMismatchSinceUtc < RoomMismatchReenterDelay)
+            return RoomPresenceDecision.Continue;
+
+        _roomMismatchSinceUtc = DateTime.MinValue;
+        _roomReentryAbortCount++;
+        return _roomReentryAbortCount > RoomReentryAbortLimit
+            ? RoomPresenceDecision.GiveUp
+            : RoomPresenceDecision.Reenter;
+    }
+
+    private unsafe void AbandonRoomAfterReentryExhaustion(InstanceContentDeepDungeon* dd, IPlayerCharacter player, int roomIndex)
+    {
+        RecordReplayEvent("room-reentry-exhausted", new
+        {
+            floor = dd->Floor,
+            floorGeneration = this.Generation,
+            roomIndex,
+            abortCount = _roomReentryAbortCount,
+            executionKind = _searchExecutionKind.ToString(),
+            taskPhase = _taskRunner?.Phase.ToString() ?? TaskPhase.Idle.ToString(),
+            status = _status
+        });
+        FinalizeRoomSearch(
+            dd,
+            player,
+            roomIndex,
+            useRoomFinishPomander: true,
+            allowBandedRevealExpectation: _searchExecutionKind == SearchExecutionKind.PlannedRoom,
+            explicitOutcome: _searchExecutionKind == SearchExecutionKind.BandedReentry
+                ? BuildBandedTerminalOutcome(ObjectiveOutcomeKind.Failed)
+                : BuildTerminalOutcomeSnapshot(_executor!.CurrentPlanEntry, ObjectiveOutcomeKind.Failed),
+            finalizeReason: "RoomReentryExhausted");
+    }
+
     private unsafe void ContinueRoomSearch(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
     {
         var roomContext = _executor!.RoomContext;
@@ -1928,11 +2541,15 @@ bool primaryOwnsOperation = true)
             return;
 
         int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-        if (playerRoom != roomContext.RoomIndex)
+        switch (EvaluateRoomPresence(roomContext, playerRoom))
         {
-            NavigateToRoom(dd, roomContext.RoomIndex, player);
-            _status = $"Re-entering room {roomContext.RoomIndex}";
-            return;
+            case RoomPresenceDecision.Reenter:
+                NavigateToRoom(dd, roomContext.RoomIndex, player);
+                _status = $"Re-entering room {roomContext.RoomIndex}";
+                return;
+            case RoomPresenceDecision.GiveUp:
+                AbandonRoomAfterReentryExhaustion(dd, player, roomContext.RoomIndex);
+                return;
         }
 
         var waypoint = _executor.CurrentWaypoint;
@@ -1955,16 +2572,20 @@ bool primaryOwnsOperation = true)
 
     private unsafe void UpdateActiveTask(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
     {
-        if (_executor!.RoomContext != null)
+        if (_executor!.RoomContext is { } activeRoomContext)
         {
             int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-            if (playerRoom != _executor.RoomContext.RoomIndex)
+            switch (EvaluateRoomPresence(activeRoomContext, playerRoom))
             {
-                _taskRunner!.Reset();
-                _activeWaypoint = null;
-                NavigateToRoom(dd, _executor.RoomContext.RoomIndex, player);
-                _status = $"Re-entering room {_executor.RoomContext.RoomIndex}";
-                return;
+                case RoomPresenceDecision.Reenter:
+                    _taskRunner!.Reset();
+                    _activeWaypoint = null;
+                    NavigateToRoom(dd, activeRoomContext.RoomIndex, player);
+                    _status = $"Re-entering room {activeRoomContext.RoomIndex}";
+                    return;
+                case RoomPresenceDecision.GiveUp:
+                    AbandonRoomAfterReentryExhaustion(dd, player, activeRoomContext.RoomIndex);
+                    return;
             }
         }
 
@@ -2053,7 +2674,7 @@ bool primaryOwnsOperation = true)
             });
         }
 
-        var state = _navHelper!.Navigate(waypoint.Position, player.Position, arrivalRadius: 1.5f);
+        var state = _navHelper!.Navigate(waypoint.Position, player.Position, _ctx!.ChestInteraction.GetInteractionRange());
         switch (state)
         {
             case NavigationState.Moving:
@@ -2122,6 +2743,7 @@ bool primaryOwnsOperation = true)
 
         if (ShouldUseGoldChestOvercapPomander(slotIndex))
         {
+            if (!CanAttemptPomanderUse()) return true;
             if (CanAttemptPomanderUse() &&
                 TryUsePomander(
                     slotIndex,
@@ -2146,12 +2768,12 @@ bool primaryOwnsOperation = true)
 
     internal void HandleGoldChestOvercapObserved(uint? slotIndex)
     {
-        var attempt = ActiveChestAttempt;
+        var attempt = CurrentInteractionAttempt;
         if (!slotIndex.HasValue ||
             this.IsDisposed ||
-            _activeWaypoint?.Type != RoomObjectiveType.ChestGold ||
             attempt == null ||
-            attempt.EntityId == 0)
+            attempt.EntityId == 0 ||
+            attempt.Waypoint.Type != RoomObjectiveType.ChestGold)
         {
             RecordReplayEvent("gold-chest-overcap-rejected", new
             {
@@ -2168,68 +2790,95 @@ bool primaryOwnsOperation = true)
         {
             floor = this.Floor,
             floorGeneration = this.Generation,
-            roomIndex = _executor?.RoomContext?.RoomIndex ?? -1,
-            waypointIndex = _executor?.RoomContext?.CurrentWaypointIndex ?? -1,
+            // The real work's waypoint — the legacy executor's room/context
+            // does not identify coord-owned chests.
+            waypoint = attempt.Waypoint.Position,
             entityId = attempt.EntityId,
             slotIndex = slotIndex.Value
         });
     }
 
-    internal unsafe void HandleSilverChestOvercapObserved(uint? demicloneRowId)
+    internal unsafe void HandleSilverChestOvercapObserved(uint? stoneRowId)
     {
         var efw = EventFramework.Instance();
         var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
-        var attempt = ActiveChestAttempt;
-        if (dd == null || dd->DeepDungeonId != 4 ||
+        var attempt = CurrentInteractionAttempt;
+        if (dd == null || dd->DeepDungeonId is not (2 or 4) ||
             IsDisposed || this.Floor != dd->Floor ||
-            _activeWaypoint?.Type != RoomObjectiveType.ChestSilver ||
             attempt == null || attempt.EntityId == 0 ||
-            _taskRunner?.Phase != TaskPhase.WaitingPost ||
-            !demicloneRowId.HasValue)
+            attempt.Waypoint.Type != RoomObjectiveType.ChestSilver ||
+            // Legacy direct-controller gate only — coord validates the
+            // actual dispatched attempt above (EntityId != 0).
+            (!CoordOwnsWork && _taskRunner?.Phase != TaskPhase.WaitingPost) ||
+            !stoneRowId.HasValue)
             return;
-        attempt.PendingSilverOvercapDemicloneRowId = demicloneRowId;
+        attempt.PendingSilverOvercapStoneRowId = stoneRowId;
         RecordReplayEvent("silver-chest-overcap-correlated", new
         {
             floor = this.Floor,
             floorGeneration = this.Generation,
             entityId = attempt.EntityId,
-            demicloneRowId
+            stoneRowId
         });
     }
 
     private unsafe bool TryHandleSilverChestOvercap(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
     {
         var attempt = ActiveChestAttempt;
-        if (attempt?.PendingSilverOvercapDemicloneRowId == null ||
+        if (attempt?.PendingSilverOvercapStoneRowId == null ||
             _activeWaypoint?.Type != RoomObjectiveType.ChestSilver)
             return false;
-        if (this.ItemUse.Pending != null)
-            return true;
-        // All three incense types share this inventory. Use Serenity only to make space.
-        int count = _pomanderManager.GetStoneCount(1) + _pomanderManager.GetStoneCount(2) + _pomanderManager.GetStoneCount(3);
-        var decision = SilverChestOvercapPolicy.Decide(count,
-            GetStoneCountAvailableForFloorUse(3) > 0,
-            DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId));
-        if (decision == SilverChestOvercapDecision.RetryChest)
-        {
-            attempt.PendingSilverOvercapDemicloneRowId = null;
-            attempt.NextInteractAt = DateTime.MinValue;
-            return false;
-        }
-        if (decision == SilverChestOvercapDecision.UseSerenityIncense &&
-            _taskRunner!.ElapsedSeconds < _ctx!.ChestInteraction.GetOpenTimeoutSeconds(_activeWaypoint!.Value))
-        {
-            if (!CanAttemptPomanderUse() ||
-                TryDispatchFloorStone(3, dd, "silver overcap relief (serenity incense)", FloorItemUsePurpose.SilverChestOvercap))
-                return true;
-        }
-        Service.Log.Info("[FloorPhase] Silver incense overcap cannot be relieved, skipping chest");
-        attempt.PendingSilverOvercapDemicloneRowId = null;
+        var decision = ResolveSilverChestOvercap(attempt, dd);
+        if (decision == Coord.ChestOvercapProgress.Ready) return false;
+        if (decision == Coord.ChestOvercapProgress.Waiting) return true;
+        Service.Log.Info("[FloorPhase] Silver stone overcap cannot be relieved, skipping chest");
+        attempt.PendingSilverOvercapStoneRowId = null;
         var phase = _taskRunner!.Phase;
         double elapsed = _taskRunner.ElapsedSeconds;
         _taskRunner.Reset();
         HandleTaskSkip(dd, player, "SilverChestOvercapSkip", WaypointOutcomeKind.PolicySkipped, elapsed, phase);
         return true;
+    }
+
+    /// <summary>Coord-work overcap relief: the same item policies as the
+    /// legacy task path, evaluated against the op's real attempt. Returns
+    /// Waiting whenever relief is pending or in progress — the chest never
+    /// dispatches in parallel; PolicySkipped is the existing skip decision
+    /// (recorded by the op, not completed).</summary>
+    private unsafe Coord.ChestOvercapProgress ResolveCoordChestOvercap(
+        ChestInteractionAttempt attempt)
+    {
+        if (this.ItemUse.DispatchedThisUpdate)
+            return Coord.ChestOvercapProgress.Waiting;
+        if (attempt.PendingGoldOvercapSlotIndex is { } slotIndex)
+        {
+            if (this.ItemUse.Pending is
+                {
+                    Purpose: FloorItemUsePurpose.GoldChestOvercap,
+                    Key: { Kind: FloorItemUseKind.Pomander, ItemId: var pendingSlot }
+                } && pendingSlot == slotIndex)
+                return Coord.ChestOvercapProgress.Waiting;
+            if (!ShouldUseGoldChestOvercapPomander(slotIndex))
+            {
+                attempt.PendingGoldOvercapSlotIndex = null;
+                return Coord.ChestOvercapProgress.PolicySkipped;
+            }
+            if (!CanAttemptPomanderUse()) return Coord.ChestOvercapProgress.Waiting;
+            if (CanAttemptPomanderUse() &&
+                TryUsePomander(slotIndex, _scopeDd,
+                    $"gold overcap relief ({DescribePomanderSlot(slotIndex)})",
+                    FloorItemUsePurpose.GoldChestOvercap))
+            {
+                _coordOvercapRequest = this.ItemUse.Pending;
+                _coordOvercapAttempt = attempt;
+            }
+            // Permitted but channel busy, or just dispatched — either way
+            // no parallel chest interaction while relief is outstanding.
+            return Coord.ChestOvercapProgress.Waiting;
+        }
+        if (attempt.PendingSilverOvercapStoneRowId.HasValue)
+            return ResolveSilverChestOvercap(attempt, _scopeDd);
+        return Coord.ChestOvercapProgress.Ready;
     }
 
     private void ConfigureTaskForWaypoint(RoomWaypoint waypoint)
@@ -3310,6 +3959,10 @@ bool primaryOwnsOperation = true)
     private bool ShouldUseNaturalMazerootForHoardExploration(
         in FloorInitSnapshot snapshot)
     {
+        // Preference over Sight when both effects are needed: with the
+        // passage still closed a Mazeroot is worthwhile even while a
+        // Sight pomander could serve the same reveal.
+        var passageOpen = _ctx?.Duty.PassageOpen == true;
         return snapshot.CanAttemptPomanderUse &&
                snapshot.BandedEnabled &&
                !snapshot.HasOpenedHoardThisFloor &&
@@ -3318,7 +3971,7 @@ bool primaryOwnsOperation = true)
                !snapshot.IntuitionActive &&
                !snapshot.IntuitionUsable &&
                !snapshot.SightUseBlocked &&
-               !snapshot.SightUsable &&
+               (!passageOpen || !snapshot.SightUsable) &&
                GetStoneCountAvailableForFloorUse(2) > 0;
     }
 
@@ -3326,7 +3979,7 @@ bool primaryOwnsOperation = true)
     {
         if (_ctx?.ControlledPtSurvey != null)
             return;
-        if (ActiveChestAttempt is { PendingGoldOvercapSlotIndex: not null } or { PendingSilverOvercapDemicloneRowId: not null })
+        if (CurrentInteractionAttempt is { PendingGoldOvercapSlotIndex: not null } or { PendingSilverOvercapStoneRowId: not null })
             return;
 
         var decision = GeneralAutoPomanderPlanner.Decide(BuildGeneralAutoPomanderSnapshot(allowStatusOverlap: false, HasHarmfulFloorEffect(dd)));
@@ -3335,6 +3988,34 @@ bool primaryOwnsOperation = true)
         {
             return;
         }
+        // Coord floors never run the old room-finish executor — the
+        // same RoomFinish planner re-evaluates newly available Intuition
+        // here, guarded by an active hoard-search policy and no factual
+        // terminal state (coverage exhaustion alone is NOT absence).
+        if (!CoordOwnsWork)
+            return;
+        var cfk = _ctx?.Knowledge?.Floor;
+        // Known exact / known-present intelligence and already observed
+        // Banded coffers are useful facts — never reasons to consume
+        // another Intuition/Sight. Coverage exhaustion stays eligible.
+        if (cfk == null || cfk.HoardAcquired || cfk.ChatSaysNoHoard ||
+            cfk.InheritedNoHoardInferred ||
+            cfk.ObservedBandedPositions.Count > 0 ||
+            cfk.EvidenceState is HoardEvidenceState.IntuitionNoHoard
+                or HoardEvidenceState.Disabled
+                or HoardEvidenceState.AlreadyOpened
+                or HoardEvidenceState.FloorsetMaxed
+                or HoardEvidenceState.FloorsetDistributionExcluded
+                or HoardEvidenceState.IntuitionDirect
+                or HoardEvidenceState.IntuitionWaitingForIndicator
+                or HoardEvidenceState.IntuitionPending
+                or HoardEvidenceState.IntuitionActiveUnconfirmed)
+            return;
+        var roomFinish = RoomFinishPomanderPlanner.Decide(
+            BuildRoomFinishPomanderSnapshot(dd));
+        if (roomFinish.Kind == RoomFinishPomanderDecisionKind.Use &&
+            roomFinish.SlotIndex.HasValue)
+            TryUsePomander(roomFinish.SlotIndex.Value, dd, roomFinish.Reason!);
     }
 
     private unsafe FloorInitSnapshot BuildFloorInitSnapshot(
@@ -3344,14 +4025,23 @@ bool primaryOwnsOperation = true)
         bool pomandersUsableThisFloor =
             DeepDungeonFloorItemUsePolicy.CanUsePomanders(
                 dd->DeepDungeonBanId);
+        // Coord floors read the shared knowledge/run options — the
+        // legacy executor's room state is not authoritative there.
+        var cfk = _ctx?.Knowledge?.Floor;
         return new FloorInitSnapshot
         {
             CanAttemptPomanderUse = CanAttemptPomanderUse(),
-            BandedEnabled = _executor?.ConfigSnapshot.BandedEnabled ?? false,
-            HasOpenedHoardThisFloor = _executor?.HasOpenedHoardThisFloor ?? false,
+            BandedEnabled = CoordOwnsWork
+                ? SnapshotRunOptions().BandedEnabled
+                : (_executor?.ConfigSnapshot.BandedEnabled ?? false),
+            HasOpenedHoardThisFloor = CoordOwnsWork
+                ? (cfk?.HoardAcquired == true)
+                : (_executor?.HasOpenedHoardThisFloor ?? false),
             HoardOpportunity = DeepDungeonFloorsetTracker.GetCurrentOpportunity(dd->Floor),
             IntuitionActive = _nativeIntuitionActive,
-            UsedIntuitionThisFloor = _chatWatchers?.UsedIntuitionThisFloor == true,
+            UsedIntuitionThisFloor = CoordOwnsWork
+                ? (cfk?.HasCurrentFloorIntuitionUse == true)
+                : (_chatWatchers?.UsedIntuitionThisFloor == true),
             SightUseBlocked = IsSightUseBlocked(),
             IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
             SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
@@ -3366,19 +4056,19 @@ bool primaryOwnsOperation = true)
             HasStrengthStatus = HasLocalPlayerStatus(StrengthStatusId),
             HasSteelStatus = HasLocalPlayerStatus(SteelStatusId),
             HasCurseStatus = HasLocalPlayerStatus(DeepDungeonCurseStatusId),
-            HasHarmfulFloorEffect = hasHarmfulFloorEffect
+            HasHarmfulFloorEffect = hasHarmfulFloorEffect,
+            NextFloorIsMob = !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId,
+                (byte)(dd->Floor + 1))
         };
     }
 
     private unsafe GeneralAutoPomanderSnapshot BuildGeneralAutoPomanderSnapshot(bool allowStatusOverlap, bool hasHarmfulFloorEffect = false)
     {
-        if (!CanAttemptPomanderUse())
-            return default;
         var efw = EventFramework.Instance();
         var dd = efw != null ? efw->GetInstanceContentDeepDungeon() : null;
         return new GeneralAutoPomanderSnapshot
         {
-            CanAttemptPomanderUse = true,
+            CanAttemptPomanderUse = CanAttemptPomanderUse(),
             AffluenceUsable = IsPomanderAvailableForFloorUse(FloorInitPlanner.AffluencePomanderSlotIndex),
             StrengthUsable = CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex, allowStatusOverlap),
             SteelUsable = CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex, allowStatusOverlap),
@@ -3473,17 +4163,26 @@ bool primaryOwnsOperation = true)
         DeepDungeonFloorsetTracker.TryGetCurrentFloorsetState(
             dd->Floor,
             out FloorsetHoardDistributionState floorsetState);
+        // Coord floors read the shared knowledge/run options — the
+        // legacy executor's room state is not authoritative there.
+        var cfk = _ctx?.Knowledge?.Floor;
         return new RoomFinishPomanderSnapshot
         {
             CanAttemptPomanderUse = CanAttemptPomanderUse(),
-            BandedEnabled = _executor?.ConfigSnapshot.BandedEnabled ?? false,
-            HasOpenedHoardThisFloor = _executor?.HasOpenedHoardThisFloor ?? false,
+            BandedEnabled = CoordOwnsWork
+                ? SnapshotRunOptions().BandedEnabled
+                : (_executor?.ConfigSnapshot.BandedEnabled ?? false),
+            HasOpenedHoardThisFloor = CoordOwnsWork
+                ? (cfk?.HoardAcquired == true)
+                : (_executor?.HasOpenedHoardThisFloor ?? false),
             FloorsetBandedCount = floorsetState.TotalHoardCount,
             HoardOpportunity = FloorsetHoardDistributionPolicy.Decide(
                 floorsetState,
                 dd->Floor),
             IntuitionActive = _nativeIntuitionActive,
-            UsedIntuitionThisFloor = _chatWatchers?.UsedIntuitionThisFloor == true,
+            UsedIntuitionThisFloor = CoordOwnsWork
+                ? (cfk?.HasCurrentFloorIntuitionUse == true)
+                : (_chatWatchers?.UsedIntuitionThisFloor == true),
             SightUseBlocked = IsSightUseBlocked(),
             IntuitionUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.IntuitionPomanderSlotIndex),
             SightUsable = pomandersUsableThisFloor && IsPomanderAvailableForFloorUse(FloorInitPlanner.SightPomanderSlotIndex),
@@ -3537,6 +4236,29 @@ bool primaryOwnsOperation = true)
     internal unsafe void ResolvePendingFloorItemUse(InstanceContentDeepDungeon* dd)
     {
         if (this.Items.ResolvePending(dd) is not { } resolution) return;
+        // Coord overcap relief resolves against the attempt that REQUESTED
+        // it — never whichever chest head happens to be current now.
+        if (ReferenceEquals(resolution.Pending, _coordOvercapRequest))
+        {
+            if (resolution.Decision == FloorItemUseConfirmationDecisionKind.Confirmed &&
+                _coordOvercapAttempt is { } owner)
+            {
+                if (resolution.Pending.Purpose == FloorItemUsePurpose.GoldChestOvercap &&
+                    owner.PendingGoldOvercapSlotIndex == resolution.Pending.Key.ItemId)
+                    owner.PendingGoldOvercapSlotIndex = null;
+                else if (resolution.Pending.Purpose == FloorItemUsePurpose.SilverChestOvercap)
+                {
+                    owner.PendingSilverOvercapStoneRowId = null;
+                    owner.NextInteractAt = DateTime.MinValue;
+                }
+            }
+            if (resolution.Decision is FloorItemUseConfirmationDecisionKind.Confirmed
+                or FloorItemUseConfirmationDecisionKind.Exhausted)
+            {
+                _coordOvercapRequest = null;
+                _coordOvercapAttempt = null;
+            }
+        }
         if (resolution.Decision == FloorItemUseConfirmationDecisionKind.Confirmed)
             ApplyConfirmedFloorItemUse(dd, resolution.Pending, resolution.CurrentCount);
         else if (resolution.Decision == FloorItemUseConfirmationDecisionKind.Exhausted)
@@ -3551,6 +4273,7 @@ bool primaryOwnsOperation = true)
         if (pending.Key.Kind == FloorItemUseKind.Pomander)
         {
             uint slotIndex = pending.Key.ItemId;
+            _ctx?.Knowledge.Floor?.RecordConfirmedPomanderUse(slotIndex);
             if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
             {
                 _chatWatchers?.MarkIntuitionUsedThisFloor();
@@ -3574,7 +4297,10 @@ bool primaryOwnsOperation = true)
 
             if (pending.Purpose == FloorItemUsePurpose.ControlledStrength)
                 this.Survey.MarkControlledStrengthHandled();
-            if (pending.Purpose == FloorItemUsePurpose.GoldChestOvercap &&
+            // Legacy direct-controller clearing only — coord relief is
+            // resolved against the captured requester's attempt above.
+            if (!CoordOwnsWork &&
+                pending.Purpose == FloorItemUsePurpose.GoldChestOvercap &&
                 ActiveChestAttempt?.PendingGoldOvercapSlotIndex == slotIndex)
             {
                 ActiveChestAttempt.PendingGoldOvercapSlotIndex = null;
@@ -3597,12 +4323,19 @@ bool primaryOwnsOperation = true)
         }
         else
         {
+            _ctx?.Knowledge.Floor?.RecordConfirmedStoneUse(pending.Key.ItemId);
             byte stoneId = (byte)pending.Key.ItemId;
-            if (stoneId is 1 or 2) this.FarmingPassageItemConfirmed = true;
-            if (pending.Purpose == FloorItemUsePurpose.SilverChestOvercap &&
-                ActiveChestAttempt is { PendingSilverOvercapDemicloneRowId: not null } chestAttempt)
+            if (dd->DeepDungeonId == 4 && stoneId is 1 or 2) this.FarmingPassageItemConfirmed = true;
+            // A confirmed Mazeroot IS this floor's natural reveal — mark
+            // Sight confirmed regardless of purpose, without touching
+            // synthetic native log sequences.
+            if (dd->DeepDungeonId == 4 && stoneId == 2)
+                _chatWatchers?.ConfirmSightThisFloor("MazerootUseConfirmed");
+            if (!CoordOwnsWork &&
+                pending.Purpose == FloorItemUsePurpose.SilverChestOvercap &&
+                ActiveChestAttempt is { PendingSilverOvercapStoneRowId: not null } chestAttempt)
             {
-                chestAttempt.PendingSilverOvercapDemicloneRowId = null;
+                chestAttempt.PendingSilverOvercapStoneRowId = null;
                 chestAttempt.NextInteractAt = DateTime.MinValue;
             }
             switch (pending.Purpose)
@@ -3620,6 +4353,8 @@ bool primaryOwnsOperation = true)
                     break;
                 case FloorItemUsePurpose.NaturalPassageMazeroot:
                     this.Survey.ObserveConfirmedStone(pending.Purpose);
+                    this.Survey.ApplyConfirmedNaturalReveal(pending,
+                        SightResearchRevealResource.Mazeroot);
                     break;
                 case FloorItemUsePurpose.BossSerenity:
                     this.Boss.OnSerenityConfirmed();
@@ -3629,13 +4364,13 @@ bool primaryOwnsOperation = true)
                     break;
             }
 
-            string eventType = pending.Purpose is
+            string eventType = dd->DeepDungeonId == 2 ? "magicite-used" : pending.Purpose is
                 FloorItemUsePurpose.ControlledReveal or
                 FloorItemUsePurpose.ControlledPoisonfruit
                     ? "controlled-incense-used"
                     : "incense-used";
             Service.Log.Info(
-                $"[FloorPhase] Confirmed PT incense {stoneId} use ({pending.Reason}) on floor {dd->Floor}");
+                $"[FloorPhase] Confirmed stone {stoneId} use ({pending.Reason}) in dungeon {dd->DeepDungeonId} floor {dd->Floor}");
             RecordReplayEvent(eventType, new
             {
                 floor = dd->Floor,
@@ -3787,6 +4522,14 @@ bool primaryOwnsOperation = true)
             bandedEnabled = options.BandedEnabled
         });
 
+        if (UsesSiteCoordination)
+        {
+            // Option changes mark the route dirty — the scheduler rebuilds
+            // on its next decision tick; no old planner call here.
+            _siteDriver?.MarkRouteDirty();
+            return;
+        }
+
         var normalGraph = this.NormalGraph;
         if (_phase != FloorPhase.FloorActive ||
             normalGraph == null ||
@@ -3802,173 +4545,12 @@ bool primaryOwnsOperation = true)
 
     private bool ShouldRunGeneralTick() =>
         PlanningState.TryBeginGeneralTick(DateTime.UtcNow, GeneralTickInterval);
-    internal DateTime? AttackWindowStartedAt => ActiveExecution?.Recovery.AttackWindowStartedAt;
-    internal bool IsAttackHolding(DateTime nowUtc) => ActiveExecution?.Recovery.IsAttackHolding(nowUtc) == true;
+    internal DateTime? AttackWindowStartedAt => _coordRecoveryController?.AttackWindowStartedAt;
     private ObjectiveExecution PatrolExecution =>
         this.ActiveExecution ?? throw new InvalidOperationException("No active patrol objective execution.");
     private List<int> _patrolRooms => PatrolExecution.PatrolRooms;
     private int _patrolIndex { get => PatrolExecution.PatrolIndex; set => PatrolExecution.PatrolIndex = value; }
     private int _currentPatrolRoom { get => PatrolExecution.CurrentPatrolRoom; set => PatrolExecution.CurrentPatrolRoom = value; }
-    private unsafe void UpdateClearingMechanics(InstanceContentDeepDungeon* dd)
-    {
-        var player = Service.LocalPlayer;
-        if (player == null) return;
-
-        bool runGeneralTick = ShouldRunGeneralTick();
-        if (runGeneralTick)
-        {
-            SyncLiveRunOptions(dd, player);
-        }
-
-        if (_ctx!.Duty.PassageOpen && Service.Condition[ConditionFlag.InCombat])
-        {
-            RecordPassageExitDelayedByCombat(dd);
-        }
-
-        if (runGeneralTick)
-        {
-            if (UpdatePostRoomPomanderRetry(dd, player))
-                return;
-        }
-        if (!RequireMovementPermission(
-                "clearing chase or patrol",
-                primaryOwnsOperation: ClearingMovementOwnedByCurrentObjective()))
-            return;
-
-        var target = _chaseHelper.GetClearingTarget(
-            dd,
-            this.NormalGraph,
-            this.LastObservedRoomIndex,
-            player.Position,
-            out var acquisitionFailure,
-            allowNewTargets: !_ctx.Duty.PassageOpen);
-        if (target != null)
-        {
-            ClearChaseAcquisitionFailure();
-            RecordChaseTargetEvent("clearing-target-selected", target.Value);
-            _ctx.SetPreferredAggroTarget(target.Value.GameObjectId, target.Value.Position);
-
-            var currentTarget = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.Value.GameObjectId);
-            bool targetSpecificAggro =
-                target.Value.Reason == EnemyChaseTargetReason.Aggro ||
-                EnemyChaseHelper.IsAggroedToPlayer(target.Value.GameObjectId);
-            bool casting = Service.Condition[ConditionFlag.Casting];
-            bool withinLiveTargetHoldRange = IsWithinLiveTargetHoldRange(target.Value, player.Position);
-            if (PatrolExecution.Recovery.Update(dd, target.Value, currentTarget, player, targetSpecificAggro,
-                    casting || withinLiveTargetHoldRange))
-                return;
-
-            bool engaged = targetSpecificAggro;
-            float attackRange = _ctx.CombatAssist.GetCachedEngageRange(_ctx.Configuration);
-            var targetDelta = new Vector2(target.Value.LivePosition.X - player.Position.X,
-                target.Value.LivePosition.Z - player.Position.Z);
-            bool engagedInRange = engaged && targetDelta.LengthSquared() <= attackRange * attackRange;
-            if (engagedInRange || casting || withinLiveTargetHoldRange || PatrolExecution.Recovery.IsAttackHolding(DateTime.UtcNow))
-            {
-                _chaseHelper.CompleteCurrentLeg();
-                _status = engaged
-                    ? "Hostile engaged"
-                    : casting
-                        ? "Holding position while casting"
-                        : "Hostile within attack hold range";
-                if (_navHelper!.HasActiveTarget)
-                    _navHelper.Cancel();
-            }
-            else
-            {
-                var state = _navHelper!.Navigate(
-                    target.Value.Position,
-                    player.Position,
-                    EnemyChaseHelper.NavigationArrivalTolerance);
-                if (state == NavigationState.Moving)
-                {
-                    _status = "Chasing hostile...";
-                }
-                else if (state == NavigationState.Arrived)
-                {
-                    _chaseHelper.CompleteCurrentLeg();
-                    _status = "Hostile moved; starting next chase leg";
-                    PatrolExecution.Recovery.ObserveChaseLegArrival(DateTime.UtcNow);
-                    RecordChaseTargetEvent("clearing-chase-leg-completed", target.Value);
-                }
-                else
-                {
-                    HandleDirectNavState(state, "chasing hostile");
-                    if (state == NavigationState.StuckGiveUp || state == NavigationState.Failed)
-                        _chaseHelper.Reset();
-                }
-            }
-
-            ResetPatrolPlan();
-            return;
-        }
-
-        ResetEngagedTargetProgress();
-        _ctx.ClearPreferredAggroTarget();
-        if (_ctx.Duty.PassageOpen && !Service.Condition[ConditionFlag.InCombat])
-        {
-            _navHelper.Cancel();
-            _status = "Passage open; waiting for passage objective";
-            return;
-        }
-        if (RecoveryBudget.AllRecordedTargetsExhausted)
-        {
-            _ctx.StatusIsError = true;
-            _ctx.StatusLine = _status = "No remaining target within the combat position recovery retry limits.";
-            RecordReplayEvent("sight-recovery-stopped", new { reason = "all-observed-targets-exhausted", failures = RecoveryBudget.TotalFailures });
-            return;
-        }
-        if (acquisitionFailure != EnemyChaseAcquisitionFailure.None)
-        {
-            _navHelper!.Cancel();
-            ResetPatrolPlan();
-            _status = $"Cannot acquire hostile: {acquisitionFailure}";
-            RecordChaseAcquisitionFailure(dd, acquisitionFailure);
-            return;
-        }
-
-        EnsurePatrolPlan(dd);
-        if (_patrolRooms.Count == 0)
-        {
-            _status = "No patrol path available";
-            _navHelper!.Cancel();
-            return;
-        }
-
-        int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-        if (playerRoom >= 0 && playerRoom == _currentPatrolRoom)
-            AdvancePatrol();
-
-        for (int attempt = 0; attempt < _patrolRooms.Count; attempt++)
-        {
-            int targetRoom = _patrolRooms[_patrolIndex];
-            _currentPatrolRoom = targetRoom;
-
-            if (CombatPositionRecoveryController.TryResolveRoomDestination(dd, targetRoom, out var dest))
-            {
-                var state = _navHelper!.Navigate(dest, player.Position, arrivalRadius: 1.5f);
-                if (state == NavigationState.Arrived)
-                {
-                    AdvancePatrol();
-                }
-                else if (state == NavigationState.Moving)
-                {
-                    _status = $"Patrolling room {targetRoom}...";
-                    return;
-                }
-                else
-                {
-                    HandleDirectNavState(state, $"patrolling room {targetRoom}");
-                }
-                return;
-            }
-
-            AdvancePatrol();
-        }
-
-        _status = "Patrol complete, idling";
-        _navHelper!.Cancel();
-    }
 
     private static bool IsWithinLiveTargetHoldRange(EnemyChaseTarget target, Vector3 playerPosition)
     {
@@ -4022,7 +4604,7 @@ bool primaryOwnsOperation = true)
     }
 
 
-    internal void ResetEngagedTargetProgress() => this.ActiveExecution?.Recovery.ResetEngagedTargetProgress();
+    internal void ResetEngagedTargetProgress() => _coordRecoveryController = null;
     internal unsafe void UpdatePassageNavigation(InstanceContentDeepDungeon* dd)
     {
         var player = Service.LocalPlayer;
@@ -4036,6 +4618,41 @@ bool primaryOwnsOperation = true)
         NavigateToPassage(dd, player);
     }
 
+    private CoordPipeline? _coordPipeline;
+    private readonly ShadowNativeBoundary _coordShadow = new();
+    private RealNativeBoundary? _coordReal;
+    private ObjectiveArbiterSnapshot _coordSnapshot;
+    // The once-per-decision-tick activity pair — driver, pipeline tick and
+    // channel permissions all read THIS sample, never Service.Condition.
+    private Coord.FloorActivity _normalActivity;
+    // Coord-owned recovery plumbing: the combat controller is shared
+    // floor-scoped (existing RecoveryBudget) and runs claim-only;
+    // the geometry adapter is reused across chest sessions.
+    private CombatPositionRecoveryController? _coordRecoveryController;
+    // First no-progress failure per floor+work target gets one bounded
+    // replay snapshot — dedup key set.
+    private readonly HashSet<string> _navFailureReported = new();
+    private bool _coordTookOver;
+    // Overcap relief request bound to the attempt that asked for it — the
+    // pending-item channel is one-at-a-time so a reference pair suffices;
+    // the resolution clears THIS attempt, never whichever head is current.
+    private PendingFloorItemUse? _coordOvercapRequest;
+    private ChestInteractionAttempt? _coordOvercapAttempt;
+    private Coord.NavBitmap? _navBitmap;
+    private Coord.CoverageSet? _coverage;
+    private Coord.NavigationSurface? _navigation;
+    private Coord.SiteSearchBoundary? _siteSearch;
+    private Coord.ObjectiveSiteDriver? _siteDriver;
+    private unsafe InstanceContentDeepDungeon* _scopeDd;
+    private string _navBackend = "navigation";
+    private int _navBitmapFloor = -1;
+    private int _passageNavFailStreak;
+    private DateTime _passageRepositionUntilUtc = DateTime.MinValue;
+    private int _passageNavRoomContext = -1;
+    private const int PassageNavFailsBeforeReposition = 3;
+    private const int PassageNavFailExhausted = 8;
+    private static readonly TimeSpan PassageRepositionWindow = TimeSpan.FromSeconds(8);
+
     private unsafe void NavigateToPassage(InstanceContentDeepDungeon* dd, IPlayerCharacter player)
     {
         var objectEvidence = this.ObjectEvidence.Current;
@@ -4048,11 +4665,40 @@ bool primaryOwnsOperation = true)
             return;
         }
 
+        var now = DateTime.UtcNow;
         int playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
+        int roomContext = passageRoomIndex * 1000 + Math.Max(0, playerRoom);
+        if (roomContext != _passageNavRoomContext)
+        {
+            _passageNavRoomContext = roomContext;
+            _passageNavFailStreak = 0;
+            _passageRepositionUntilUtc = DateTime.MinValue;
+        }
+        // A repeated dead end usually means the projected walking point sits on a
+        // mesh island the player cannot reach (multi-level room). Spend a window
+        // driving to the room center — always mesh-connected — then retry; after
+        // too many failures stop driving and let the scenario bound handle it.
+        var hasRoomCenter = MapPos.TryGetRoomCenter(dd, passageRoomIndex, out var roomCenter);
+        bool repositioning = _passageNavFailStreak >= PassageNavFailsBeforeReposition &&
+            _passageNavFailStreak < PassageNavFailExhausted &&
+            now < _passageRepositionUntilUtc &&
+            hasRoomCenter &&
+            Vector3.DistanceSquared(player.Position, roomCenter) > 4f;
+        if (_passageNavFailStreak >= PassageNavFailExhausted)
+        {
+            RecordPassageNavigationEvent("passage-navigation-exhausted", "Failed", usedActor, passageRoomIndex, playerRoom);
+            _status = "Passage unreachable; holding for scenario bound";
+            return;
+        }
+        if (repositioning)
+        {
+            dest = roomCenter;
+            _status = "Passage unreachable, repositioning via room center";
+        }
         // Knowing the actor does not make a failing cross-room path reachable.
         // Keep the room graph fallback until inside its room, then approach the exact walking point.
-        int? targetRoom = PassageNavigationPolicy.RoutingRoom(usedActor, passageRoomIndex, playerRoom);
-        if (usedActor) dest = ResolvePassageWalkingPosition(dest);
+        int? targetRoom = repositioning ? null : PassageNavigationPolicy.RoutingRoom(usedActor, passageRoomIndex, playerRoom);
+        if (usedActor && !repositioning) dest = ResolvePassageWalkingPosition(dest);
 
         var result = _navDriver!.Drive(dest, player.Position, 0.5f, dd, playerRoom, targetRoom);
 
@@ -4069,6 +4715,14 @@ bool primaryOwnsOperation = true)
                 _status = $"Navigating to passage ({_navDriver.StageLabel})";
                 break;
             case NavDriveResult.Arrived:
+                if (repositioning)
+                {
+                    _passageRepositionUntilUtc = DateTime.MinValue;
+                    _navDriver.Reset();
+                    _status = "Repositioned, retrying passage approach";
+                    RecordPassageNavigationEvent("passage-repositioned", result.ToString(), usedActor, passageRoomIndex, playerRoom);
+                    break;
+                }
                 if (!usedActor)
                 {
                     _status = "At passage room, waiting for passage actor";
@@ -4093,7 +4747,11 @@ bool primaryOwnsOperation = true)
             case NavDriveResult.Failed:
                 this.RunTelemetry?.ObserveNavigationIssue();
                 RecordPassageNavigationEvent("passage-navigation", result.ToString(), usedActor, passageRoomIndex, playerRoom);
-                _status = "Passage navigation failed";
+                if (++_passageNavFailStreak >= PassageNavFailsBeforeReposition)
+                    _passageRepositionUntilUtc = now + PassageRepositionWindow;
+                _status = _passageNavFailStreak >= PassageNavFailsBeforeReposition
+                    ? $"Passage navigation failed ({_passageNavFailStreak}/{PassageNavFailExhausted})"
+                    : "Passage navigation failed";
                 break;
         }
     }
@@ -4196,7 +4854,7 @@ internal static class EnemyChaseRecoveryPolicy
             return EnemyChaseRecoveryDecision.Continue;
         if (!attackAttemptWindow)
             return EnemyChaseRecoveryDecision.None;
-        return noProgress >= EnemyChaseAttackWindow.NoProgressLimit
+        return noProgress >= CombatPositionPolicy.UnknownNoProgressLimit
             ? EnemyChaseRecoveryDecision.Start
             : EnemyChaseRecoveryDecision.None;
     }

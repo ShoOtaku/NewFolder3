@@ -11,6 +11,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 	internal sealed class EnemyChaseHelper
 	{
 		private ulong _currentTargetId;
+	private EnemyChaseTarget? _lastTarget;
 		public Func<IBattleChara, bool>? CanSelectNewTarget;
 		public Func<ulong, bool>? IsTargetBlocked;
 		private readonly HashSet<uint> _reportedAvoidedNames = new();
@@ -59,6 +60,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			if (!allowNewTargets)
 			{
 				_currentTargetId = 0;
+				_lastTarget = null;
 				_hasLegEndpoint = false;
 				return null;
 			}
@@ -118,6 +120,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				}
 
 				_currentTargetId = 0;
+				_lastTarget = null;
 				_legEndpoint = Vector3.Zero;
 				_hasLegEndpoint = false;
 				_lastTopologyPlayerRoomIndex = -1;
@@ -161,6 +164,22 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_hasLegEndpoint = false;
 		}
 
+		/// <summary>
+		/// Leg completion guarded by expected target identity — a caller
+		/// holding a stale target can never consume the newer target's leg.
+		/// </summary>
+		public void CompleteChaseLeg(ulong expectedTargetId)
+		{
+			if (expectedTargetId != 0 && expectedTargetId == _currentTargetId)
+				_hasLegEndpoint = false;
+		}
+
+		/// <summary>The sticky target as last RETURNED to a caller —
+		/// read-only observation for diagnostics/previews; never acquires
+		/// or re-ranks anything.</summary>
+		public EnemyChaseTarget? LastTarget =>
+			_currentTargetId != 0 ? _lastTarget : null;
+
 		public void DeprioritizeCurrentTarget()
 		{
 			if (_currentTargetId == 0)
@@ -168,6 +187,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 			_deprioritizedTargets[_currentTargetId] = DateTime.UtcNow + DeprioritizeDuration;
 			_currentTargetId = 0;
+			_lastTarget = null;
 			_legEndpoint = Vector3.Zero;
 			_hasLegEndpoint = false;
 			_lastTopologyPlayerRoomIndex = -1;
@@ -176,6 +196,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		public void Reset()
 		{
 			_currentTargetId = 0;
+			_lastTarget = null;
 			_legEndpoint = Vector3.Zero;
 			_hasLegEndpoint = false;
 			_lastTopologyPlayerRoomIndex = -1;
@@ -425,7 +446,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				_hasLegEndpoint = true;
 			}
 
-			return new EnemyChaseTarget(_legEndpoint, currentPos, hitboxRadius, id, reason, -1, -1, -1);
+			_lastTarget = new EnemyChaseTarget(
+				_legEndpoint, currentPos, hitboxRadius, id, reason, -1, -1, -1);
+			return _lastTarget.Value;
 		}
 
 		private static float DistSqXZ(Vector3 a, Vector3 b)

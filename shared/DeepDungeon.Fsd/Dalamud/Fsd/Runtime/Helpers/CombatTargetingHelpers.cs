@@ -118,10 +118,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
                             continue;
                     }
 
-                    if (predicate != null && !predicate(bnpc))
-                        continue;
-
-                    if (bnpc.CurrentHp > bestHp)
+                    // Only a better-ranked candidate needs the native sight check.
+                    if (bnpc.CurrentHp > bestHp && (predicate == null || predicate(bnpc)))
                     {
                         bestHp = bnpc.CurrentHp;
                         best = bnpc;
@@ -184,10 +182,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
             return native != null && native->InCombat;
         }
 
-		public static unsafe IBattleChara? PickAggroedHostile(float range, out bool withinRange, ulong preferredGameObjectId = 0)
+		public static unsafe IBattleChara? PickAggroedHostile(float range, out bool withinRange, ulong preferredGameObjectId = 0,
+            Func<IBattleChara, bool>? predicate = null)
 		{
 			withinRange = false;
-			var selected = PickAggroedHostileCore(preferredGameObjectId, out var selectedDist);
+			var selected = PickAggroedHostileCore(preferredGameObjectId, out var selectedDist, predicate);
 			if (selected == null)
 				return null;
 
@@ -195,7 +194,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			return selected;
 		}
 
-		private static unsafe IBattleChara? PickAggroedHostileCore(ulong preferredGameObjectId, out float selectedDist)
+		private static unsafe IBattleChara? PickAggroedHostileCore(ulong preferredGameObjectId, out float selectedDist,
+            Func<IBattleChara, bool>? predicate)
 		{
 			selectedDist = 0f;
 
@@ -258,7 +258,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 				var dz = bnpc.Position.Z - player.Position.Z;
 				var distSq = dx * dx + dz * dz;
 
-				if (preferredGameObjectId != 0 && bnpc.GameObjectId == preferredGameObjectId)
+				bool isPreferred = preferredGameObjectId != 0 && bnpc.GameObjectId == preferredGameObjectId;
+				if ((!isPreferred && distSq >= nearestDist) || predicate != null && !predicate(bnpc))
+					continue;
+
+				if (isPreferred)
 				{
 					preferred = bnpc;
 					preferredDist = distSq;

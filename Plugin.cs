@@ -4,6 +4,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud;
 using DeepDungeon.Fsd.Dalamud.Runtime;
+using FFXIVClientStructs.Expansion;
 using OmenTools;
 using OmenTools.OmenService;
 
@@ -33,7 +34,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         IFramework framework,
         IPluginLog pluginLog,
         IObjectTable objectTable,
-        IPartyList partyList)
+        IPartyList partyList,
+        ISigScanner sigScanner)
     {
         _pluginInterface = pluginInterface ?? throw new ArgumentNullException(nameof(pluginInterface));
         _commandManager = commandManager ?? throw new ArgumentNullException(nameof(commandManager));
@@ -45,6 +47,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
         CommunityLongRunLogCollector? longRunLogCollector = null;
         var omenInitialized = false;
+        var nativeInteropInitialized = false;
         var commandRegistered = false;
         var drawSubscribed = false;
         var configSubscribed = false;
@@ -62,6 +65,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     .Disable<TargetManager>()
                     .Disable<UseActionManager>());
             omenInitialized = true;
+            nativeInteropInitialized = true;
+            ExpansionInterop.Initialize(sigScanner.SearchBase);
 
             _configuration =
                 pluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
@@ -168,6 +173,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
             RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
             RollBack(() => longRunLogCollector?.Dispose(), rollbackErrors);
+            RollBack(() => { if (nativeInteropInitialized) ExpansionInterop.Uninitialize(); }, rollbackErrors);
             RollBack(() => { if (omenInitialized) DService.Uninit(); }, rollbackErrors);
 
             if (rollbackErrors.Count == 0)
@@ -235,6 +241,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _communityEvidenceCollector?.Dispose();
         _usageTelemetryCollector?.Dispose();
         _longRunLogCollector?.Dispose();
+        ExpansionInterop.Uninitialize();
         DService.Uninit();
         _disposed = true;
     }

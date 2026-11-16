@@ -34,7 +34,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		ChestBronze,
 		ChestSilver,
 		ChestGold,
-		ChestBanded
+		ChestBanded,
+		Coverage
 	}
 
 	internal readonly record struct RoomWaypoint(
@@ -109,7 +110,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			public int DetailedMapDirectCandidateCount;
 			public IReadOnlyList<Vector3> FallbackTrapMarkers = Array.Empty<Vector3>();
 			public int FallbackCatalogCandidateCount;
-			public int FallbackPalacePalCandidateCount;
+			public int FallbackPalantirCandidateCount;
 			public bool BlindFallbackUnavailable;
 			public IReadOnlyList<CoreSnapshotTrapIndicatorEntry> VisibleTrapIndicators = Array.Empty<CoreSnapshotTrapIndicatorEntry>();
 			public List<VisibleChestSource> VisibleChests { get; } = new();
@@ -125,7 +126,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			bool shouldVisitForIntel,
 			bool blindFallbackUnavailable = false,
 			int fallbackCatalogCandidateCount = 0,
-			int fallbackPalacePalCandidateCount = 0,
+			int fallbackPalantirCandidateCount = 0,
 			int fallbackUnionCandidateCount = 0)
 		{
 			RoomIndex = roomIndex;
@@ -137,7 +138,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			_shouldVisitForIntel = shouldVisitForIntel;
 			BlindFallbackUnavailable = blindFallbackUnavailable;
 			FallbackCatalogCandidateCount = fallbackCatalogCandidateCount;
-			FallbackPalacePalCandidateCount = fallbackPalacePalCandidateCount;
+			FallbackPalantirCandidateCount = fallbackPalantirCandidateCount;
 			FallbackUnionCandidateCount = fallbackUnionCandidateCount;
 			for (int i = 0; i < orderedWaypoints.Count; i++)
 			{
@@ -192,7 +193,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		public IReadOnlyList<RoomWaypoint> Waypoints => _waypoints;
 		public bool BlindFallbackUnavailable { get; }
 		public int FallbackCatalogCandidateCount { get; }
-		public int FallbackPalacePalCandidateCount { get; }
+		public int FallbackPalantirCandidateCount { get; }
 		public int FallbackUnionCandidateCount { get; }
 		public string LastOutcomeReason { get; private set; } = string.Empty;
 
@@ -258,7 +259,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				CurrentWaypointIndex = _currentWaypointIdx,
 				BlindFallbackUnavailable = BlindFallbackUnavailable,
 				FallbackCatalogCandidateCount = FallbackCatalogCandidateCount,
-				FallbackPalacePalCandidateCount = FallbackPalacePalCandidateCount,
+				FallbackPalantirCandidateCount = FallbackPalantirCandidateCount,
 				FallbackUnionCandidateCount = FallbackUnionCandidateCount
 			};
 
@@ -284,7 +285,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			bool shouldVisitForIntel,
 			HoardEvidenceState hoardEvidenceState,
 			RunOptions config,
-			PalacePalProvider palacePalProvider,
+			PalantirProvider palantirProvider,
 			DetailedMapRunSnapshot detailedMap,
 			Vector3? cachedHoardIndicatorPos,
 			IReadOnlyList<Vector3> observedSightTrapPositions,
@@ -315,7 +316,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				shouldVisitForIntel,
 				hoardEvidenceState,
 				config,
-				palacePalProvider,
+				palantirProvider,
 				detailedMap,
 				cachedHoardIndicatorPos,
 				observedSightTrapPositions,
@@ -347,7 +348,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				shouldVisitForIntel,
 				sourceData.BlindFallbackUnavailable,
 				sourceData.FallbackCatalogCandidateCount,
-				sourceData.FallbackPalacePalCandidateCount,
+				sourceData.FallbackPalantirCandidateCount,
 				sourceData.FallbackTrapMarkers.Count);
 		}
 
@@ -389,7 +390,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			bool shouldVisitForIntel,
 			HoardEvidenceState hoardEvidenceState,
 			RunOptions config,
-			PalacePalProvider palacePalProvider,
+			PalantirProvider palantirProvider,
 			DetailedMapRunSnapshot detailedMap,
 			Vector3? cachedHoardIndicatorPos,
 			IReadOnlyList<Vector3> observedSightTrapPositions,
@@ -508,22 +509,22 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 							roomRadius,
 							out IReadOnlyList<Vector3> detailedMapCandidates,
 							out int directCandidateCount,
-							out bool usePalacePalFallback,
+							out bool usePalantirFallback,
 							out visibleTrapIndicators);
-						if (usePalacePalFallback)
+						if (usePalantirFallback)
 						{
-							IReadOnlyList<Vector3> palacePalCandidates =
-								palacePalProvider.GetCandidatePositionsForRoom(
+							IReadOnlyList<Vector3> palantirCandidates =
+								palantirProvider.GetCandidatePositionsForRoom(
 									dd,
 									roomIndex);
 							sourceData.FallbackCatalogCandidateCount =
 								catalogRoom?.Candidates.Length ?? 0;
-							sourceData.FallbackPalacePalCandidateCount =
-								palacePalCandidates.Count;
+							sourceData.FallbackPalantirCandidateCount =
+								palantirCandidates.Count;
 							sourceData.FallbackTrapMarkers =
 								BuildFallbackCandidateUnion(
 									catalogRoom,
-									palacePalCandidates);
+									palantirCandidates);
 							fallbackTrapCount =
 								sourceData.FallbackTrapMarkers.Count;
 							usedFallbackCandidates = true;
@@ -541,12 +542,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 					}
 					else
 					{
-						IReadOnlyList<Vector3> palacePalCandidates =
-							palacePalProvider.GetCandidatePositionsForRoom(dd, roomIndex);
-						sourceData.FallbackPalacePalCandidateCount =
-							palacePalCandidates.Count;
+						IReadOnlyList<Vector3> palantirCandidates =
+							palantirProvider.GetCandidatePositionsForRoom(dd, roomIndex);
+						sourceData.FallbackPalantirCandidateCount =
+							palantirCandidates.Count;
 						sourceData.FallbackTrapMarkers =
-							BuildFallbackCandidateUnion(null, palacePalCandidates);
+							BuildFallbackCandidateUnion(null, palantirCandidates);
 						fallbackTrapCount = sourceData.FallbackTrapMarkers.Count;
 						usedFallbackCandidates = true;
 					}
@@ -659,14 +660,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 
 		internal static IReadOnlyList<Vector3> BuildFallbackCandidateUnion(
 			DetailedMapCatalogRoom? catalogRoom,
-			IReadOnlyList<Vector3> palacePalCandidates)
+			IReadOnlyList<Vector3> palantirCandidates)
 		{
-			ArgumentNullException.ThrowIfNull(palacePalCandidates);
+			ArgumentNullException.ThrowIfNull(palantirCandidates);
 			int catalogCount = catalogRoom?.Candidates.Length ?? 0;
-			if (catalogCount == 0 && palacePalCandidates.Count == 0)
+			if (catalogCount == 0 && palantirCandidates.Count == 0)
 				return Array.Empty<Vector3>();
 
-			var result = new List<Vector3>(catalogCount + palacePalCandidates.Count);
+			var result = new List<Vector3>(catalogCount + palantirCandidates.Count);
 			if (catalogRoom != null)
 			{
 				for (int index = 0; index < catalogRoom.Candidates.Length; index++)
@@ -676,9 +677,9 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				}
 			}
 
-			for (int index = 0; index < palacePalCandidates.Count; index++)
+			for (int index = 0; index < palantirCandidates.Count; index++)
 			{
-				Vector3 candidate = palacePalCandidates[index];
+				Vector3 candidate = palantirCandidates[index];
 				var rawCandidate = new RawWorldPosition(candidate.X, candidate.Y, candidate.Z);
 				bool duplicate = false;
 				for (int existingIndex = 0; existingIndex < result.Count; existingIndex++)
@@ -709,7 +710,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			float roomRadius,
 			out IReadOnlyList<Vector3> candidates,
 			out int directCandidateCount,
-			out bool usePalacePalFallback,
+			out bool usePalantirFallback,
 			out IReadOnlyList<CoreSnapshotTrapIndicatorEntry> debugTrapIndicators)
 		{
 			if (catalogRoom == null)
@@ -722,8 +723,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 						Array.Empty<RawWorldPosition>());
 				candidates = Array.Empty<Vector3>();
 				directCandidateCount = 0;
-				usePalacePalFallback =
-					missingRoomPlan.UsePalacePalFallback;
+				usePalantirFallback =
+					missingRoomPlan.UsePalantirFallback;
 				debugTrapIndicators =
 					Array.Empty<CoreSnapshotTrapIndicatorEntry>();
 				return;
@@ -790,7 +791,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 			Append(candidatePlan.OrdinaryCandidates);
 			candidates = worldPositions;
 			directCandidateCount = candidatePlan.DirectCandidates.Count;
-			usePalacePalFallback = candidatePlan.UsePalacePalFallback;
+			usePalantirFallback = candidatePlan.UsePalantirFallback;
 		}
 
 		internal static bool IsSightTrapIndicatorBaseId(uint dungeonId, uint baseId)
@@ -982,14 +983,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		}
 
 		internal const float TrapMarkerTriggerRadius = 1.7f;
-		private const float ProbeArrivalSafetyMargin = 0.01f;
 		/// <summary>
-		/// Minimum shared-probe arrival radius after ProbeArrivalSafetyMargin.
-		/// Matches vnavmesh FollowPath's default waypoint Tolerance (0.25f);
-		/// SimpleMove.PathfindAndMoveTo uses range=0, so that tolerance governs
-		/// final-waypoint advancement. Smaller midpoints are not reliably reachable.
+		/// A shared probe must leave room for the common movement tolerance.
+		/// The navigation layer reserves that tolerance inside its allowed footprint.
 		/// </summary>
-		private const float MinimumSharedProbeArrivalRadius = 0.25f;
+		private const float MinimumSharedProbeArrivalRadius = NavigationRange.MovementTolerance;
 
 		/// <summary>
 		/// Replaces the first deterministic overlapping pair of trap probes with
@@ -1090,8 +1088,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 				(first.Position.Y + second.Position.Y) * 0.5f,
 				(first.Position.Z + second.Position.Z) * 0.5f);
 			float arrivalRadius =
-				TrapMarkerTriggerRadius - distance * 0.5f - ProbeArrivalSafetyMargin;
-			if (arrivalRadius < MinimumSharedProbeArrivalRadius)
+				TrapMarkerTriggerRadius - distance * 0.5f;
+			if (arrivalRadius <= MinimumSharedProbeArrivalRadius)
 				return false;
 
 			shared = new RoomWaypoint(
@@ -1274,7 +1272,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Search
 		public int CurrentWaypointIndex { get; init; }
 		public bool BlindFallbackUnavailable { get; init; }
 		public int FallbackCatalogCandidateCount { get; init; }
-		public int FallbackPalacePalCandidateCount { get; init; }
+		public int FallbackPalantirCandidateCount { get; init; }
 		public int FallbackUnionCandidateCount { get; init; }
 		public List<RoomContextWaypoint> Waypoints { get; init; } = new();
 	}

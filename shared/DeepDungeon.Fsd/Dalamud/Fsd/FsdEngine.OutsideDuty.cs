@@ -59,7 +59,8 @@ namespace DeepDungeon.Fsd.Dalamud
                     _dutyState,
                     _logMessageSource,
                     _floorEvidenceObserver,
-                    _runTelemetryObserver);
+                    _runTelemetryObserver,
+                    _spinBossMovementFactory);
                 _ddHost.StartFsd(
                     scenarioFactory,
                     targetLoops,

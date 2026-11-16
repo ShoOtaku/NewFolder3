@@ -24,7 +24,7 @@ internal sealed partial class FloorExplorationController
             }
             else if (_chatWatchers?.ChatSaysNoHoard == true)
                 ctx.HarvestComplete = true;
-            else if (_executor.IsHoardWorkResolved && _executor.IsComplete && !_activeWaypoint.HasValue)
+            else if (HarvestWorkResolved(ctx!))
             {
                 // Candidate exhaustion without authoritative absence is unknown, never a confirmed empty round.
                 ctx.AttemptAborted = true;
@@ -34,8 +34,7 @@ internal sealed partial class FloorExplorationController
         }
         else
         {
-            bool chestWorkComplete = _executor.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
-                _executor.IsComplete && !_activeWaypoint.HasValue;
+            bool chestWorkComplete = HarvestWorkResolved(ctx!);
             bool canSkip = EntryIncenseWindowOpen() &&
                 DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId) &&
                 !this.Survey.NaturalPoisonfruitAttempted && !this.Survey.NaturalMazerootAttemptedOrAdopted &&
@@ -51,5 +50,23 @@ internal sealed partial class FloorExplorationController
         ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
         _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；退本並驗證準備存檔。";
         return true;
+    }
+
+    /// <summary>Chest-harvest completion from the selected work truth.
+    /// Coord floors read the knowledge scheduler — quota/passage are
+    /// progression-only and never count, and a real work decision must
+    /// exist (default zeros before the first route are not "done").
+    /// Legacy floors keep reading the executor's generated queue.</summary>
+    private bool HarvestWorkResolved(RunContext ctx)
+    {
+        if (UsesSiteCoordination)
+        {
+            var fk = ctx.Knowledge.Floor;
+            return fk?.WorkDecisionInitialized == true &&
+                fk.SearchObligationsResolved && fk.RequiredWorkRemaining == 0 &&
+                fk.PendingWorkCount == 0 && !_activeWaypoint.HasValue;
+        }
+        return _executor!.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
+            _executor.IsComplete && !_activeWaypoint.HasValue;
     }
 }

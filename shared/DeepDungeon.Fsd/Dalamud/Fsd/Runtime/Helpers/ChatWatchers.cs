@@ -24,7 +24,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			IntuitionEvidenceExpectationKind EvidenceExpectationKind,
 			byte EvidenceSourceFloor,
 			byte EvidenceTargetFloor,
-			uint? SilverChestOvercapDemicloneRowId);
+			uint? SilverChestOvercapRowId,
+			byte? UsedMagiciteTypeId);
 
 		private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
 		private readonly Action<NativeDeepDungeonLogMessage> _logMessageHandler;
@@ -187,9 +188,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 					if (message.ParameterCount > 0 && TryMapGoldChestOvercapSlot(message.Value1, out var slotIndex))
 						NotifyStateChanged("GoldChestOvercapObserved", goldChestOvercapSlotIndex: slotIndex);
 					break;
+				case 9208:
+					if (message.ParameterCount > 0 && message.Value1 is >= 1 and <= 4)
+						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapRowId: message.Value1);
+					break;
+				case 9209:
+					if (message.ParameterCount > 1 && message.Value2 is >= 1 and <= 4)
+						NotifyStateChanged("MagiciteUseObserved", usedMagiciteTypeId: (byte)message.Value2);
+					break;
+				case 9217:
+					NotifyStateChanged("FalsePassageObserved");
+					break;
 				case 10287:
 					if (message.ParameterCount > 0 && message.Value1 is 4 or 5)
-						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapDemicloneRowId: message.Value1);
+						NotifyStateChanged("SilverChestOvercapObserved", silverChestOvercapRowId: message.Value1);
 					break;
 				case 7256:
 					SightLogSequence++;
@@ -278,7 +290,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 			string reason,
 			EvidenceReceipt evidence = default,
 			uint? goldChestOvercapSlotIndex = null,
-			uint? silverChestOvercapDemicloneRowId = null)
+			uint? silverChestOvercapRowId = null,
+			byte? usedMagiciteTypeId = null)
 		{
 			StateChanged?.Invoke(new StateChangedInfo(
 				reason,
@@ -295,7 +308,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Helpers
 				evidence.ExpectationKind,
 				evidence.SourceFloor,
 				evidence.TargetFloor,
-				silverChestOvercapDemicloneRowId));
+				silverChestOvercapRowId,
+				usedMagiciteTypeId));
 		}
 
 		private static unsafe bool TryMapGoldChestOvercapSlot(uint rawPomanderId, out uint slotIndex)
