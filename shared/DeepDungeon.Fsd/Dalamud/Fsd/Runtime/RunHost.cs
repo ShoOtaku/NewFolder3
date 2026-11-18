@@ -67,6 +67,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		public bool FsdActive => _isFsdMode;
 		public bool AssistModeActive => _isFsdMode;
 		public bool ScenarioAttached => _attachedScenario != null;
+		internal FsdHoardStatistics? HoardStatistics { private get; init; }
 
 	// Expose shared controller for scenarios/panels that need fine-grained state.
 	public FloorPhaseController FloorController => _floorController;
@@ -120,6 +121,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			// Create first scenario instance
 				_attachedScenario = _scenarioFactory();
 				_attachedScenario.Initialize(_context);
+				HoardStatistics?.StartSession();
 
 				Service.Log.Info($"[RunHost] FSD started: {_attachedScenario.Name} (loops={(_multiLoopDriver!.InfiniteLoop ? "∞" : _multiLoopDriver.TargetLoops)})");
 			}
@@ -219,6 +221,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				_attachedScenario.Update(framework);
 				DiagnosticGate = GetScenarioDiagnosticGate();
 
+				var duty = _context.Duty;
+				if (duty.IsInDuty && !duty.IsTransitioning &&
+				    (_context.EntryReadyForDuty || _inDutyControllersActive))
+					HoardStatistics?.Observe(duty.DungeonId, duty.Floor, duty.HoardCount);
+
 				_lastStatus = _context.StatusLine ?? string.Empty;
 				_lastStatusIsError = _context.StatusIsError;
 
@@ -315,6 +322,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 						_attachedScenario = _scenarioFactory!.Invoke();
 						_attachedScenario.Initialize(_context);
+						HoardStatistics?.BeginAttempt();
 					}
 					else
 					{
@@ -391,6 +399,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				return;
 			}
 		}
+
+		if (_context.StatusIsError) return;
 
 			// Auto-open chests when assist mode is active
 			if (assistActive)

@@ -1,5 +1,6 @@
 using global::Dalamud.Interface.Textures;
 using global::Dalamud.Plugin.Services;
+using global::Dalamud.Game.ClientState.Conditions;
 using System;
 using System.Collections.Generic;
 using DeepDungeon.Fsd.Core;
@@ -33,6 +34,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
         private readonly FsdRotationController _rotationControl;
         private readonly Runtime.Navigation.FsdCameraController _camera = new();
+        private readonly FsdHoardStatistics _hoardStatistics;
         
 		private RunHost? _ddHost = null;
         private int _fsfScenarioIndex = 1;
@@ -114,6 +116,7 @@ namespace DeepDungeon.Fsd.Dalamud
             _spinBossMovementFactory = spinBossMovementFactory;
             _stateObserver = stateObserver;
             _logMessageSource = new NativeDeepDungeonLogMessageSource(Service.GameInteropProvider);
+            _hoardStatistics = new FsdHoardStatistics(_configuration, DeepDungeonRunRecorder.GetLogDirectory());
         }
 
         internal DutyState? DutyState => _dutyState;
@@ -232,7 +235,10 @@ namespace DeepDungeon.Fsd.Dalamud
 						_logMessageSource,
 						_floorEvidenceObserver,
 						_runTelemetryObserver,
-                        _spinBossMovementFactory);
+                        _spinBossMovementFactory)
+					{
+						HoardStatistics = _hoardStatistics
+					};
 					Service.Log.Info("[FsdEngine] Run host created.");
 					_ddHost.FloorController.DiagnosticSink = RecordDiagnosticEvent;
 				}
@@ -320,8 +326,10 @@ namespace DeepDungeon.Fsd.Dalamud
             // Tick the host to allow entry flows outside duty (FSD mode)
             UpdateCompanionControls();
             _ddHost?.Update(framework);
-            _camera.Update(_ddHost?.FsdActive == true,
-                _ddHost?.FloorController.CameraChestPosition, DateTime.UtcNow,
+            var now = DateTime.UtcNow;
+            _hoardStatistics.Update(now);
+            _camera.Update(_ddHost?.FsdActive == true && !Service.Condition[ConditionFlag.InCombat],
+                _ddHost?.FloorController.CameraChestPosition, now,
                 _ddHost?.FloorController.BossRequestsNorthCamera == true);
             UpdateCompanionControls();
             if (_detailedMapCatalogManager.ActiveRunSnapshot != null &&
@@ -526,6 +534,7 @@ namespace DeepDungeon.Fsd.Dalamud
             
             try { _ddHost?.Dispose(); } catch { }
             _ddHost = null;
+            _hoardStatistics.Update(DateTime.UtcNow, flush: true);
             try { _logMessageSource.Dispose(); } catch { }
             StopBridgeLeaveDutySession();
             if (_bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null)

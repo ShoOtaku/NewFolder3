@@ -4,6 +4,7 @@ using MasterPlayer.MechanicRuntime;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using DeepDungeon.Fsd.Dalamud.Runtime;
+using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat;
@@ -19,6 +20,8 @@ internal sealed class CombatAssistPolicy
     private readonly ICombatTargetProvider _default = new DefaultTargetProvider();
     private CombatTargetChoice _decision;
     private DateTime _decisionFrame;
+    private DateTime _chaseTargetFrame;
+    private ulong _chaseTargetId;
     internal string? TargetSource => _decision.Source;
     internal ulong SelectedId { get; private set; }
 
@@ -48,6 +51,28 @@ internal sealed class CombatAssistPolicy
             return choice;
         choice = Choose(request with { SightOrigin = position });
         return choice.Target == null ? choice with { HoldFire = true } : choice;
+    }
+
+    internal void OfferChaseTarget(ulong targetId)
+    {
+        _chaseTargetFrame = Service.Framework.LastUpdateUTC;
+        _chaseTargetId = targetId;
+    }
+
+    private static CombatTargetChoice UseChaseTarget(in CombatTargetRequest request, Vector3 position,
+        ulong chaseTargetId, CombatTargetChoice choice)
+    {
+        if (choice.Target != null || choice.Source != "default" || request.BossFloor || request.PassageOpen ||
+            chaseTargetId == 0 || request.Context is not { } context || context.IsCombatTargetSuppressed(chaseTargetId))
+            return choice;
+
+        if (CombatTargetingHelpers.GetBattleCharaByGameObjectId(chaseTargetId) is not
+                IBattleNpc { IsDead: false, IsTargetable: true, CurrentHp: > 0 } target ||
+            !context.IsNewCombatTargetAllowed(target) ||
+            !CombatPositionNavigation.CheckAttack(position, target.Position, request.Range).Allowed)
+            return choice;
+
+        return new(target, "chase");
     }
 
     private static void Apply(in CombatTargetChoice decision)
@@ -84,8 +109,10 @@ internal sealed class CombatAssistPolicy
             if (player == null || player.IsDead) return;
             bool inCombat = Service.Condition[ConditionFlag.InCombat];
             float range = GetEngageRange();
-            var choice = SelectAttack(new(context, isBossFloor, inCombat, passageOpen, range, true,
-                EncounterPlanningSnapshotRegistry.Read()), player.Position);
+            var request = new CombatTargetRequest(context, isBossFloor, inCombat, passageOpen, range, true,
+                EncounterPlanningSnapshotRegistry.Read());
+            ulong chaseTargetId = _chaseTargetFrame == Service.Framework.LastUpdateUTC ? _chaseTargetId : 0;
+            var choice = UseChaseTarget(request, player.Position, chaseTargetId, SelectAttack(request, player.Position));
             var target = choice.Target;
             SelectedId = target?.GameObjectId ?? 0;
             Apply(choice);
@@ -112,7 +139,7 @@ internal sealed class CombatAssistPolicy
                 floor = context.Duty.Floor, status, autoSelect = true,
                 inCombat, passageOpen, engageRange = range,
                 currentTargetId = Service.TargetManager.Target?.GameObjectId,
-                selectedTargetId = SelectedId, targetHp = target?.CurrentHp,
+                selectedTargetId = SelectedId, targetHp = target?.CurrentHp, chaseTargetId,
                 preferredTargetId = context.TryGetPreferredAggroTarget(out var preferred) ? preferred : 0
             });
         }

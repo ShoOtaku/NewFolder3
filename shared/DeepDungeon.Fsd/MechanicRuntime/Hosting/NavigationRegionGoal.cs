@@ -13,7 +13,8 @@ public sealed class NavigationRegionGoal(
 {
     private const float StandClearance = NavigationFollower.Arrival + .01f;
     private readonly GridAStar.Search _search = new();
-    private readonly List<Vector3> _points = new(), _rejected = new();
+    private readonly List<Vector3> _points = new();
+    private readonly List<(Vector3 Stand, NavigationRange Range)> _rejected = new();
     private INavigationGrid? _terrain;
     private Vector3 _player;
     private readonly Dictionary<Vector2, bool> _accepted = new();
@@ -71,9 +72,11 @@ public sealed class NavigationRegionGoal(
         _nextCheck = default;
     }
 
-    public void Reject(Vector3 stand)
+    public void Reject(Vector3 stand) => Reject(stand, NavigationRange.Point);
+
+    public void Reject(Vector3 stand, NavigationRange range)
     {
-        _rejected.Add(stand);
+        _rejected.Add((stand, range));
         Invalidate();
     }
 
@@ -85,8 +88,8 @@ public sealed class NavigationRegionGoal(
 
     private bool? Accept(Vector3 point, Vector3 target, float range, float clearance)
     {
-        foreach (var rejected in _rejected)
-            if (NavigationRange.Point.Contains(rejected, point)) return false;
+        foreach (var (stand, rangeToReject) in _rejected)
+            if (rangeToReject.Contains(stand, point)) return false;
         return canStand(point, target, range, clearance);
     }
 

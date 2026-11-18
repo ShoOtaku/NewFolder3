@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../shared/DeepDungeon.Fsd/Core/DeepDungeon.Fsd.Core.csproj" />
+    <ProjectReference Include="../../shared/DeepDungeon.Fsd/Runtime/DeepDungeon.Fsd.Runtime.csproj" />
     <Compile Include="../NewFolder3.ContractTests/FsdDiagnosticsTests.cs" Link="FsdDiagnosticsTests.cs" />
     <Compile Include="../NewFolder3.ContractTests/SaveSlotResetTests.cs" Link="SaveSlotResetTests.cs" />
     <Compile Include="../NewFolder3.ContractTests/FarmingRecoveryTests.cs" Link="FarmingRecoveryTests.cs" />

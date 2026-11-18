@@ -11,6 +11,8 @@ public sealed class FsdSettings
 
     public FsdRotationSettings Rotation { get; set; } = new();
 
+    public long? LifetimeHoardPickups { get; set; }
+
     public bool AutoUseRecoveryPotion { get; set; }
     public int RecoveryPotionHpThresholdPercent { get; set; } = 90;
     public bool NecromancerAutoOpenGoldChest { get; set; }

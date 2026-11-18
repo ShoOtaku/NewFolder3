@@ -641,7 +641,8 @@ bool primaryOwnsOperation = true)
             var takeoverChanged = takeover != _coordTookOver;
             _coordTookOver = takeover;
             var boundary = (INativeBoundary)_coordReal!;
-            _coordPipeline!.Tick(
+            var pipeline = _coordPipeline!;
+            pipeline.Tick(
                 this.Floor,
                 RoomGraph.GetLocalPlayerRoomIndex(dd),
                 DateTime.UtcNow,
@@ -659,13 +660,18 @@ bool primaryOwnsOperation = true)
                 _coverage,
                 boundary,
                 passageActorPos);
+            if (_coordRecoveryController?.FailureReason is { } combatFailure)
+            {
+                RestartAfterCombatFailure(combatFailure);
+                return;
+            }
             if (takeoverChanged)
             {
                 RecordReplayEvent("coord-takeover", new
                 {
                     floor = this.Floor,
                     active = takeover,
-                    op = _coordPipeline.CurrentObjective.ToString(),
+                    op = pipeline.CurrentObjective.ToString(),
                     nav = _navBackend
                 });
             }
@@ -687,7 +693,7 @@ bool primaryOwnsOperation = true)
                     floor = this.Floor,
                     reason = navFailure,
                     headToken = _siteDriver?.HeadToken,
-                    movementOwner = _coordPipeline?.MovementOwner,
+                    movementOwner = pipeline.MovementOwner,
                     leg = _navigation.LegIndex,
                     legs = smoothed.Count,
                     player = V(coordPlayer.Position),
@@ -713,11 +719,11 @@ bool primaryOwnsOperation = true)
                 // could cancel the freshly bound op.
                 return;
             }
-            if (_coordPipeline.IsObjectiveBlocked(_coordPipeline.SelectedObjective))
+            if (pipeline.IsObjectiveBlocked(pipeline.SelectedObjective))
             {
                 // No fallback: a blocked objective fails explicitly instead of
                 // silently handing back to the legacy path.
-                _status = $"coord objective failed (no fallback): {_coordPipeline.SelectedObjective}";
+                _status = $"coord objective failed (no fallback): {pipeline.SelectedObjective}";
                 return;
             }
             if (takeover)
@@ -726,8 +732,8 @@ bool primaryOwnsOperation = true)
                 // execution path — the ledger must stay open while coord ops
                 // drive, otherwise outcomes are silently dropped. Keyed on
                 // the op the pipeline actually selected from facts.
-                if (_coordPipeline.CurrentObjective != FloorObjectiveKind.None)
-                    EnsureObjectiveExecution(_coordPipeline.CurrentObjective);
+                if (pipeline.CurrentObjective != FloorObjectiveKind.None)
+                    EnsureObjectiveExecution(pipeline.CurrentObjective);
                 return;
             }
             // On non-coord floors (boss/terminal) the pipeline still ticks for
@@ -735,8 +741,43 @@ bool primaryOwnsOperation = true)
             // own controller.
             if (this.Kind == FloorRuntimeKind.Normal)
                 _status = "objective unhandled (no coverage): " +
-                    _coordPipeline.SelectedObjective;
+                    pipeline.SelectedObjective;
         }
+    }
+
+    private void RestartAfterCombatFailure(string reason)
+    {
+        if (_ctx is not { } context) return;
+
+        int failures = RecoveryBudget.TotalFailures;
+        if (context.TryHoldFailedAttempt(reason))
+        {
+            _status = context.StatusLine;
+        }
+        else if (UsesSiteCoordination && context.FarmingPlan?.ReusesSave != true &&
+                 !context.DutyCompletionObserved && !context.DutyFailureObserved && RecoveryBudget.TryRestart())
+        {
+            // Rebind the floor's work from live observations while retaining completed work and duty progress.
+            _coordPipeline!.Reset();
+            _coordPipeline = new(RecordReplayEvent);
+            _coordRecoveryController = null;
+            _chaseHelper.Reset();
+            context.ClearSuppressedCombatTargets();
+            context.ClearPreferredAggroTarget();
+            _status = $"第 {Floor} 层战斗站位重试耗尽，FSD 已原地重启。";
+            RecordReplayEvent("fsd-combat-restarted", new { floor = Floor, reason, failures,
+                restarts = RecoveryBudget.Restarts, limit = CombatRecoveryBudget.MaximumRestartsPerFloor });
+            return;
+        }
+        else
+        {
+            _status = context.StatusLine = RecoveryBudget.Restarts > 0
+                ? $"第 {Floor} 层原地重启后仍无法恢复战斗，FSD 已停止。"
+                : reason;
+            context.StatusIsError = true;
+        }
+        RecordReplayEvent("sight-recovery-stopped", new { floor = Floor, reason, failures,
+            restarts = RecoveryBudget.Restarts });
     }
 
     private bool EnsureObjectiveExecution(FloorObjectiveKind objective)

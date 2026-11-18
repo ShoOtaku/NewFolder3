@@ -1,6 +1,7 @@
 using DeepDungeon.Fsd.Core;
 using System;
 using System.Numerics;
+using VNav = DeepDungeon.Fsd.Dalamud.moveHelper.VNav;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 {
@@ -31,13 +32,18 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			return PathfindAndMoveTo(dest, alignCamera);
 		}
 
-		public void CancelAll()
+		public void CancelAll() => CancelAll(cancelPathfinding: false);
+
+		internal void CancelAll(bool cancelPathfinding)
 		{
 			if (!_cancelPending)
 				return;
 
 			_cancelPending = false;
-            try { DeepDungeon.Fsd.Dalamud.moveHelper.VNav.Path.Stop(); } catch { }
+			// A pending SimpleMove could start following its route after Path.Stop.
+			if (cancelPathfinding && VNav.SimpleMove.PathfindInProgress())
+				VNav.Nav.PathfindCancelAll();
+			VNav.Path.Stop();
 		}
 
 		public void Dispose()

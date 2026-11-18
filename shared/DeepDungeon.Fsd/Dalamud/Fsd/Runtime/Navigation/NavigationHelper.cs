@@ -220,9 +220,18 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		/// <summary>
 		/// Cancel current navigation and reset state
 		/// </summary>
-		public void Cancel()
+		public void Cancel() => Cancel(cancelPathfinding: false);
+
+		internal void Cancel(bool cancelPathfinding)
 		{
-			try { _navigator.CancelAll(); } catch { }
+			try
+			{
+				if (cancelPathfinding && _navigator is NavigatorVNavAdapter vnav)
+					vnav.CancelAll(cancelPathfinding: true);
+				else
+					_navigator.CancelAll();
+			}
+			catch { }
 				waitingForCast = false;
 			Reset();
 		}

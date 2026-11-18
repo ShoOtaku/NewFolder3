@@ -1,11 +1,12 @@
 using System.Text.Json;
+using Dalamud.Game.ClientState.Conditions;
 using Dalamud.Plugin.Ipc;
 using DeepDungeon.Fsd.Core;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-/// <summary>PT30 has one movement owner: PromeRadar. FSD retains entry, combat items and exit.</summary>
+/// <summary>FSD approaches before the pull. PromeRadar owns PT30 movement in combat.</summary>
 internal sealed unsafe class PromeRadarBossMovementStrategy(
     FloorExplorationController floor, RunContext context, Action<string, object> record) : IBossMovementStrategy
 {
@@ -13,6 +14,7 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
     private readonly ICallGateSubscriber<bool, object> setSession = Service.PluginInterface.GetIpcSubscriber<bool, object>("PromeRadar.SetFsdSessionActive");
     private bool enableRequested;
     private bool handedOver;
+    private bool combatStarted;
     private DateTime startedAtUtc;
     private DateTime nextRecordAtUtc;
     public string Name => "PromeRadar-PT30";
@@ -25,11 +27,23 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
         startedAtUtc = DateTime.UtcNow;
         enableRequested = false;
         handedOver = false;
+        combatStarted = false;
         floor.CancelCoordMovement();
+    }
+
+    internal void ObserveCombatStart()
+    {
+        if (!combatStarted && Service.Condition[ConditionFlag.InCombat])
+        {
+            floor.Boss.StopPromeRadarApproach();
+            combatStarted = true;
+            record("mp-boss-approach-cancelled", new { floor = 30, reason = "combat-started" });
+        }
     }
 
     public string? Update(InstanceContentDeepDungeon* dungeon)
     {
+        ObserveCombatStart();
         var now = DateTime.UtcNow;
         string reason;
         try
@@ -47,6 +61,7 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
                 {
                     if (!handedOver)
                     {
+                        floor.Boss.StopPromeRadarApproach();
                         floor.CancelCoordMovement();
                         handedOver = true;
                         record("mp-boss-movement-acquired", current);
@@ -59,12 +74,10 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
                     startedAtUtc = now;
                     return "Boss floor - PromeRadar MP script owns PT30 mechanics";
                 }
-                if (current.CanMove && !Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat]
-                    && !current.Pt30ScriptReady)
+                if (current.CanMove && !combatStarted && !handedOver && !current.Pt30ScriptReady)
                 {
-                    floor.Boss.UpdateApproach(dungeon);
                     startedAtUtc = now;
-                    return "Boss floor - approaching before PromeRadar PT30 script activation";
+                    return floor.Boss.UpdatePromeRadarApproach();
                 }
                 reason = $"script={current.Pt30ScriptVersion}, ready={current.Pt30ScriptReady}, session={current.FsdSessionActive}, enabled={current.SmartMovementEnabled}, canMove={current.CanMove}, nav={current.NavigationActive}";
             }
@@ -74,6 +87,8 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
         {
             reason = ex.Message;
         }
+        if (!combatStarted && !handedOver)
+            floor.Boss.StopPromeRadarApproach();
         if ((now - startedAtUtc).TotalSeconds >= 10)
         {
             context.StatusLine = $"PT30 PromeRadar 移動未就緒；停止並保留現場：{reason}";

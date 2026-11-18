@@ -291,6 +291,10 @@ namespace DeepDungeon.Fsd.Dalamud
 				UiHelpers.DrawGrayTipText("Full Self-Delving (Supervised) in Deep Dungeons");
 				ImGui.Indent();
                 bool hostAssistActive = _ddHost?.AssistModeActive == true;
+                ImGui.Text($"本次會話拾取寶藏：{_hoardStatistics.SessionPickups}");
+                ImGui.Text(_hoardStatistics.LifetimePickups is { } total
+                    ? $"累計拾取寶藏：{total}"
+                    : "累計拾取寶藏：正在讀取歷史紀錄");
                 DrawFarmingSelection(hostAssistActive);
 
 				DrawDetailedMapSettings(hostAssistActive);

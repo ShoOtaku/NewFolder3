@@ -6,6 +6,7 @@ internal static class FarmingRecoveryTests
 {
     public static void Run()
     {
+        CombatPositionRestartLimits();
         Check(FarmingPlan.TryCreate(FarmingMode.Hoard, SaveUse.Create, 21, 2, false, true, true, false, false,
             out var plan, out _), "Hoard plan must be valid");
         var failure = FarmingSessionPolicy.Decide(plan!, new(21, false, true, false, false));
@@ -38,6 +39,22 @@ internal static class FarmingRecoveryTests
         Check((state with { HasMovementControl = true }).OwnsDodgeMovement(1283, now), "Active MP dodge must preempt floor travel");
         Check(!(state with { HasMovementControl = true }).OwnsDodgeMovement(1283, now.AddSeconds(4)), "Stale MP control must not preempt travel");
         Console.WriteLine("Farming recovery and PromeRadar handover checks passed.");
+    }
+
+    private static void CombatPositionRestartLimits()
+    {
+        var budget = new CombatRecoveryBudget();
+        for (int i = 0; i < CombatRecoveryBudget.MaximumFailuresPerTarget; i++) budget.RecordFailure(1);
+        Check(budget.IsTargetExhausted(1) && !budget.TryRestart(), "One exhausted target cannot restart FSD");
+
+        while (!budget.Exhausted) budget.RecordFailure(2);
+        Check(budget.TryRestart(), "The first floor retry exhaustion must allow an in-place restart");
+        Check(budget.Restarts == 1 && budget.TotalFailures == 0 && !budget.HasExhaustedTargets,
+            "Restart must clear both floor and per-target failure counts");
+
+        while (!budget.Exhausted) budget.RecordFailure(1);
+        Check(!budget.TryRestart() && budget.Exhausted, "A second exhaustion on the same floor must stop recovery");
+        Console.WriteLine("Combat position restart limits passed.");
     }
 
     private static void Check(bool value, string message)

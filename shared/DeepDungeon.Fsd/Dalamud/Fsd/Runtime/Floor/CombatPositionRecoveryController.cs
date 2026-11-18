@@ -12,6 +12,7 @@ internal sealed class CombatPositionRecoveryController(RunContext context, Enemy
     CombatRecoveryBudget budget, RunFloorTelemetryTrace? telemetry, Action<string> setStatus,
     Action<string, object> record)
 {
+    private static readonly NavigationRange RejectedStandRange = new(2f, NavigationDistanceMetric.Spatial);
     private ulong _id;
     private uint _hp;
     private TimeSpan _approachTime;
@@ -20,6 +21,7 @@ internal sealed class CombatPositionRecoveryController(RunContext context, Enemy
     private Vector3 _lastPosition;
     private DateTime _lastDamage, _lastMove, _recovery, _verify, _pause;
     public DateTime AttackWindowStartedAt { get; private set; }
+    internal string? FailureReason { get; private set; }
 
     internal void Suspend()
     {
@@ -80,19 +82,22 @@ internal sealed class CombatPositionRecoveryController(RunContext context, Enemy
         if (_recovery == default && stalled)
         {
             if (budget.IsTargetExhausted(id))
-                return Stop(surface, "Combat position recovery exhausted this target's retry budget.");
+                return SwitchTarget(surface, id);
             _recovery = now;
-            if (region.Path is { } path) region.Reject(path.Points[^1]);
-            region.Reject(player);
+            if (region.Path is { } path) region.Reject(path.Points[^1], RejectedStandRange);
+            region.Reject(player, RejectedStandRange);
             telemetry?.ObserveStalledEngageRecoveryStarted();
-            record("sight-recovery-started", new { targetId = id, reason = "no-target-progress", failures = budget.TotalFailures });
+            record("sight-recovery-started", new { targetId = id, reason = "no-target-progress",
+                failures = budget.TotalFailures, previousAttackTargetId = context.CombatAssist.SelectedId,
+                currentGameTargetId = Service.TargetManager.Target?.GameObjectId,
+                distance = Vector3.Distance(player, targetPosition), rejectedStandRadius = RejectedStandRange.Radius });
         }
         else if (_recovery != default && region.Holding)
         {
             if (_verify == default) _verify = now;
             if (now - _verify >= TimeSpan.FromSeconds(6))
             {
-                region.Reject(player);
+                region.Reject(player, RejectedStandRange);
                 _verify = default;
                 record("sight-recovery-position-rejected", new { targetId = id, reason = "attack-no-progress" });
             }
@@ -110,26 +115,33 @@ internal sealed class CombatPositionRecoveryController(RunContext context, Enemy
             budget.RecordFailure(id);
             record("clearing-target-deprioritized", new { targetId = id, reason, hp = _hp,
                 failures = budget.TotalFailures, targetExhausted = budget.IsTargetExhausted(id) });
-            chase.DeprioritizeCurrentTarget();
-            context.SuppressCombatTarget(id, TimeSpan.FromSeconds(20));
-            context.ClearPreferredAggroTarget();
-            surface.Cancel();
-            _id = 0;
-            AttackWindowStartedAt = default;
             if (budget.Exhausted) return Stop(surface, "Combat position recovery exhausted the floor retry limit.");
-            setStatus("Switching target after combat position recovery failed");
-            return NavOutcome.Pending;
+            return SwitchTarget(surface, id);
         }
-        return state == NavigationState.Arrived ? NavOutcome.Arrived : NavOutcome.Moving;
+
+        if (state != NavigationState.Arrived) return NavOutcome.Moving;
+        if (region.Holding) context.CombatAssist.OfferChaseTarget(id);
+        return NavOutcome.Arrived;
+    }
+
+    private NavOutcome SwitchTarget(NavigationSurface surface, ulong id)
+    {
+        chase.DeprioritizeCurrentTarget();
+        context.SuppressCombatTarget(id, TimeSpan.FromSeconds(20));
+        context.ClearPreferredAggroTarget();
+        surface.Cancel();
+        _id = 0;
+        AttackWindowStartedAt = default;
+        setStatus("Switching target after combat position recovery failed");
+        return NavOutcome.Pending;
     }
 
     private NavOutcome Stop(NavigationSurface surface, string reason)
     {
         surface.Cancel();
-        context.StatusIsError = true;
-        context.StatusLine = reason;
+        FailureReason = reason;
         setStatus(reason);
-        record("sight-recovery-stopped", new { reason, targetId = _id, failures = budget.TotalFailures });
+        record("sight-recovery-exhausted", new { reason, targetId = _id, failures = budget.TotalFailures });
         return NavOutcome.Failed;
     }
 }

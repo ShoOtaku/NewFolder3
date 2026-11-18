@@ -339,6 +339,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                 bool mpOwnsMovement = activeRuntime.Kind == FloorRuntimeKind.Normal &&
                     _ctx.PromeRadarMovement?.ReadState()?.OwnsDodgeMovement(Service.ClientState.TerritoryType, DateTime.UtcNow) == true;
                 bool castWait = !mpOwnsMovement && CastMovementGuard.ShouldWait();
+                activeRuntime.Boss.ObservePromeRadarApproachBoundary(castWait);
                 if ((mpOwnsMovement || castWait) != (yieldingToPromeRadar || waitingForCast))
                 {
                     activeRuntime.SetExternalMovement(mpOwnsMovement || castWait);

@@ -60,7 +60,10 @@ namespace DeepDungeon.Fsd.Dalamud
                     _logMessageSource,
                     _floorEvidenceObserver,
                     _runTelemetryObserver,
-                    _spinBossMovementFactory);
+                    _spinBossMovementFactory)
+                {
+                    HoardStatistics = _hoardStatistics
+                };
                 _ddHost.FloorController.DiagnosticSink = RecordDiagnosticEvent;
                 _ddHost.StartFsd(
                     scenarioFactory,

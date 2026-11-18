@@ -83,7 +83,7 @@ internal sealed class FloorBossController : IDisposable
         if (!_movementStarted) return;
         _movementStarted = false;
         try { _movementStrategy.Stop(); }
-        finally { _navHelper.Cancel(); }
+        finally { _navHelper.Cancel(cancelPathfinding: _movementStrategy is PromeRadarBossMovementStrategy); }
         _recordReplayEvent("boss-movement-stopped", new { floor = _floor, strategy = _movementStrategy.Name });
     }
 
@@ -184,6 +184,44 @@ internal sealed class FloorBossController : IDisposable
             RecordBossCombatSnapshot();
             TryMaintainBossBuffs(dd);
         }
+    }
+
+    internal string UpdatePromeRadarApproach()
+    {
+        if (Service.LocalPlayer is not { IsDead: false } player ||
+            CombatTargetingHelpers.PickNearestHostile(60f, out _, _ctx.IsNewCombatTargetAllowed) is not { } boss)
+        {
+            StopPromeRadarApproach();
+            return "Boss floor - waiting for boss target";
+        }
+
+        float range = _ctx.CombatAssist.GetEngageRange() + boss.HitboxRadius;
+        var attack = CombatPositionNavigation.CheckAttack(player.Position, boss.Position, range);
+        if (attack.InRange && !attack.SightBlocked)
+        {
+            StopPromeRadarApproach();
+            _ctx.PrepareCombat(boss.GameObjectId);
+            return "Boss floor - in attack range, waiting for pull";
+        }
+        var state = _navHelper.Navigate(boss.Position, player.Position, retryIntervalSeconds: 5.0);
+        return state switch
+        {
+            NavigationState.Arrived => "Boss floor - waiting for a clear shot",
+            NavigationState.Failed or NavigationState.StuckGiveUp => "Boss floor - PT30 approach unavailable",
+            _ => "Boss floor - approaching PT30 boss",
+        };
+    }
+
+    internal void StopPromeRadarApproach() => _navHelper.Cancel(cancelPathfinding: true);
+
+    internal void ObservePromeRadarApproachBoundary(bool waitingForCast)
+    {
+        if (!_movementStarted || _movementStrategy is not PromeRadarBossMovementStrategy strategy)
+            return;
+
+        strategy.ObserveCombatStart();
+        if (waitingForCast)
+            StopPromeRadarApproach();
     }
 
     internal unsafe void UpdateApproach(InstanceContentDeepDungeon* dd)
