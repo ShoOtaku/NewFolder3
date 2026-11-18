@@ -14,7 +14,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 	/// Reactive flow to delete a deep dungeon save slot via NPC �?menu �?save list �?yes/no confirm �?close menu.
 	/// Mirrors PTDeleteSaveFlow behavior.
 	/// </summary>
-	public sealed class GenericDeleteSaveFlow
+	public sealed class GenericDeleteSaveFlow : IDisposable
 	{
 		private EntranceWindowCleanup _cleanup = new();
 		private RunContext? _ctx;
@@ -49,6 +49,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			_dungeon = dungeon;
 			_validateSource = validateSource;
 			_slotIndex = slotIndex >= 0 ? slotIndex : throw new ArgumentOutOfRangeException(nameof(slotIndex));
+		}
+
+		public void Dispose()
+		{
+			_npcNavHelper?.Cancel();
+			_ctx = null;
 		}
 
 		public void Prepare(RunContext context)

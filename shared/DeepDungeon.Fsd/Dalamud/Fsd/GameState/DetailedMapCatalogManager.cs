@@ -182,6 +182,13 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     }
 
     internal bool HasOnlineCatalogService => _catalogBaseUri != null;
+    internal bool IsUsingEmbeddedCatalog { get; private set; }
+
+    internal bool HasCatalogSource(string? scenarioKey) =>
+        IsSupportedScenario(scenarioKey) &&
+        (_catalogBaseUri != null ||
+         typeof(DetailedMapCatalogManager).Assembly.GetManifestResourceInfo(
+             EmbeddedResourceName(scenarioKey!, DetailedMapCatalogContract.LatestFileName)) != null);
 
     internal static string? GetScenarioKey(int scenarioIndex) =>
         scenarioIndex switch
@@ -307,7 +314,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             return true;
         }
 
-        if (_catalogBaseUri == null)
+        if (!HasCatalogSource(scenarioKey))
         {
             snapshot = null!;
             error = DetailedMapHostOptions.NoOnlineCatalogServiceMessage;
@@ -352,13 +359,13 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         EnsureScenarioLoaded(selectedScenarioKey);
         bool supported = IsSupportedScenario(selectedScenarioKey);
         string message;
-        if (_catalogBaseUri == null)
-        {
-            message = DetailedMapHostOptions.NoOnlineCatalogServiceMessage;
-        }
-        else if (!supported)
+        if (!supported)
         {
             message = "Detailed map is not available for this scenario.";
+        }
+        else if (!HasCatalogSource(selectedScenarioKey))
+        {
+            message = DetailedMapHostOptions.NoOnlineCatalogServiceMessage;
         }
         else if (_checkTask != null)
         {
@@ -368,9 +375,10 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         }
         else if (_currentCatalog != null)
         {
+            string source = IsUsingEmbeddedCatalog ? "Embedded data" : "Data";
             message = string.IsNullOrWhiteSpace(_lastCheckError)
-                ? $"Data version {_currentCatalog.ReleaseId} is ready."
-                : $"Data version {_currentCatalog.ReleaseId} is ready; the latest update check failed: {_lastCheckError}";
+                ? $"{source} version {_currentCatalog.ReleaseId} is ready."
+                : $"{source} version {_currentCatalog.ReleaseId} is ready; the latest update check failed: {_lastCheckError}";
         }
         else if (!string.IsNullOrWhiteSpace(_lastCheckError))
         {
@@ -780,22 +788,33 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         _currentCatalog = null;
         _currentHoardYield = null;
         _installedPointer = null;
+        IsUsingEmbeddedCatalog = false;
         _presentations.Clear();
         _localLoadError = string.Empty;
         _hoardYieldLoadError = string.Empty;
+
+        if (_catalogBaseUri == null)
+        {
+            LoadEmbeddedCatalog();
+            if (_currentCatalog != null)
+                return;
+        }
 
         string pointerPath = Path.Combine(
             _catalogRoot,
             InstalledPointerFileName);
         if (!File.Exists(pointerPath))
+        {
+            LoadEmbeddedCatalog();
             return;
+        }
 
         try
         {
             DetailedMapCatalogLatest latest =
                 DetailedMapCatalogContract.ParseLatest(
                     File.ReadAllBytes(pointerPath));
-            ValidateLatestPaths(latest, latest.ScenarioKey);
+            ValidateLatestPaths(latest, _loadedScenarioKey);
             string releaseDirectory = GetReleaseDirectory(latest);
             byte[] catalogBytes = File.ReadAllBytes(
                 Path.Combine(
@@ -809,7 +828,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
                 latest,
                 catalogBytes,
                 signatureBytes,
-                latest.ScenarioKey);
+                _loadedScenarioKey);
             if (catalog.HoardYieldSha256 != null)
             {
                 try
@@ -850,8 +869,76 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             JsonException)
         {
             _localLoadError = error.Message;
-            Service.Log.Error(
+            Service.Log?.Error(
                 $"[DetailedMapCatalog] Local catalog is invalid: {error}");
+        }
+
+        if (_currentCatalog == null)
+            LoadEmbeddedCatalog();
+    }
+
+    private static string EmbeddedResourceName(string scenarioKey, string fileName) =>
+        $"Fsd.DetailedMaps.{scenarioKey}.{fileName}";
+
+    private static byte[] ReadEmbeddedFile(string scenarioKey, string fileName, int maximumBytes)
+    {
+        using Stream stream = typeof(DetailedMapCatalogManager).Assembly.GetManifestResourceStream(
+            EmbeddedResourceName(scenarioKey, fileName))
+            ?? throw new InvalidDataException($"Embedded detailed-map artifact is missing: {scenarioKey}/{fileName}.");
+        if (stream.Length > maximumBytes)
+            throw new InvalidDataException($"Embedded detailed-map artifact exceeds the {maximumBytes}-byte limit.");
+        using var output = new MemoryStream((int)stream.Length);
+        stream.CopyTo(output);
+        return output.ToArray();
+    }
+
+    private void LoadEmbeddedCatalog()
+    {
+        if (!HasCatalogSource(_loadedScenarioKey) ||
+            typeof(DetailedMapCatalogManager).Assembly.GetManifestResourceInfo(
+                EmbeddedResourceName(_loadedScenarioKey, DetailedMapCatalogContract.LatestFileName)) == null)
+        {
+            return;
+        }
+
+        try
+        {
+            DetailedMapCatalogLatest latest = DetailedMapCatalogContract.ParseLatest(
+                ReadEmbeddedFile(_loadedScenarioKey, DetailedMapCatalogContract.LatestFileName, MaximumLatestBytes));
+            DetailedMapCatalog catalog = ValidateDownloadedCatalog(
+                latest,
+                ReadEmbeddedFile(_loadedScenarioKey, DetailedMapCatalogContract.CatalogFileName, MaximumCatalogBytes),
+                ReadEmbeddedFile(_loadedScenarioKey, DetailedMapCatalogContract.SignatureFileName, MaximumSignatureBytes),
+                _loadedScenarioKey);
+            HoardYieldCatalog? hoardYield = null;
+            if (catalog.HoardYieldSha256 != null)
+            {
+                hoardYield = ValidateHoardYield(catalog,
+                    ReadEmbeddedFile(_loadedScenarioKey, HoardYieldCatalogContract.FileName, MaximumHoardYieldBytes));
+            }
+
+            catalog.WarmRoomLookup();
+            _presentations.Clear();
+            foreach (DetailedMapCatalogRoom room in catalog.Rooms)
+            {
+                _presentations.Add((room.LayoutIndex, room.RoomIndex), DetailedMapRoomGraphAnalyzer.Analyze(room));
+            }
+            _currentCatalog = catalog;
+            _currentHoardYield = hoardYield;
+            _installedPointer = latest;
+            IsUsingEmbeddedCatalog = true;
+            _localLoadError = string.Empty;
+            _hoardYieldLoadError = string.Empty;
+            // A disk cache's ETag must never be applied to a different bundled release.
+            _latestEtag = null;
+            _lastSuccessfulCheckUtc = null;
+            Service.Log?.Info(
+                $"[DetailedMapCatalog] Loaded embedded release {catalog.ReleaseId}; scenario={catalog.ScenarioKey}; rooms={catalog.Rooms.Length}.");
+        }
+        catch (Exception error) when (error is IOException or InvalidDataException or JsonException)
+        {
+            _localLoadError = error.Message;
+            Service.Log?.Error($"[DetailedMapCatalog] Embedded catalog is invalid: {error}");
         }
     }
 
@@ -980,6 +1067,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
                 deletedAny = true;
             }
             ClearLocalCatalogState();
+            LoadEmbeddedCatalog();
             if (deletedAny)
             {
                 Service.Log.Info(
@@ -1001,6 +1089,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         _currentCatalog = null;
         _currentHoardYield = null;
         _installedPointer = null;
+        IsUsingEmbeddedCatalog = false;
         _presentations.Clear();
         _lastSuccessfulCheckUtc = null;
         _latestEtag = null;

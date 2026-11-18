@@ -17,6 +17,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		private readonly Func<DateTime> _clock;
 		private readonly Action<string> _logInfo;
 		private readonly Action<string> _logWarning;
+			private readonly Func<bool> _shouldWaitForCast;
+			private bool waitingForCast;
 
 		// Multi-try state (interruption recovery)
 		private DateTime _nextNavCheck = DateTime.MinValue;
@@ -38,7 +40,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			Func<DateTime>? clock = null,
 			Action<string>? logInfo = null,
 			Action<string>? logWarning = null,
-			Func<bool>? isPathfindInProgress = null)
+				Func<bool>? isPathfindInProgress = null,
+				Func<bool>? shouldWaitForCast = null)
 		{
 			_navigator = navigator ?? throw new ArgumentNullException(nameof(navigator));
 			_isPathRunning = isPathRunning ?? DeepDungeon.Fsd.Dalamud.moveHelper.VNav.Path.IsRunning;
@@ -47,6 +50,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 			_clock = clock ?? (() => DateTime.Now);
 			_logInfo = logInfo ?? (message => Service.Log.Info(message));
 			_logWarning = logWarning ?? (message => Service.Log.Warning(message));
+				_shouldWaitForCast = shouldWaitForCast ?? CastMovementGuard.ShouldWait;
 		}
 
 		/// <summary>
@@ -73,6 +77,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
         public NavigationState Navigate(Vector3 dest, Vector3 playerPos, NavigationRange range, double retryIntervalSeconds = 1.0)
         {
 			var now = _clock();
+				if (_shouldWaitForCast())
+				{
+					if (!waitingForCast)
+					{
+						_navigator.CancelAll();
+						Reset();
+						_initialDispatchIssued = false;
+						_logInfo("[NavigationHelper] Waiting for cast completion before moving");
+					}
+					waitingForCast = true;
+					return NavigationState.Moving;
+				}
+				waitingForCast = false;
 			if (retryIntervalSeconds < 0.1)
 			{
 				retryIntervalSeconds = 0.1;
@@ -206,6 +223,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		public void Cancel()
 		{
 			try { _navigator.CancelAll(); } catch { }
+				waitingForCast = false;
 			Reset();
 		}
 
@@ -224,6 +242,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		/// waypoint scope. Preserved across arrival and Reset().
 		/// </summary>
 		public int NavigationIssueCount => _navigationIssueCount;
+
+        internal object CaptureDiagnostics() => new
+        {
+            hasTarget = _hasTarget,
+            waitingForCast,
+            target = _hasTarget ? new { x = _targetDest.X, y = _targetDest.Y, z = _targetDest.Z } : null,
+            stuckRetryCount = _stuckCount, navigationIssueCount = _navigationIssueCount,
+            initialDispatchIssued = _initialDispatchIssued,
+            nextDispatchCheckAt = _nextNavCheck == DateTime.MinValue ? (DateTime?)null : _nextNavCheck,
+            pathfindPendingSeconds = _pathfindPendingSince == DateTime.MinValue ? (double?)null
+                : Math.Max(0, (_clock() - _pathfindPendingSince).TotalSeconds),
+            noMovementCheckSeconds = _lastMoveCheckAt == DateTime.MinValue ? (double?)null
+                : Math.Max(0, (_clock() - _lastMoveCheckAt).TotalSeconds)
+        };
 	}
 
 	/// <summary>

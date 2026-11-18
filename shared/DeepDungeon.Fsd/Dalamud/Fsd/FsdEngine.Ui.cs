@@ -416,7 +416,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			string? scenarioKey =
 				DetailedMapCatalogManager.GetScenarioKey(_fsfScenarioIndex);
 			bool supported = scenarioKey != null;
-			bool serviceConfigured = _detailedMapHostOptions.HasOnlineCatalogService;
+			bool serviceConfigured = _detailedMapCatalogManager.HasCatalogSource(scenarioKey);
 			bool enabled = supported && serviceConfigured && _configuration.UseDetailedMap;
 			DetailedMapCatalogStatusSnapshot? status =
 				supported && serviceConfigured && _configuration.UseDetailedMap
@@ -441,11 +441,15 @@ namespace DeepDungeon.Fsd.Dalamud
 			ImGui.TextDisabled("(?)");
 			if (ImGui.IsItemHovered())
 			{
-				string detailedMapTooltip = !serviceConfigured
-					? DetailedMapHostOptions.NoOnlineCatalogServiceMessage
-					: _detailedMapHostOptions.ContributesAnonymousEvidence
-					? "深宮寶藏存在某些規律，使用這些經驗以加速探索。啟用該項目會下載該層級的詳細地圖，並上傳深宮信息以共建。上傳內容不含個人標識。"
-					: "深宮寶藏存在某些規律，使用這些經驗以加速探索。";
+				string detailedMapTooltip;
+				if (!serviceConfigured)
+					detailedMapTooltip = DetailedMapHostOptions.NoOnlineCatalogServiceMessage;
+				else if (!_detailedMapHostOptions.HasOnlineCatalogService)
+					detailedMapTooltip = "使用插件內置的詳細地圖與寶藏統計，無需下載。數據隨插件更新。";
+				else if (_detailedMapHostOptions.ContributesAnonymousEvidence)
+					detailedMapTooltip = "深宮寶藏存在某些規律，使用這些經驗以加速探索。啟用該項目會下載該層級的詳細地圖，並上傳深宮信息以共建。上傳內容不含個人標識。";
+				else
+					detailedMapTooltip = "深宮寶藏存在某些規律，使用這些經驗以加速探索。";
 				ImGui.BeginTooltip();
 				ImGui.PushTextWrapPos(
 					ImGui.GetFontSize() * 32f);
@@ -481,6 +485,8 @@ namespace DeepDungeon.Fsd.Dalamud
 				return;
 
 			DetailedMapCatalogStatusSnapshot detailedMapStatus = status!.Value;
+			if (_detailedMapCatalogManager.IsUsingEmbeddedCatalog)
+				ImGui.TextDisabled("資料來源：插件內置（離線）");
 			ImGui.TextDisabled(
 				detailedMapStatus.ReleaseId == null
 					? "資料版本: 不可用"

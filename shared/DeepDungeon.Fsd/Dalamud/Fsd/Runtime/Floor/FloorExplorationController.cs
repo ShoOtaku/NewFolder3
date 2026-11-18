@@ -780,6 +780,13 @@ bool primaryOwnsOperation = true)
             _coordPipeline?.SuspendEncounter();
     }
 
+    internal void SetExternalMovement(bool active)
+    {
+        if (active) CancelCoordMovement();
+        SuspendTask(active);
+        _coordPipeline?.SetExternalMovement(active, DateTime.UtcNow);
+    }
+
     private readonly int[] _pomanderStock = new int[RunKnowledge.PomanderSlotCount];
     private readonly bool[] _pomanderActive = new bool[RunKnowledge.PomanderSlotCount];
 

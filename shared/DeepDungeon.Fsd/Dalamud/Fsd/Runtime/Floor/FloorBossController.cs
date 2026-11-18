@@ -66,6 +66,8 @@ internal sealed class FloorBossController : IDisposable
         _movementStrategy = UsesSpinStrategy
             ? spinBossMovementFactory!()
             : new NormalBossMovementStrategy(floorRuntime);
+        if (floorRuntime.DungeonId == 4 && floor == 30)
+            _movementStrategy = new PromeRadarBossMovementStrategy(floorRuntime, context, recordReplayEvent);
     }
 
     public void OnSerenityConfirmed() => BossSerenityAwaitingBuff = true;
@@ -129,7 +131,7 @@ internal sealed class FloorBossController : IDisposable
         }
         var status = _movementStrategy.Update(dd);
         if (status != null) Status = status;
-        if (UsesSpinStrategy)
+        if (UsesSpinStrategy || _movementStrategy is PromeRadarBossMovementStrategy)
             UpdateManagedEncounter(dd, status, liveEncounter: true);
     }
 

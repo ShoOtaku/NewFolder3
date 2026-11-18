@@ -120,8 +120,9 @@ public sealed partial class FsdApplication : IFsdApplication
             _module.Update(framework);
             _losDebug?.Update();
         }
-        catch
+        catch (Exception error)
         {
+            _module.RecordDiagnosticFailure("application-update", error);
             _module.SuspendBossMovement();
             throw;
         }

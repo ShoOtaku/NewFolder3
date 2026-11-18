@@ -61,6 +61,7 @@ namespace DeepDungeon.Fsd.Dalamud
                     _floorEvidenceObserver,
                     _runTelemetryObserver,
                     _spinBossMovementFactory);
+                _ddHost.FloorController.DiagnosticSink = RecordDiagnosticEvent;
                 _ddHost.StartFsd(
                     scenarioFactory,
                     targetLoops,

@@ -234,6 +234,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						_runTelemetryObserver,
                         _spinBossMovementFactory);
 					Service.Log.Info("[FsdEngine] Run host created.");
+					_ddHost.FloorController.DiagnosticSink = RecordDiagnosticEvent;
 				}
 
                 TryInvokePalantirFetch();
@@ -277,12 +278,22 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public void Update(IFramework framework)
         {
+            try { UpdateCore(framework); }
+            catch (Exception error)
+            {
+                RecordDiagnosticFailure("engine-update", error);
+                throw;
+            }
+            finally { ObserveDiagnostics(); }
+        }
+
+        private void UpdateCore(IFramework framework)
+        {
             _fsfScenarioIndex = GetEffectiveScenarioIndex();
             string? selectedDetailedMapScenario =
                 GetSelectedDetailedMapScenarioKey();
             _detailedMapCatalogManager.Update(
-                _configuration.UseDetailedMap &&
-                _detailedMapHostOptions.HasOnlineCatalogService,
+                _configuration.UseDetailedMap,
                 selectedDetailedMapScenario,
                 _ddHost?.FsdActive == true);
 

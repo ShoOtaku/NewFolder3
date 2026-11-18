@@ -258,6 +258,17 @@ internal sealed class CoordPipeline
     /// <summary>The last arbitrated movement owner — diagnostics only.</summary>
     internal string MovementOwner => _lastWinner?.Describe() ?? "none";
 
+    internal object CaptureDiagnostics() => new
+    {
+        objective = CurrentObjective.ToString(), selectedObjective = SelectedObjective.ToString(),
+        movementOwner = MovementOwner, objectiveMaskedSeconds = _objectiveMaskedSec,
+        operation = _objectiveOp?.Describe(), attempts = _objectiveOp?.Attempts,
+        maxAttempts = _objectiveOp?.MaxAttempts, failure = _objectiveOp?.Failure?.ToString(),
+        lastNavigationFailure = _lastBoundary?.LastNavFailure,
+        blockedObjectives = _objectiveFails.Select(pair => new { objective = pair.Key.ToString(), count = pair.Value }).ToArray(),
+        encounterStatus = EncounterStatus.ToString()
+    };
+
     // A stationary objective supplies a preference to stay where it was when
     // the hazards appeared. Keep the anchor stable as the follower moves.
     internal NavOutcome ExecuteFloorMovement(INativeBoundary native, IClaimVerb? verb,
@@ -340,6 +351,17 @@ internal sealed class CoordPipeline
         _lastDt = 0f;
         _lastTickUtc = DateTime.MinValue;
         _encounter.Current?.OnSuspended();
+    }
+
+    internal void SetExternalMovement(bool active, DateTime now)
+    {
+        _claims.Clear();
+        _lastWinner = null;
+        _lastMasked.Clear();
+        _lastDt = 0f;
+        _lastTickUtc = DateTime.MinValue;
+        if (active) _objectiveOp?.OnSuspended();
+        else _objectiveOp?.OnResumed(now);
     }
 
     /// <summary>Retire the encounter driver before cancelling the boundary

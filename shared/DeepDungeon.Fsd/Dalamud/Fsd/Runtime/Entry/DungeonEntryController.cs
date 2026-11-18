@@ -8,7 +8,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 
-internal enum EntryOutcome { Pending, Entered, SourceVerified, Conflict }
+internal enum EntryOutcome { Pending, Entered, SourceVerified, ResetRequired, Conflict }
 internal readonly record struct EntryResult(EntryOutcome Outcome, int Slot, int Floor, string Reason);
 
 /// <summary>One goal, observed UI content, one guarded command. No remembered UI steps.</summary>
@@ -18,6 +18,7 @@ internal sealed class DungeonEntryController : IDisposable
     private readonly int _requestedFloor, _preferredSlot;
     private readonly PreparedSaveBinding? _prepared;
     private readonly bool _verifyOnly;
+    private readonly bool _resetWhenFull;
     private EntranceWindowCleanup _cleanup = new();
     private bool _commenced;
     private readonly EntryDispatchGate _dispatch = new();
@@ -34,10 +35,18 @@ internal sealed class DungeonEntryController : IDisposable
     public EntryResult Result { get; private set; } = new(EntryOutcome.Pending, -1, 0, "");
     public int SourceFloor => _bound is { Empty: false } source ? source.StartFloor : _requestedFloor;
     public int SourceSlot => _bound?.Index ?? -1;
+    internal SaveSlotSnapshot? ResetSource { get; private set; }
 
     public DungeonEntryController(DungeonData dungeon, int floor, int preferredSlot = 0,
-        PreparedSaveBinding? prepared = null, bool verifyOnly = false)
-    { _dungeon = dungeon; _requestedFloor = floor; _preferredSlot = preferredSlot; _prepared = prepared; _verifyOnly = verifyOnly; }
+        PreparedSaveBinding? prepared = null, bool verifyOnly = false, bool resetWhenFull = false)
+    {
+        _dungeon = dungeon;
+        _requestedFloor = floor;
+        _preferredSlot = preferredSlot;
+        _prepared = prepared;
+        _verifyOnly = verifyOnly;
+        _resetWhenFull = resetWhenFull && prepared == null && !verifyOnly;
+    }
 
     public void Prepare(RunContext context)
     {
@@ -125,7 +134,24 @@ internal sealed class DungeonEntryController : IDisposable
             else if (_bound == null)
             {
                 var candidates = ui.Slots.Where(slot => slot.Empty && slot.Enterable).ToArray();
-                if (candidates.Length == 0) { SetStatus("目前沒有可用空槽；等待存檔列表變更。"); return Result; }
+                if (candidates.Length == 0)
+                {
+                    if (!_resetWhenFull)
+                    {
+                        SetStatus("目前沒有可用空槽；等待存檔列表變更。");
+                        return Result;
+                    }
+                    if (!SaveSlotResetPolicy.TrySelect(ui.Slots, _preferredSlot, out var source, out var error))
+                    {
+                        SetStatus(error);
+                        return Result;
+                    }
+                    ResetSource = source;
+                    string reason = $"沒有空槽；先重置存檔 {source.Index + 1}，再建立 {SourceFloor} 層存檔。";
+                    Result = new(EntryOutcome.ResetRequired, source.Index, SourceFloor, reason);
+                    SetStatus(reason);
+                    return Result;
+                }
                 _bound = candidates.FirstOrDefault(slot => slot.Index == _preferredSlot, candidates[0]);
             }
             if (!ui.Slots.Any(slot => SameSource(_bound!.Value, slot) && slot.Enterable))

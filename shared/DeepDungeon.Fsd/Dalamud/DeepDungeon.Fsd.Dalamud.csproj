@@ -24,6 +24,8 @@
   <ItemGroup>
     <InternalsVisibleTo Include="FsdInteractionChecks" />
     <EmbeddedResource Include="Resources/FloorMaps/*.map.gz" LogicalName="Fsd.FloorMaps.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Resources/DetailedMaps/pt-21-30/*.json" LogicalName="Fsd.DetailedMaps.pt-21-30.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Resources/DetailedMaps/pt-31-40/*.json" LogicalName="Fsd.DetailedMaps.pt-31-40.%(Filename)%(Extension)" />
     <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
     <ProjectReference Include="..\Runtime\DeepDungeon.Fsd.Runtime.csproj" />
     <ProjectReference Include="..\Terrain\DeepDungeon.Fsd.Terrain.csproj" />

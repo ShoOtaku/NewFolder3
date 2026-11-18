@@ -16,7 +16,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	/// DutyState and recovery potion assistance are owned by FsdEngine,
 	/// not by this host. RunHost receives DutyState as a dependency.
 	/// </summary>
-	public sealed class RunHost : IDisposable
+	public sealed partial class RunHost : IDisposable
 	{
 		private readonly FsdSettings _configuration;
 
@@ -182,6 +182,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 		public void Update(IFramework framework)
 		{
+			DiagnosticGate = "inactive";
 			if (!_isFsdMode)
 				return;
 
@@ -190,6 +191,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				if (_context.Duty.StateReadFailed)
 				{
 					SetDutyStateUnavailableStatus(_context.Duty.LastStateReadError);
+					DiagnosticGate = "duty-state-read-failed";
 					return;
 				}
 			}
@@ -215,14 +217,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				MarkPlayerDeathFatalIfObserved();
 				StopInDutyMovementAfterDutyExit();
 				_attachedScenario.Update(framework);
+				DiagnosticGate = GetScenarioDiagnosticGate();
 
 				_lastStatus = _context.StatusLine ?? string.Empty;
 				_lastStatusIsError = _context.StatusIsError;
 
 				if (_context.Duty.IsInDuty && _context.EntryReadyForDuty && !_context.StatusIsError)
 					UpdateControllers(framework);
-                else
-                    _floorController.SuspendBossMovement();
+	                else
+	                    _floorController.SuspendBossMovement();
 
 				if (_attachedScenario.IsComplete)
 				{
@@ -322,6 +325,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			catch (Exception ex)
 			{
 				Service.Log.Error($"[RunHost] FSD update error: {ex}");
+				ReportRuntimeError("host-update", ex);
 				StopFsd("update-exception", new { error = ex.ToString() });
 			}
 		}
@@ -335,6 +339,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			return;
 
 		bool assistActive = AssistModeActive;
+			if (!assistActive)
+				DiagnosticGate = "assist-mode-inactive";
 		_inDutyControllersActive = true;
 		bool wasLeaving = _exit.IsLeaveActive;
 
@@ -346,12 +352,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			}
 			catch (Exception ex)
 			{
-				try { Service.Log.Error($"[RunHost] Exit policy error: {ex}"); } catch { }
+				ReportRuntimeError("Exit policy", ex);
 			}
 		}
 
 		if (_exit.IsLeaveActive)
 		{
+				DiagnosticGate = "leave-duty-flow";
 			// Release floor movement once. The leave flow may now navigate to a
 			// native terminal exit; cancelling every frame would kill its route.
 			if (!wasLeaving)
@@ -365,7 +372,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			}
 			catch (Exception ex)
 			{
-				try { Service.Log.Error($"[RunHost] Leave flow error: {ex}"); } catch { }
+				ReportRuntimeError("Leave flow", ex);
 			}
 			return;
 		}
@@ -375,11 +382,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		{
 			try
 			{
-				_floorController.Update(framework);
+				DiagnosticGate = "floor-update";
+					_floorController.Update(framework);
 			}
 			catch (Exception ex)
 			{
-				try { Service.Log.Error($"[RunHost] Floor controller error: {ex}"); } catch { }
+				ReportRuntimeError("Floor controller", ex);
 				return;
 			}
 		}
@@ -393,7 +401,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 				}
 				catch (Exception ex)
 				{
-					try { Service.Log.Error($"[RunHost] Chest interaction channel error: {ex}"); } catch { }
+					ReportRuntimeError("Chest interaction channel", ex);
 				}
 			}
 
@@ -724,7 +732,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
                 _floorController.CancelActiveMovement();
                 return;
             }
-            if (context.FarmingPlan?.Mode == FarmingMode.DeepProgression)
+            if (context.FarmingPlan is { ReusesSave: false })
             {
                 context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
                 context.StatusLine = "攻略失敗；退本後從第一層重開。";

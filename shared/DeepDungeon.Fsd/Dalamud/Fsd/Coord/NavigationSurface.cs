@@ -49,6 +49,7 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
             ? m.TargetSpeed > 0 ? m.TargetSpeed : m.BaseSpeed > 0 ? m.BaseSpeed : 6 : 6);
         _direct.ClampFinalStep = false;
         _direct.AfterWalkInput = OnNativeWrite;
+        _direct.CanWriteWalkInput = () => !CastMovementGuard.ShouldWait();
     }
     internal bool NeedsSafetyPlan => MechanicExecutionState.MovementBlocked
         || _snapshotProvider() is { Hazards.Length: > 0, BossDead: false } snap
@@ -143,6 +144,14 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
         }
         else if (snap != null) _completedTerrain = null;
         _diagnosticSnapshot = snap;
+        if (CastMovementGuard.ShouldWait())
+        {
+            ReleaseDirect();
+            DropRoute();
+            _nextReplan = now;
+            Diag(now, "waiting-cast");
+            return NavigationState.Moving;
+        }
         if (snap is { BossDead: false } && now - snap.CapturedAt > MaxSnapshotAge)
         { ReleaseDirect(); Diag(now, "waiting-snapshot"); return NavigationState.StuckRepathing; }
         if (snap?.EncounterId != _snapshot?.EncounterId || snap?.Territory != _snapshot?.Territory)
@@ -283,6 +292,6 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
     {
         if (_disposed) return;
         Cancel(); _observation.Reset(); _disposed = true;
-        _direct.AfterWalkInput = null; _direct.Dispose();
+        _direct.AfterWalkInput = null; _direct.CanWriteWalkInput = null; _direct.Dispose();
     }
 }

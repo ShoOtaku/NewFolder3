@@ -20,7 +20,7 @@ public static class FarmingSessionPolicy
         if (result.Aborted)
             return new(false, plan.StartFloor, ownsSave, false, "本次入本已中止，未計完成次數。");
         if (result.DutyFailed)
-            return plan.Mode == FarmingMode.DeepProgression
+            return !plan.ReusesSave && ownsSave
                 ? new(false, plan.StartFloor, true, true, string.Empty)
                 : new(false, plan.StartFloor, ownsSave, false, "本次攻略失敗，未計完成次數。");
         if (plan.ReusesSave)

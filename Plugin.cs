@@ -24,6 +24,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
     private readonly FsdApplication _application;
     private readonly YAxisAdjustController _yAxis;
     private readonly FsdWindow _window;
+    private readonly FsdDiagnosticsIpc diagnosticsIpc;
     private bool _disposed;
 
     public string Name => ProductIdentity.DisplayName;
@@ -42,6 +43,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _framework = framework ?? throw new ArgumentNullException(nameof(framework));
 
         FsdApplication? application = null;
+        FsdDiagnosticsIpc? diagnosticEndpoints = null;
         YAxisAdjustController? yAxis = null;
         CommunityEvidenceCollector? communityEvidenceCollector = null;
         CommunityUsageTelemetryCollector? usageTelemetryCollector = null;
@@ -141,6 +143,8 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                 tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
+            diagnosticEndpoints = new FsdDiagnosticsIpc(pluginInterface, application, pluginLog);
+            diagnosticsIpc = diagnosticEndpoints;
 
             yAxis = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
             _yAxis = yAxis;
@@ -169,6 +173,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
             RollBack(() => { if (commandRegistered) _commandManager.RemoveHandler(ProductIdentity.Command); }, rollbackErrors);
             RollBack(_windows.RemoveAllWindows, rollbackErrors);
             RollBack(() => yAxis?.Dispose(), rollbackErrors);
+            RollBack(() => diagnosticEndpoints?.Dispose(), rollbackErrors);
             RollBack(() => application?.Dispose(), rollbackErrors);
             RollBack(() => communityEvidenceCollector?.Dispose(), rollbackErrors);
             RollBack(() => usageTelemetryCollector?.Dispose(), rollbackErrors);
@@ -237,6 +242,7 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
         _commandManager.RemoveHandler(ProductIdentity.Command);
         _windows.RemoveAllWindows();
         _yAxis.Dispose();
+        diagnosticsIpc.Dispose();
         _application.Dispose();
         _communityEvidenceCollector?.Dispose();
         _usageTelemetryCollector?.Dispose();

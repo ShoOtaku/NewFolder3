@@ -15,11 +15,14 @@ internal static class Program
     public static int Main()
     {
         int passed = 0;
+        passed += Run("fsd-diagnostic-progress-and-ipc-contract", FsdDiagnosticsTests.Run);
+        passed += Run("entry-save-reset-selection-and-source-guard", SaveSlotResetTests.Run);
         passed += Run("y-axis-movement-packets", YAxisPacketTests.Run);
         passed += Run("public-no-service-build-profile", TestPublicNoServiceBuildProfile);
         passed += Run("public-allow-all-access-gate", TestPublicAllowAllAccessGate);
         passed += Run("detailed-map-host-options-no-service", TestDetailedMapHostOptionsNoService);
-        passed += Run("catalog-manager-no-http-when-unavailable", TestCatalogManagerNoHttpWhenUnavailable);
+        passed += Run("catalog-manager-embedded-offline", TestEmbeddedCatalogOffline);
+        passed += Run("embedded-map-signatures-and-tamper-rejection", TestEmbeddedCatalogIntegrity);
         passed += Run("community-evidence-upload-contract", TestCommunityEvidenceUploadContract);
         passed += Run("community-usage-scenario-index-mapping", TestCommunityUsageScenarioIndexMapping);
         passed += Run("community-usage-telemetry-contract", TestCommunityUsageTelemetryContract);
@@ -138,7 +141,7 @@ internal static class Program
             "Anonymous evidence contribution must require an online catalog service.");
     }
 
-    private static void TestCatalogManagerNoHttpWhenUnavailable()
+    private static void TestEmbeddedCatalogOffline()
     {
         string configRoot = Path.Combine(
             Path.GetTempPath(),
@@ -166,26 +169,50 @@ internal static class Program
                 enabled: true,
                 scenarioKey);
             Assert(
-                status.Message == DetailedMapHostOptions.NoOnlineCatalogServiceMessage &&
+                manager.HasCatalogSource(scenarioKey) &&
+                manager.IsUsingEmbeddedCatalog &&
                 !status.Checking &&
-                !status.HasValidCatalog,
-                "Unavailable catalog service must surface the no-service status without checking.");
+                status.HasValidCatalog &&
+                status.CandidateCount == 249 &&
+                status.ReleaseId == "2026-11-17.1",
+                "Bundled 21-29 maps must be ready without an online service or HTTP request.");
 
             Assert(
-                !manager.TryAcquireRunSnapshot(
+                manager.TryAcquireRunSnapshot(
                     useDetailedMap: true,
                     scenarioKey,
-                    out _,
+                    out DetailedMapRunSnapshot detailed,
                     out string detailedError) &&
-                detailedError == DetailedMapHostOptions.NoOnlineCatalogServiceMessage,
-                "Detailed-map acquisition must fail explicitly when no service is configured.");
+                detailedError.Length == 0 &&
+                detailed.Policy == DetailedMapRuntimePolicy.DetailedMap &&
+                detailed.HoardYield != null,
+                "An offline run must receive both the signed map and its matching hoard-yield data.");
+            DetailedMapCatalogRoom room = detailed.Catalog!.Rooms[0];
+            Assert(detailed.TryGetPresentation(room.LayoutIndex, room.RoomIndex, out _),
+                "Bundled catalogs must build the room graph used by exploration.");
+            manager.Update(enabled: false, scenarioKey, runActive: true);
+            Assert(ReferenceEquals(detailed, manager.ActiveRunSnapshot),
+                "Disabling maps must not replace an active run's map snapshot.");
+            manager.ReleaseRunSnapshot();
+
+            string otherScenario = DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key;
+            manager.Update(enabled: true, otherScenario, runActive: false);
+            DetailedMapCatalogStatusSnapshot otherStatus = manager.GetStatus(true, otherScenario);
+            Assert(otherStatus.HasValidCatalog && otherStatus.CandidateCount == 245 &&
+                   manager.TryAcquireRunSnapshot(true, otherScenario, out DetailedMapRunSnapshot other, out _) &&
+                   other.Catalog!.TerritoryId == 1284 && other.HoardYield != null,
+                "Switching scenarios must load the 31-39 map and yield without reusing 21-29 data.");
+            manager.ReleaseRunSnapshot();
+            Assert(!manager.HasCatalogSource("unsupported") &&
+                   !manager.GetStatus(true, "unsupported").ScenarioSupported,
+                "An unsupported scenario must not inherit an embedded catalog.");
             Assert(
                 manager.TryAcquireRunSnapshot(
                     useDetailedMap: false,
                     scenarioKey,
                     out DetailedMapRunSnapshot palacePal,
                     out string palacePalError) &&
-                palacePal.Policy == DetailedMapRuntimePolicy.PalacePalOnly &&
+                palacePal.Policy == DetailedMapRuntimePolicy.PalantirOnly &&
                 palacePalError.Length == 0,
                 "PalacePal-only acquisition must remain available without an online catalog service.");
             manager.ReleaseRunSnapshot();
@@ -194,6 +221,40 @@ internal static class Program
         {
             if (Directory.Exists(configRoot))
                 Directory.Delete(configRoot, recursive: true);
+        }
+    }
+
+    private static void TestEmbeddedCatalogIntegrity()
+    {
+        Assembly assembly = typeof(DetailedMapHostOptions).Assembly;
+        foreach (DetailedMapScenarioDefinition scenario in DetailedMapScenarioCatalog.Definitions)
+        {
+            string prefix = $"Fsd.DetailedMaps.{scenario.Key}.";
+            byte[] Read(string name)
+            {
+                using Stream stream = assembly.GetManifestResourceStream(prefix + name)
+                    ?? throw new InvalidDataException($"Missing embedded map artifact: {prefix}{name}");
+                using var output = new MemoryStream();
+                stream.CopyTo(output);
+                return output.ToArray();
+            }
+
+            byte[] bytes = Read(DetailedMapCatalogContract.CatalogFileName);
+            DetailedMapCatalogLatest latest = DetailedMapCatalogContract.ParseLatest(Read(DetailedMapCatalogContract.LatestFileName));
+            DetailedMapCatalog catalog = DetailedMapCatalogContract.Parse(bytes);
+            DetailedMapCatalogSignature signature = DetailedMapCatalogContract.ParseSignature(Read(DetailedMapCatalogContract.SignatureFileName));
+            Assert(catalog.ScenarioKey == scenario.Key && latest.ScenarioKey == scenario.Key &&
+                   catalog.ReleaseId == latest.ReleaseId &&
+                   DetailedMapCatalogContract.ComputeSha256(bytes) == latest.CatalogSha256 &&
+                   DetailedMapCatalogTrust.Verify(bytes, signature),
+                "Every bundled map must match its release pointer and original publisher signature.");
+            byte[] yieldBytes = Read(HoardYieldCatalogContract.FileName);
+            Assert(HoardYieldCatalogContract.ComputeSha256(yieldBytes) == catalog.HoardYieldSha256,
+                "Hoard-yield data must match the hash protected by the signed map.");
+            HoardYieldCatalogContract.ValidateCompatibility(catalog, HoardYieldCatalogContract.Parse(yieldBytes));
+            bytes[^1] ^= 1;
+            Assert(!DetailedMapCatalogTrust.Verify(bytes, signature),
+                "A modified bundled map must fail signature verification.");
         }
     }
 

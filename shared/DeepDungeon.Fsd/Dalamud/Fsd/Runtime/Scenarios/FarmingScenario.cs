@@ -2,6 +2,7 @@ using Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Entry;
+using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Scenarios;
 
@@ -16,6 +17,8 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     private DungeonEntryController? _verification;
     private DungeonExitController? _exit;
     private GenericDeleteSaveFlow? _delete;
+    private GenericDeleteSaveFlow? _entryReset;
+    private SaveSlotSnapshot? _resetSource;
     private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
 
@@ -46,6 +49,16 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         // Entry/attachment is selected from fresh observations in Update.
         // Until then no floor controller may act on this attempt.
         context.EntryReadyForDuty = false;
+        if (plan.DungeonId == 4 && !plan.ReusesSave && plan.StartFloor <= 21)
+        {
+            try { context.PromeRadarMovement = new PromeRadarFarmingMovement(context); }
+            catch (Exception ex)
+            {
+                context.StatusLine = $"PT21–30 MP 聯動初始化失敗：{ex.Message}";
+                context.StatusIsError = true;
+                Service.Log.Error($"[Farming] PromeRadar movement initialization failed: {ex}");
+            }
+        }
     }
 
     public void Update(IFramework framework)
@@ -59,7 +72,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _complete = true;
             return;
         }
-        if (!_entered && !TryEnterDuty(ctx)) return;
+        if (!_entered && !TryEnterDuty(ctx, framework)) return;
         if (ctx.Duty.StateReadFailed || ctx.Duty.IsTransitioning || DutyState.IsClientTransitioning) return;
         ObserveDutyCompletion(ctx);
         if (session.Plan.HoldAfterClear && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
@@ -84,11 +97,16 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             if (ctx.DutyFailureObserved)
             {
                 if (ctx.TryHoldFailedAttempt("攻略失敗")) return;
-                if (session.Plan.Mode == FarmingMode.DeepProgression)
+                if (!session.Plan.ReusesSave)
                 {
                     _recoverFailure = true;
                     RequestLeave();
                 }
+                return;
+            }
+            if (ctx.DutyCompletionObserved && !ctx.TerminalRewardsRequired && !session.Plan.ReusesSave)
+            {
+                RequestLeave();
                 return;
             }
             if (session.Plan.ReusesSave && (ctx.Duty.IsBossFloor || ctx.Duty.Floor >= 30 || ctx.HarvestComplete))
@@ -158,10 +176,17 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             if (!_delete.Update(framework)) return;
             if (ctx.StatusIsError) { _complete = true; return; }
             session.ConfirmOwnedSaveDeleted();
+            ctx.RecordDiagnostic?.Invoke("farming-owned-save-reset-completed", new { entryFloor = _entryFloor, failed = ctx.DutyFailureObserved });
         }
         CountsAsCycle = decision.CountCycle;
         _recoverFailure = decision.RecoverFailure;
         session.CompleteAttempt(decision, ctx.HoardDiscoveries);
+        ctx.RecordDiagnostic?.Invoke("farming-attempt-finished", new
+        {
+            entryFloor = _entryFloor, completed = ctx.DutyCompletionObserved, failed = ctx.DutyFailureObserved,
+            decision.CountCycle, decision.RecoverFailure, decision.NextFloor, decision.DeleteOwnedSave, decision.Error,
+            failures = session.Failures
+        });
         if (decision.Error.Length > 0)
         {
             ctx.StatusLine = ctx.AttemptAbortReason + decision.Error + " FSD 已停止。";
@@ -175,8 +200,26 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _complete = true;
     }
 
-    private bool TryEnterDuty(RunContext ctx)
+    private bool TryEnterDuty(RunContext ctx, IFramework framework)
     {
+        if (_entryReset != null)
+        {
+            if (_resetSource is not { } resetSource)
+            {
+                ctx.StatusLine = "重置來源已遺失；停止，不改選其他存檔。";
+                ctx.StatusIsError = true;
+                _complete = true;
+                return false;
+            }
+            if (!_entryReset.Update(framework)) return false;
+            if (ctx.StatusIsError) { _complete = true; return false; }
+            ctx.RecordDiagnostic?.Invoke("entry-save-reset-completed", new { slot = resetSource.Index, nextFloor = session.NextFloor });
+            Service.Log.Info($"[Farming] Entry slot {resetSource.Index + 1} verified empty; continuing fresh entry at floor {session.NextFloor}.");
+            _entryReset.Dispose();
+            _entryReset = null;
+            _entry?.Dispose();
+            _entry = null;
+        }
         // An entry controller owns its selected source and UI confirmation.
         // Do not bypass it by attaching when its own entry arrives in-game.
         if (_entry == null)
@@ -213,11 +256,28 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             else
             {
                 _creatingSave = true;
-                _entry = new(_dungeon, session.NextFloor, preferredSlot: 0);
+                _entry = new(_dungeon, session.NextFloor, preferredSlot: _resetSource?.Index ?? 0,
+                    resetWhenFull: session.Plan.Mode == FarmingMode.Hoard && _resetSource == null);
             }
             _entry.Prepare(ctx);
         }
         var entry = _entry.Update();
+        if (entry.Outcome == EntryOutcome.ResetRequired)
+        {
+            if (session.Plan.Mode != FarmingMode.Hoard || session.Plan.SaveUse != SaveUse.Create || _resetSource != null || _entry.ResetSource == null)
+            {
+                ctx.StatusLine = "入場重置條件不符；停止，不改選其他存檔。";
+                ctx.StatusIsError = true;
+                return false;
+            }
+            _resetSource = _entry.ResetSource;
+            var source = _resetSource.Value;
+            ctx.RecordDiagnostic?.Invoke("entry-save-reset-started", new { slot = source.Index, source.StartFloor, source.Progress, nextFloor = session.NextFloor });
+            Service.Log.Info($"[Farming] No empty slot; resetting pinned slot {source.Index + 1} ({source.Progress}) before fresh entry at floor {session.NextFloor}.");
+            _entryReset = new GenericDeleteSaveFlow(_dungeon, source.Index, slots => SaveSlotResetPolicy.Validate(slots, source));
+            _entryReset.Prepare(ctx);
+            return false;
+        }
         if (entry.Outcome != EntryOutcome.Entered) return false;
         if (ctx.Duty.DungeonId != _dungeon.DutyDungeonId || ctx.Duty.Floor != entry.Floor)
         {
@@ -271,12 +331,23 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     };
     private string? ValidateOwnedSave(IReadOnlyList<SaveSlotSnapshot> slots) =>
         OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned);
-    private void RequestLeave() => _context?.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
+    private void RequestLeave()
+    {
+        if (_context == null || _context.RunOptions.Current.LeaveMode == LeaveMode.Immediate) return;
+        _context.RecordDiagnostic?.Invoke("farming-duty-exit-requested", new
+        {
+            floor = _context.Duty.Floor, completed = _context.DutyCompletionObserved,
+            failed = _context.DutyFailureObserved, aborted = _context.AttemptAborted
+        });
+        _context.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
+    }
     public void Dispose()
     {
         _entry?.Dispose();
         _verification?.Dispose();
         _exit?.Dispose();
+        _entryReset?.Dispose();
+        _delete?.Dispose();
         _context = null;
     }
 }

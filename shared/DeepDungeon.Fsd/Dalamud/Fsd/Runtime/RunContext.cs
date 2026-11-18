@@ -38,6 +38,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
         internal Action<string, object>? RecordDiagnostic;
+        internal PromeRadarFarmingMovement? PromeRadarMovement;
         internal long CombatPreparationSequence { get; private set; }
         private ulong _preparedCombatTarget;
         private bool _rotationWasInCombat;
@@ -155,6 +156,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		{
 			try { Service.Log.Error($"[RunContext] Failed to dispose cancellation source: {ex}"); } catch { }
 		}
+		try { PromeRadarMovement?.Dispose(); }
+		catch (Exception ex) { Service.Log.Error($"[RunContext] Failed to release PromeRadar FSD session: {ex}"); }
+		try { PromeRadarMovement?.Dispose(); }
+		catch (Exception ex)
+		{
+			Service.Log.Error($"[RunContext] Failed to release PromeRadar session: {ex}");
+		}
+		PromeRadarMovement = null;
 	}
 
 	public void MarkDutyCompleted()

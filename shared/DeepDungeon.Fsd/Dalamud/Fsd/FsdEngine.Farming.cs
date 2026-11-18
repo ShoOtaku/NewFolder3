@@ -91,6 +91,7 @@ internal partial class FsdEngine
                     _configuration.NecromancerFsdScenarioIndex = floor;
                     _configuration.Save();
                 }
+                ImGui.TextWrapped("優先使用空槽；兩個槽位都有存檔時會重置存檔 1，再新建本輪存檔。");
             }
             else if (effectiveMode == FarmingMode.Aetherpool)
                 ImGui.TextWrapped("準備1份較多跳層松杜香的任意起點層存檔");
