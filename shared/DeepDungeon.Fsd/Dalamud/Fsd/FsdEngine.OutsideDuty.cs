@@ -9,7 +9,7 @@ namespace DeepDungeon.Fsd.Dalamud
     {
         private const string HostDeniedFsdStartError = "FSD start was denied by the host.";
 
-        private bool TryStartOutsideDutyFsd(
+        private bool TryStartFsd(
             Func<IScenario> scenarioFactory,
             int targetLoops,
             bool infinite,

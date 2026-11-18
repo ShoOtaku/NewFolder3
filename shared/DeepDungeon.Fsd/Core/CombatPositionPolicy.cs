@@ -61,9 +61,10 @@ public sealed class CombatRecoveryBudget
         TotalFailures++;
     }
 
-    public bool TryRestart()
+    public bool TryRestart(bool onlyExhaustedAggroRemains = false)
     {
-        if (!Exhausted || Restarts >= MaximumRestartsPerFloor) return false;
+        if (Restarts >= MaximumRestartsPerFloor) return false;
+        if (!Exhausted && !(onlyExhaustedAggroRemains && HasExhaustedTargets)) return false;
         _failures.Clear();
         TotalFailures = 0;
         Restarts++;

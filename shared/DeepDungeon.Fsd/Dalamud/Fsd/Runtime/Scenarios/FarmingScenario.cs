@@ -21,10 +21,11 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     private SaveSlotSnapshot? _resetSource;
     private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
+    private bool AttachCurrentDuty => session.Plan.AttachCurrentDuty;
 
     public string Name => $"{DungeonShortLabel(session.Plan.DungeonId)} {session.Plan.DisplayName} ({(session.Plan.SaveUse == SaveUse.Prepared ? session.Source.Description : $"{session.NextFloor} 層")})";
     public bool IsComplete => _complete;
-    public bool ShouldLoop => !_aborted;
+    public bool ShouldLoop => !_aborted && !AttachCurrentDuty;
     public bool CountsAsCycle { get; private set; }
     public bool RecoversDutyFailure => _recoverFailure;
     public bool RequiresDutyCompletionEvent => !session.Plan.ReusesSave && !_recoverFailure && !_aborted;
@@ -49,7 +50,8 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         // Entry/attachment is selected from fresh observations in Update.
         // Until then no floor controller may act on this attempt.
         context.EntryReadyForDuty = false;
-        if (plan.DungeonId == 4 && !plan.ReusesSave && plan.StartFloor <= 21)
+        if (plan.DungeonId == 4 && !plan.ReusesSave && plan.StartFloor <= 21 &&
+            (!AttachCurrentDuty || plan.StartFloor == 21))
         {
             try { context.PromeRadarMovement = new PromeRadarFarmingMovement(context); }
             catch (Exception ex)
@@ -74,6 +76,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         }
         if (!_entered && !TryEnterDuty(ctx, framework)) return;
         if (ctx.Duty.StateReadFailed || ctx.Duty.IsTransitioning || DutyState.IsClientTransitioning) return;
+        if (AttachCurrentDuty && ctx.Duty.IsInDuty &&
+            (ctx.Duty.DungeonId != _dungeon.DutyDungeonId ||
+             ctx.Duty.Floor < _entryFloor || ctx.Duty.Floor >= _entryFloor + 10))
+        {
+            FinishAttachment(ctx, "副本已切換；停止接管並保留存檔。", success: false);
+            return;
+        }
         ObserveDutyCompletion(ctx);
         if (session.Plan.HoldAfterClear && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
         {
@@ -87,6 +96,12 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         }
         if (ctx.Duty.IsInDuty)
         {
+            if (AttachCurrentDuty && (ctx.AttemptAborted || ctx.DutyFailureObserved))
+            {
+                string reason = ctx.AttemptAborted ? ctx.AttemptAbortReason : "攻略失敗";
+                FinishAttachment(ctx, $"{reason}。已停止接管並保留副本及存檔。", success: false);
+                return;
+            }
             if (ctx.AttemptAborted)
             {
                 _aborted = true;
@@ -111,6 +126,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (session.Plan.ReusesSave && (ctx.Duty.IsBossFloor || ctx.Duty.Floor >= 30 || ctx.HarvestComplete))
             {
+                if (AttachCurrentDuty)
+                {
+                    FinishAttachment(ctx, ctx.HarvestComplete
+                        ? "本次採集已完成；請確認副本與存檔後退本。"
+                        : "已到採集安全邊界；停止接管並保留副本及存檔。", success: ctx.HarvestComplete);
+                    return;
+                }
                 if (!ctx.HarvestComplete)
                 {
                     _aborted = true;
@@ -130,6 +152,14 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
                 : "尚未觀測到最終獎勵房；FSD 已停止並保留現場，請檢查終局物件與獎勵。";
             ctx.StatusIsError = true;
             _complete = true;
+            return;
+        }
+        if (AttachCurrentDuty)
+        {
+            bool completed = ctx.DutyCompletionObserved && !ctx.DutyFailureObserved;
+            FinishAttachment(ctx, completed
+                ? "已完成接管的層段並退出副本，存檔已保留。"
+                : "未確認通關便已離開副本；停止接管並保留存檔。", success: completed);
             return;
         }
         _exit ??= new(returnToEntrance: true, entranceNpcBaseId: _dungeon.NpcDataId);
@@ -225,15 +255,18 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         if (_entry == null)
         {
             var facts = new FarmingEntryFacts(
-                !ctx.Duty.StateReadFailed && !ctx.Duty.IsTransitioning && !DutyState.IsClientTransitioning,
+                !ctx.Duty.StateReadFailed && !ctx.Duty.IsTransitioning && !DutyState.IsClientTransitioning &&
+                (!AttachCurrentDuty || !ctx.Duty.IsInDuty ||
+                 ctx.Duty.CurrentFloorKind != DeepDungeonFloorKind.Unknown && ctx.Duty.IsPlayerPositionStable()),
                 ctx.Duty.IsInDuty, ctx.Duty.DungeonId, ctx.Duty.Floor);
-            var decision = FarmingEntryPolicy.Decide(facts, _dungeon.DutyDungeonId, session.NextFloor, session.OwnedSlot);
+            var decision = FarmingEntryPolicy.Decide(facts, _dungeon.DutyDungeonId, session.NextFloor,
+                session.OwnedSlot, AttachCurrentDuty);
             ctx.StatusLine = decision.Reason;
             if (decision.Action == FarmingEntryAction.Wait) return false;
             ctx.RecordDiagnostic?.Invoke("farming-entry-observed", new
             {
                 action = decision.Action.ToString(), facts, expectedDungeon = _dungeon.DutyDungeonId,
-                entryFloor = session.NextFloor, ownedSlot = session.OwnedSlot
+                entryFloor = session.NextFloor, ownedSlot = session.OwnedSlot, attachCurrentDuty = AttachCurrentDuty
             });
             if (decision.Action == FarmingEntryAction.Conflict)
             {
@@ -243,7 +276,9 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             if (decision.Action == FarmingEntryAction.Attach)
             {
                 BeginDuty(ctx, session.NextFloor);
-                ctx.PreparedSaveDescription = $"原副本接續，存檔 {session.OwnedSlot + 1}，起點 {_entryFloor} 層";
+                ctx.PreparedSaveDescription = AttachCurrentDuty
+                    ? $"原副本接續，起點 {_entryFloor} 層，保留存檔"
+                    : $"原副本接續，存檔 {session.OwnedSlot + 1}，起點 {_entryFloor} 層";
                 ctx.StatusLine = $"原副本接續：第 {ctx.Duty.Floor} 層。";
                 Service.Log.Info($"[Farming] Resumed existing duty: floor={ctx.Duty.Floor}, entryFloor={_entryFloor}, ownedSlot={session.OwnedSlot}, holdOnFailure={session.Plan.HoldOnFailure}");
                 return true;
@@ -303,6 +338,15 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _entryFloor == 91 && ResultAltarPolicy.TryGet(_dungeon.DungeonId, 100, out _) ||
             _entryFloor == 191 && Potd200RewardPolicy.IsTerminal(_dungeon.DungeonId, 200);
         ctx.EntryReadyForDuty = true;
+    }
+
+    private void FinishAttachment(RunContext context, string status, bool success)
+    {
+        context.EntryReadyForDuty = false;
+        context.StatusLine = status;
+        context.StatusIsError = !success;
+        _complete = true;
+        context.RecordDiagnostic?.Invoke("farming-attachment-finished", new { entryFloor = _entryFloor, success, status });
     }
 
     private void ObserveDutyCompletion(RunContext ctx)

@@ -295,7 +295,7 @@ namespace DeepDungeon.Fsd.Dalamud
                 ImGui.Text(_hoardStatistics.LifetimePickups is { } total
                     ? $"累計拾取寶藏：{total}"
                     : "累計拾取寶藏：正在讀取歷史紀錄");
-                DrawFarmingSelection(hostAssistActive);
+                DrawFarmingSelection(hostAssistActive, inDD);
 
 				DrawDetailedMapSettings(hostAssistActive);
 
@@ -305,15 +305,31 @@ namespace DeepDungeon.Fsd.Dalamud
 
 					ImGui.Spacing();
 					ImGui.Indent();
-					ImGui.BeginDisabled(fsdRunning || inDD || _bridgeLeaveDutyContext != null || _bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
-					if (ImGui.Button("啟動 FSD##fsf_start_top"))
+					bool attachmentReady = true;
+					if (inDD && !fsdRunning)
+					{
+						attachmentReady = TryGetCurrentDutyForAttachment(out var dungeon, out var duty,
+							out int entryFloor, out string attachmentError);
+						if (attachmentReady)
+						{
+							var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor,
+								_configuration.Farming.Mode);
+							ImGui.TextDisabled($"{dungeon.Name} 第 {duty.Floor} 層 · {FarmingModeLabels[(int)mode]}");
+							ImGui.TextDisabled("接管目前層段，保留存檔。");
+						}
+						else
+							ImGui.TextDisabled(attachmentError);
+					}
+					ImGui.BeginDisabled(fsdRunning || !attachmentReady || _bridgeLeaveDutyContext != null ||
+						_bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
+					if (ImGui.Button(inDD ? "接管目前副本##fsf_start_top" : "啟動 FSD##fsf_start_top"))
 					{
 						try
 						{
-                            var request = new FsdStartRequest(Scenario: _fsfScenarioIndex == 2
+	                            var request = new FsdStartRequest(Scenario: _fsfScenarioIndex == 2
                                 ? FsdStartScenario.ControlledSurvey
                                 : FsdStartScenario.Farming);
-                            var result = StartSelectedFarming(request);
+	                            var result = inDD ? StartCurrentDutyFarming() : StartSelectedFarming(request);
                             if (!result.Ok)
                             {
                                 _farmingError = result.Error;
@@ -1770,7 +1786,7 @@ namespace DeepDungeon.Fsd.Dalamud
                 return new FsdControlResult(false, "Controlled PT capture requires confirmation=start-controlled-pt-capture.");
 
             var session = new ControlledPtSurveySession();
-            bool started = TryStartOutsideDutyFsd(
+            bool started = TryStartFsd(
                 () => new ControlledPt21To30Scenario(session),
                 Math.Max(1, targetLoops),
                 infinite,

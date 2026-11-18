@@ -7,6 +7,7 @@ internal static class FarmingRecoveryTests
     public static void Run()
     {
         CombatPositionRestartLimits();
+        AttachCurrentDuty();
         Check(FarmingPlan.TryCreate(FarmingMode.Hoard, SaveUse.Create, 21, 2, false, true, true, false, false,
             out var plan, out _), "Hoard plan must be valid");
         var failure = FarmingSessionPolicy.Decide(plan!, new(21, false, true, false, false));
@@ -41,6 +42,31 @@ internal static class FarmingRecoveryTests
         Console.WriteLine("Farming recovery and PromeRadar handover checks passed.");
     }
 
+    private static void AttachCurrentDuty()
+    {
+        var pt29 = new FarmingEntryFacts(true, true, 4, 29);
+        Check(FarmingEntryPolicy.Decide(pt29, 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Attach,
+            "Explicit in-duty takeover can use live floor data without claiming a save slot");
+        Check(FarmingEntryPolicy.Decide(pt29 with { Floor = 30 }, 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Attach,
+            "Takeover can begin on a boss floor");
+        Check(FarmingEntryPolicy.Decide(pt29 with { Ready = false, Floor = 0 }, 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Wait,
+            "A transition cannot attach or start entry");
+        Check(FarmingEntryPolicy.Decide(pt29 with { DungeonId = 2 }, 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Conflict,
+            "Takeover must not attach when the dungeon changes");
+        Check(FarmingEntryPolicy.Decide(pt29 with { Floor = 31 }, 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Conflict,
+            "Takeover must stop when the floorset changes");
+        Check(FarmingEntryPolicy.Decide(new(true, false, 0, 0), 4, 21, -1, attachCurrentDuty: true).Action == FarmingEntryAction.Conflict,
+            "Takeover must not fall back to fresh entry if the player leaves");
+        Check(FarmingEntryPolicy.Decide(pt29, 4, 21, -1).Action == FarmingEntryAction.Conflict &&
+            FarmingEntryPolicy.Decide(pt29, 4, 21, 0).Action == FarmingEntryAction.Attach,
+            "Existing diagnostic attachment still requires a declared slot");
+        Check(FarmingEntryPolicy.ResolveAttachmentMode(4, 21, FarmingMode.Hoard) == FarmingMode.Hoard &&
+            FarmingEntryPolicy.ResolveAttachmentMode(4, 31, FarmingMode.Aetherpool) == FarmingMode.DeepProgression &&
+            FarmingEntryPolicy.ResolveAttachmentMode(1, 191, FarmingMode.Hoard) == FarmingMode.DeepProgression,
+            "Takeover mode must be supported on the live dungeon and floorset");
+        Console.WriteLine("In-duty farming attachment checks passed.");
+    }
+
     private static void CombatPositionRestartLimits()
     {
         var budget = new CombatRecoveryBudget();
@@ -54,6 +80,18 @@ internal static class FarmingRecoveryTests
 
         while (!budget.Exhausted) budget.RecordFailure(1);
         Check(!budget.TryRestart() && budget.Exhausted, "A second exhaustion on the same floor must stop recovery");
+
+        var lastAggro = new CombatRecoveryBudget();
+        lastAggro.RecordFailure(2); // Another enemy failed once before being defeated.
+        lastAggro.RecordFailure(1);
+        Check(!lastAggro.TryRestart(onlyExhaustedAggroRemains: true), "Temporary target skips must not trigger a restart");
+        lastAggro.RecordFailure(1);
+        Check(!lastAggro.Exhausted && !lastAggro.TryRestart(), "An exhausted enemy alone does not exhaust the floor budget");
+        Check(lastAggro.TryRestart(onlyExhaustedAggroRemains: true) && !lastAggro.IsTargetExhausted(1),
+            "When the last live aggro target is exhausted, restart before the floor budget is spent and reenable it");
+        lastAggro.RecordFailure(1);
+        lastAggro.RecordFailure(1);
+        Check(!lastAggro.TryRestart(onlyExhaustedAggroRemains: true), "The last live aggro target cannot restart the same floor twice");
         Console.WriteLine("Combat position restart limits passed.");
     }
 

@@ -665,6 +665,14 @@ bool primaryOwnsOperation = true)
                 RestartAfterCombatFailure(combatFailure);
                 return;
             }
+            if (UsesSiteCoordination && !coordPlayer.IsDead && _normalActivity.InCombat && _normalActivity.PassageOpen &&
+                pipeline.CurrentObjective == FloorObjectiveKind.FinishCombatBeforePassage &&
+                _chaseHelper.LastTarget == null && HasOnlyExhaustedAggroTargets())
+            {
+                RestartAfterCombatFailure("All remaining aggro targets exhausted combat position recovery.",
+                    onlyExhaustedAggroRemains: true);
+                return;
+            }
             if (takeoverChanged)
             {
                 RecordReplayEvent("coord-takeover", new
@@ -745,7 +753,18 @@ bool primaryOwnsOperation = true)
         }
     }
 
-    private void RestartAfterCombatFailure(string reason)
+    private bool HasOnlyExhaustedAggroTargets()
+    {
+        if (!RecoveryBudget.HasExhaustedTargets) return false;
+
+        // Examine live aggro before suppression. Temporary skips and dead targets cannot exhaust recovery.
+        var exhausted = CombatTargetingHelpers.PickAggroedHostile(float.MaxValue, out _,
+            predicate: target => RecoveryBudget.IsTargetExhausted(target.GameObjectId));
+        return exhausted != null && CombatTargetingHelpers.PickAggroedHostile(float.MaxValue, out _,
+            predicate: target => !RecoveryBudget.IsTargetExhausted(target.GameObjectId)) == null;
+    }
+
+    private void RestartAfterCombatFailure(string reason, bool onlyExhaustedAggroRemains = false)
     {
         if (_ctx is not { } context) return;
 
@@ -755,7 +774,7 @@ bool primaryOwnsOperation = true)
             _status = context.StatusLine;
         }
         else if (UsesSiteCoordination && context.FarmingPlan?.ReusesSave != true &&
-                 !context.DutyCompletionObserved && !context.DutyFailureObserved && RecoveryBudget.TryRestart())
+                 !context.DutyCompletionObserved && !context.DutyFailureObserved && RecoveryBudget.TryRestart(onlyExhaustedAggroRemains))
         {
             // Rebind the floor's work from live observations while retaining completed work and duty progress.
             _coordPipeline!.Reset();

@@ -47,6 +47,11 @@ internal sealed partial class FloorExplorationController
         if (!ctx.HarvestComplete && !ctx.AttemptAborted) return false;
         CancelActiveMovement();
         this.Objectives.ClearObjectiveDecision();
+        if (ctx.FarmingPlan.AttachCurrentDuty)
+        {
+            _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；保留目前副本。";
+            return true;
+        }
         ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
         _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；退本並驗證準備存檔。";
         return true;

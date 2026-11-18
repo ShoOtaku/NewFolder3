@@ -26,7 +26,7 @@ internal partial class FsdEngine
             ? DetailedMapCatalogManager.GetScenarioKey(_fsfScenarioIndex)
             : null;
 
-    private void DrawFarmingSelection(bool running)
+    private void DrawFarmingSelection(bool running, bool inDuty)
     {
         var settings = _configuration.Farming;
         int dungeon = settings.DungeonId switch
@@ -85,13 +85,16 @@ internal partial class FsdEngine
             {
                 int floor = _fsfScenarioIndex;
                 ImGui.SetNextItemWidth(180);
+                ImGui.BeginDisabled(inDuty);
                 if (ImGui.Combo("起始層段##fsdFloorset", ref floor, HoardFloorsetLabels, 2))
                 {
                     _fsfScenarioIndex = floor;
                     _configuration.NecromancerFsdScenarioIndex = floor;
                     _configuration.Save();
                 }
-                ImGui.TextWrapped("優先使用空槽；兩個槽位都有存檔時會重置存檔 1，再新建本輪存檔。");
+                ImGui.EndDisabled();
+                if (!inDuty)
+                    ImGui.TextWrapped("優先使用空槽；兩個槽位都有存檔時會重置存檔 1，再新建本輪存檔。");
             }
             else if (effectiveMode == FarmingMode.Aetherpool)
                 ImGui.TextWrapped("準備1份較多跳層松杜香的任意起點層存檔");
@@ -107,9 +110,11 @@ internal partial class FsdEngine
         ImGui.Text("FSD 選項");
         ImGui.Indent();
         bool running = _ddHost?.FsdActive == true;
-        bool pt = _configuration.Farming.DungeonId == 4;
-        bool research = pt && _fsfScenarioIndex == 2;
-        var mode = pt ? _configuration.Farming.Mode : FarmingMode.DeepProgression;
+        var activePlan = running ? _ddHost?.Context?.FarmingPlan : null;
+        bool attached = activePlan?.AttachCurrentDuty == true;
+        bool pt = (activePlan?.DungeonId ?? _configuration.Farming.DungeonId) == 4;
+        bool research = activePlan == null && pt && _fsfScenarioIndex == 2;
+        var mode = activePlan?.Mode ?? (pt ? _configuration.Farming.Mode : FarmingMode.DeepProgression);
         var preferences = research ? null : _configuration.Farming.GetPreferences(_configuration, mode);
         var options = running ? _ddHost?.RunOptionsProvider?.Current : null;
         bool hoard = options?.BandedEnabled ?? (preferences?.BandedEnabled == true);
@@ -158,16 +163,21 @@ internal partial class FsdEngine
         }
         ImGui.EndDisabled();
         ImGui.Spacing();
-        DrawCycleOptions(preferences);
+        if (!attached)
+            DrawCycleOptions(preferences);
         if (running)
         {
-            ImGui.TextDisabled($"完成循環：{_ddHost!.CompletedLoops}/{(_ddHost.Infinite ? "∞" : _ddHost.TargetLoops)}");
-            if (mode == FarmingMode.DeepProgression && !research)
-                ImGui.TextDisabled($"失敗重試：{_ddHost.FarmingFailures}");
+            var host = _ddHost!;
+            if (!attached)
+            {
+                ImGui.TextDisabled($"完成循環：{host.CompletedLoops}/{(host.Infinite ? "∞" : host.TargetLoops)}");
+                if (mode == FarmingMode.DeepProgression && !research)
+                    ImGui.TextDisabled($"失敗重試：{host.FarmingFailures}");
+            }
             if (mode == FarmingMode.HoardDiscovery && !research)
-                ImGui.TextDisabled($"寶藏發現：{_ddHost.HoardDiscoveries}");
-            if (_ddHost.Context?.FarmingPlan?.SaveUse == SaveUse.Prepared)
-                ImGui.TextDisabled(_ddHost.PreparedSaveDescription);
+                ImGui.TextDisabled($"寶藏發現：{host.HoardDiscoveries}");
+            if (attached || activePlan?.SaveUse == SaveUse.Prepared)
+                ImGui.TextDisabled(host.PreparedSaveDescription);
         }
         ImGui.Unindent();
         string? error = _farmingError ?? (_ddHost is { FsdActive: false, LastStatusIsError: true }
@@ -203,6 +213,16 @@ internal partial class FsdEngine
 
     public FsdControlResult StartSelectedFarming(FsdStartRequest request)
     {
+        if (DeepDungeonHelper.IsInDeepDungeon() &&
+            request is { StopAfterFloor: null, DiagnosticStartFloor: null, ResumeSlot: null,
+                HoldOnFailure: false, HoldAfterClear: false })
+        {
+            if (request.Scenario == FsdStartScenario.ControlledSurvey)
+                return new FsdControlResult(false, "受控採集需要從入口開始。");
+
+            return StartCurrentDutyFarming();
+        }
+
         var settings = _configuration.Farming;
         uint dungeonId = settings.DungeonId is 1 or 2 ? settings.DungeonId : 4u;
         bool pt = dungeonId == 4;
@@ -229,13 +249,88 @@ internal partial class FsdEngine
         return new FsdControlResult(started, error);
     }
 
+    private FsdControlResult StartCurrentDutyFarming()
+    {
+        if (!TryGetCurrentDutyForAttachment(out var dungeon, out var duty, out var entryFloor, out var error))
+            return new FsdControlResult(false, error);
+
+        var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor, _configuration.Farming.Mode);
+        if (!IsSupportedFarmingJob(mode, dungeon.DungeonId))
+            return new FsdControlResult(false, UnsupportedFarmingJobError);
+
+        var preferences = _configuration.Farming.GetPreferences(_configuration, mode);
+        bool prepared = mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
+        int validatedStart = mode == FarmingMode.Hoard ? entryFloor : 1;
+        if (!FarmingPlan.TryCreate(mode, prepared ? SaveUse.Prepared : SaveUse.Create, validatedStart, 1, false,
+                preferences.BandedEnabled == true, preferences.OpenGold, preferences.OpenSilver, preferences.OpenBronze,
+                out var plan, out error, dungeon.DungeonId))
+            return new FsdControlResult(false, error);
+
+        var session = new FarmingSession(plan! with { StartFloor = entryFloor, AttachCurrentDuty = true });
+        if (!TryStartFsd(() => new FarmingScenario(session), 1, false,
+                GetFarmingDetailedMapKey(session.Plan), out error))
+            return new FsdControlResult(false, error);
+
+        _farmingError = null;
+        return new FsdControlResult(true, Scenario: $"接管 {dungeon.Name} 第 {duty.Floor} 層");
+    }
+
+    private bool TryGetCurrentDutyForAttachment(out DungeonData dungeon, out DutyState duty,
+        out int entryFloor, out string error)
+    {
+        duty = _dutyState!;
+        entryFloor = 0;
+        uint territory = Service.ClientState.TerritoryType;
+        if (!DungeonCatalog.TryGetByTerritoryId(territory, out dungeon) ||
+            dungeon.DungeonId is not (1 or 2 or 4))
+        {
+            error = "FSD 不支援目前地宮。";
+            return false;
+        }
+
+        if (duty is not { IsInDuty: true, StateReadFailed: false, IsTransitioning: false } ||
+            DutyState.IsClientTransitioning || !duty.IsPlayerPositionStable() ||
+            duty.CurrentFloorKind == DeepDungeonFloorKind.Unknown || duty.DungeonId != dungeon.DutyDungeonId ||
+            !DeepDungeonHelper.TryGetFloorRangeForCurrentTerritory(out int firstFloor, out int lastFloor) ||
+            duty.Floor < firstFloor || duty.Floor > lastFloor)
+        {
+            error = "等待過圖及目前副本樓層資料穩定。";
+            return false;
+        }
+
+        if (Service.LocalPlayer is not { IsDead: false })
+        {
+            error = "請在角色復活後接管副本。";
+            return false;
+        }
+
+        entryFloor = firstFloor;
+        error = string.Empty;
+        return true;
+    }
+
+    private const string UnsupportedFarmingJobError =
+        "死宮／天宮死靈術士模式僅支援機工士、吟遊詩人、舞者。請切換職業後再啟動。";
+
+    private static bool IsSupportedFarmingJob(FarmingMode mode, uint dungeonId) =>
+        mode != FarmingMode.DeepProgression || dungeonId is not (1 or 2) ||
+        Service.LocalPlayer?.ClassJob.RowId is 23 or 31 or 38;
+
+    private static string? GetFarmingDetailedMapKey(FarmingPlan plan)
+    {
+        if (!plan.ShowsDetailedMap)
+            return null;
+        return plan.StartFloor == 21
+            ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
+            : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key;
+    }
+
     public bool TryStartFarming(FsdFarmingRequest request, out string error)
     {
         var (mode, saveUse, startFloor, cycles, infinite, targets, checkpointOptions, dungeonId) = request;
-        if (mode == FarmingMode.DeepProgression && dungeonId is 1 or 2 &&
-            Service.LocalPlayer?.ClassJob.RowId is not (23 or 31 or 38))
+        if (!IsSupportedFarmingJob(mode, dungeonId))
         {
-            error = "死宮／天宮死靈術士模式僅支援機工士、吟遊詩人、舞者。請切換職業後再啟動。";
+            error = UnsupportedFarmingJobError;
             return false;
         }
         var (hoard, gold, silver, bronze) = targets;
@@ -286,10 +381,8 @@ internal partial class FsdEngine
             return false;
         }
         var session = new FarmingSession(plan, resumeSlot ?? -1);
-        string? key = plan!.ShowsDetailedMap ? startFloor == 21
-            ? DetailedMapScenarioCatalog.PilgrimsTraverse21To30.Key
-            : DetailedMapScenarioCatalog.PilgrimsTraverse31To40.Key : null;
-        bool started = TryStartOutsideDutyFsd(() => new FarmingScenario(session), cycles, infinite, key, out error);
+        bool started = TryStartFsd(() => new FarmingScenario(session), cycles, infinite,
+            GetFarmingDetailedMapKey(plan), out error);
         if (started)
         {
             _farmingError = null;
