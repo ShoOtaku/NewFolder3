@@ -19,6 +19,7 @@ internal sealed class DungeonEntryController : IDisposable
     private readonly PreparedSaveBinding? _prepared;
     private readonly bool _verifyOnly;
     private readonly bool _resetWhenFull;
+    private readonly int? _selectedProgressionSlot;
     private EntranceWindowCleanup _cleanup = new();
     private bool _commenced;
     private readonly EntryDispatchGate _dispatch = new();
@@ -35,10 +36,12 @@ internal sealed class DungeonEntryController : IDisposable
     public EntryResult Result { get; private set; } = new(EntryOutcome.Pending, -1, 0, "");
     public int SourceFloor => _bound is { Empty: false } source ? source.StartFloor : _requestedFloor;
     public int SourceSlot => _bound?.Index ?? -1;
+    public SaveSlotSnapshot? SelectedSource => _bound;
     internal SaveSlotSnapshot? ResetSource { get; private set; }
 
     public DungeonEntryController(DungeonData dungeon, int floor, int preferredSlot = 0,
-        PreparedSaveBinding? prepared = null, bool verifyOnly = false, bool resetWhenFull = false)
+        PreparedSaveBinding? prepared = null, bool verifyOnly = false, bool resetWhenFull = false,
+        int? selectedProgressionSlot = null)
     {
         _dungeon = dungeon;
         _requestedFloor = floor;
@@ -46,6 +49,7 @@ internal sealed class DungeonEntryController : IDisposable
         _prepared = prepared;
         _verifyOnly = verifyOnly;
         _resetWhenFull = resetWhenFull && prepared == null && !verifyOnly;
+        _selectedProgressionSlot = selectedProgressionSlot;
     }
 
     public void Prepare(RunContext context)
@@ -56,7 +60,7 @@ internal sealed class DungeonEntryController : IDisposable
         try
         {
             _text = PtEntryText.ForDungeon(_dungeon.DutyDungeonId);
-            if (_prepared == null) _ = _text.FloorLabel(_requestedFloor);
+            if (_prepared == null && !_selectedProgressionSlot.HasValue) _ = _text.FloorLabel(_requestedFloor);
             _cleanup = new();
             _commenced = false;
             _panelsAbsentSince = 0;
@@ -100,7 +104,8 @@ internal sealed class DungeonEntryController : IDisposable
 
         var facts = new EntryFacts(false, ctx.Duty.IsInDuty, ctx.Duty.DungeonId, ctx.Duty.Floor,
             ui.Kind, _bound.HasValue, ui.QueuePending, ui.QueueMatches, Service.PartyList.Length <= 1);
-        var decision = EntryUiPolicy.Decide(facts, _dungeon.DutyDungeonId, SourceFloor, _prepared == null);
+        bool creating = _bound?.Empty ?? (_prepared == null && !_selectedProgressionSlot.HasValue);
+        var decision = EntryUiPolicy.Decide(facts, _dungeon.DutyDungeonId, SourceFloor, creating);
         if (decision.Action == EntryAction.Conflict) return Fail(decision.Reason);
         if (decision.Action == EntryAction.Complete)
         {
@@ -130,6 +135,16 @@ internal sealed class DungeonEntryController : IDisposable
             {
                 if (!BindPrepared(ui.Slots, out string error)) { SetStatus(error); return Result; }
                 if (_verifyOnly) { _verifiedSource = true; return Result; }
+            }
+            else if (_selectedProgressionSlot is { } selectedSlot && _bound == null)
+            {
+                int maxFloor = _dungeon.DungeonId == 1 ? 200 : 100;
+                if (!SelectedProgressionSavePolicy.TrySelect(ui.Slots, selectedSlot, maxFloor, out var source, out var error))
+                {
+                    SetStatus(error);
+                    return Result;
+                }
+                _bound = source;
             }
             else if (_bound == null)
             {

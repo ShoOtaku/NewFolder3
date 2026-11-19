@@ -220,7 +220,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		/// <summary>
 		/// Cancel current navigation and reset state
 		/// </summary>
-		public void Cancel() => Cancel(cancelPathfinding: false);
+		public void Cancel() => Cancel(cancelPathfinding: true);
 
 		internal void Cancel(bool cancelPathfinding)
 		{

@@ -5,6 +5,8 @@ public static class FsdSettingsValidator
     public static void ValidateOrThrow(FsdSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        if (settings.NecromancerSaveSlot is < 0 or > 1)
+            throw new InvalidOperationException("Necromancer save slot must be 0 or 1.");
         if (!float.IsFinite(settings.NecromancerChestInteractDistance) || settings.NecromancerChestInteractDistance <= 0)
             throw new InvalidOperationException("Chest interaction distance must be finite and greater than zero.");
         if (!float.IsFinite(settings.NecromancerBandedScanRadius) || settings.NecromancerBandedScanRadius <= 0)

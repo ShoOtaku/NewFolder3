@@ -8,20 +8,24 @@ public readonly record struct FarmingSessionDecision(bool CountCycle, int NextFl
 
 public static class FarmingSessionPolicy
 {
-    public static bool ReachedStopBoundary(FarmingPlan plan, in FarmingAttemptResult result) =>
-        plan.Mode == FarmingMode.DeepProgression && plan.StopAfterFloor is { } limit &&
-        result.DutyCompleted && !result.DutyFailed && !result.Aborted && result.EntryFloor + 9 >= limit;
+    public static bool ReachedStopBoundary(FarmingPlan plan, in FarmingAttemptResult result,
+        bool pauseAfterCurrentFloorset = false) =>
+        result.DutyCompleted && !result.DutyFailed && !result.Aborted &&
+        (pauseAfterCurrentFloorset && !plan.ReusesSave &&
+            result.EntryFloor >= 1 && result.EntryFloor <= plan.TerminalEntryFloor && result.EntryFloor % 10 == 1 ||
+         plan.Mode == FarmingMode.DeepProgression && plan.StopAfterFloor is { } limit && result.EntryFloor + 9 >= limit);
 
     public static FarmingSessionDecision Decide(FarmingPlan plan, in FarmingAttemptResult result)
     {
-        bool ownsSave = plan.SaveUse == SaveUse.Create;
+        bool ownsSave = plan.UsesSelectedProgressionSave || plan.SaveUse == SaveUse.Create && !plan.AttachCurrentDuty;
+        int restartFloor = plan.UsesSelectedProgressionSave ? 1 : plan.StartFloor;
         if (plan.HoldOnFailure && (result.DutyFailed || result.Aborted))
             return new(false, result.EntryFloor, false, false, "診斷已停止；保留副本與存檔，等待人工處理。");
         if (result.Aborted)
-            return new(false, plan.StartFloor, ownsSave, false, "本次入本已中止，未計完成次數。");
+            return new(false, plan.StartFloor, ownsSave && !plan.UsesSelectedProgressionSave, false, "本次入本已中止，未計完成次數。");
         if (result.DutyFailed)
             return !plan.ReusesSave && ownsSave
-                ? new(false, plan.StartFloor, true, true, string.Empty)
+                ? new(false, restartFloor, true, true, string.Empty)
                 : new(false, plan.StartFloor, ownsSave, false, "本次攻略失敗，未計完成次數。");
         if (plan.ReusesSave)
             return new(result.HarvestCompleted, 0, false, false,
@@ -34,7 +38,7 @@ public static class FarmingSessionPolicy
             if (result.EntryFloor < 1 || result.EntryFloor > terminalEntry || result.EntryFloor % 10 != 1)
                 return new(false, result.EntryFloor, false, false, "攻略起點無效，停止接續。");
             return result.EntryFloor >= terminalEntry
-                ? new(true, plan.StartFloor, true, false, string.Empty)
+                ? new(true, plan.StartFloor, ownsSave && !plan.UsesSelectedProgressionSave, false, string.Empty)
                 : new(false, result.EntryFloor + 10, false, false, string.Empty);
         }
         return new(true, plan.StartFloor, ownsSave, false, string.Empty);

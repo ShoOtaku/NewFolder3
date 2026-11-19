@@ -61,3 +61,49 @@ void Check(bool value, string message)
 {
     if (!value) throw new InvalidOperationException(message);
 }
+
+foreach (var boundary in new[] { "combat start", "arrival", "pause", "mechanic handoff", "dispose" })
+{
+    bool pending = false, running = false;
+    var events = new List<string>();
+    using var adapter = new NavigatorVNavAdapter((_, _) => { pending = true; return true; },
+        () => pending, () => { events.Add("cancel"); pending = false; }, () => { events.Add("stop"); running = false; });
+    var nav = new NavigationHelper(adapter, () => running, () => now, _ => { }, _ => { }, () => pending, () => false);
+    nav.Navigate(new(20, 0, 0), Vector3.Zero);
+    if (boundary == "dispose") adapter.Dispose(); else nav.Cancel();
+    if (pending) running = true; // Simulate an async result becoming ready after cancellation.
+    Check(!running && events.SequenceEqual(new[] { "cancel", "stop" }), $"{boundary} allowed a late route to restart");
+    nav.Cancel();
+    Check(events.Count == 2, "An idle adapter stopped movement belonging to a later owner");
+}
+Console.WriteLine("PASS boss navigation cancellation: pending search cancelled before path stop; no late restart or repeated owner stop.");
+foreach (var range in new[] { 3f, 25f })
+{
+    var entry = new Vector3(-300, 0, -290);
+    var spawn = new Vector3(-300, 0, -310);
+    var point = DeepDungeon.Fsd.Core.BossApproachPosition.Resolve(entry, spawn, range);
+    Check(point is { Z: > -308f and < -307f }, "PT70 approach still queues the edge/boss centre");
+    Check(Vector3.Distance(point!.Value, spawn) + .1f < range, "Approach point lacks attack/stopping clearance");
+}
+Check(DeepDungeon.Fsd.Core.BossApproachPosition.Resolve(new(float.NaN,0,0), default, 3) == null, "Invalid boss approach accepted");
+Console.WriteLine("PASS boss approach: melee/ranged stop on entry side before PT70 edge, with finite input and tolerance checks.");
+
+int bossFloors = 0;
+for (uint dungeon = 1; dungeon <= 4; ++dungeon)
+    for (int floor = 1; floor <= (dungeon == 1 ? 200 : 100); ++floor)
+        if (DeepDungeon.Fsd.Runtime.DeepDungeonFloorClassifier.Classify(dungeon, floor) == DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Boss)
+        {
+            ++bossFloors;
+            foreach (var side in new[] { Vector3.UnitX, -Vector3.UnitX, Vector3.UnitZ, -Vector3.UnitZ })
+            {
+                var boss = new Vector3(-300, 0, -300);
+                var player = boss + side * 20;
+                var point = DeepDungeon.Fsd.Core.BossApproachPosition.Resolve(player, boss, 3)!.Value;
+                Check(Vector3.Dot(point - boss, side) > 2 && Vector3.Distance(point, boss) < 3,
+                    $"Dungeon {dungeon} floor {floor} endpoint passed through the boss");
+            }
+        }
+Check(bossFloors == 48, "Boss-floor coverage drifted");
+Console.WriteLine($"PASS shared approach matrix: {bossFloors} boss floors across all four deep dungeons, four entry directions each.");
+
+OutsideDutyNavigationTests.Run();

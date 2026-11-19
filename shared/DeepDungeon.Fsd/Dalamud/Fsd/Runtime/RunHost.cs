@@ -231,7 +231,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 				if (_context.Duty.IsInDuty && _context.EntryReadyForDuty && !_context.StatusIsError)
 					UpdateControllers(framework);
-	                else
+	                // Exit cleanup ran before the scenario; its rest-area route now owns the navigator.
+	                else if (_context.Duty.IsInDuty)
 	                    _floorController.SuspendBossMovement();
 
 				if (_attachedScenario.IsComplete)

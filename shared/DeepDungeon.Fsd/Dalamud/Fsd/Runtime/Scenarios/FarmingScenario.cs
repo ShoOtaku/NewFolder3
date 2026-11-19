@@ -21,11 +21,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     private SaveSlotSnapshot? _resetSource;
     private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
-    private bool AttachCurrentDuty => session.Plan.AttachCurrentDuty;
+    private bool AttachCurrentDuty => session.Plan.AttachCurrentDuty && !session.AttachmentCompleted;
 
     public string Name => $"{DungeonShortLabel(session.Plan.DungeonId)} {session.Plan.DisplayName} ({(session.Plan.SaveUse == SaveUse.Prepared ? session.Source.Description : $"{session.NextFloor} 層")})";
     public bool IsComplete => _complete;
-    public bool ShouldLoop => !_aborted && !AttachCurrentDuty;
+    public bool ShouldLoop => !_aborted && !(session.Plan.UsesSelectedProgressionSave && CountsAsCycle) &&
+        (!session.Plan.AttachCurrentDuty ||
+        session.Plan.ContinuesAttachedProgression && !CountsAsCycle);
     public bool CountsAsCycle { get; private set; }
     public bool RecoversDutyFailure => _recoverFailure;
     public bool RequiresDutyCompletionEvent => !session.Plan.ReusesSave && !_recoverFailure && !_aborted;
@@ -96,7 +98,8 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         }
         if (ctx.Duty.IsInDuty)
         {
-            if (AttachCurrentDuty && (ctx.AttemptAborted || ctx.DutyFailureObserved))
+            if (session.Plan.AttachCurrentDuty && !session.Plan.UsesSelectedProgressionSave &&
+                (ctx.AttemptAborted || ctx.DutyFailureObserved))
             {
                 string reason = ctx.AttemptAborted ? ctx.AttemptAbortReason : "攻略失敗";
                 FinishAttachment(ctx, $"{reason}。已停止接管並保留副本及存檔。", success: false);
@@ -154,7 +157,8 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _complete = true;
             return;
         }
-        if (AttachCurrentDuty)
+        if (session.Plan.AttachCurrentDuty && !session.Plan.UsesSelectedProgressionSave &&
+            (!session.Plan.ContinuesAttachedProgression || !ctx.DutyCompletionObserved || ctx.DutyFailureObserved))
         {
             bool completed = ctx.DutyCompletionObserved && !ctx.DutyFailureObserved;
             FinishAttachment(ctx, completed
@@ -172,11 +176,19 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _aborted |= ctx.AttemptAborted;
         var result = new FarmingAttemptResult(
             _entryFloor, ctx.DutyCompletionObserved, ctx.DutyFailureObserved, ctx.HarvestComplete, _aborted);
-        if (FarmingSessionPolicy.ReachedStopBoundary(session.Plan, result))
+        if (FarmingSessionPolicy.ReachedStopBoundary(session.Plan, result, ctx.Configuration.PauseAfterCurrentFloorset))
         {
             _aborted = true; // Stop the host before it can construct the next entry attempt.
             _complete = true;
-            ctx.StatusLine = $"已通過 {session.Plan.StopAfterFloor} 層；停止並保留存檔，等待驗收。";
+            ctx.StatusLine = ctx.Configuration.PauseAfterCurrentFloorset
+                ? $"已完成 {_entryFloor}–{_entryFloor + 9} 層；FSD 已暫停並保留存檔。"
+                : $"已通過 {session.Plan.StopAfterFloor} 層；停止並保留存檔，等待驗收。";
+            ctx.RecordDiagnostic?.Invoke("farming-floorset-paused", new
+            {
+                entryFloor = _entryFloor, clearedFloor = _entryFloor + 9,
+                pauseAfterCurrentFloorset = ctx.Configuration.PauseAfterCurrentFloorset,
+                ownedSlot = session.OwnedSlot
+            });
             Service.Log.Info($"[Farming] Progression stop boundary reached: cleared={_entryFloor + 9}, next={_entryFloor + 10}, ownedSlot={session.OwnedSlot}");
             return;
         }
@@ -283,7 +295,12 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
                 Service.Log.Info($"[Farming] Resumed existing duty: floor={ctx.Duty.Floor}, entryFloor={_entryFloor}, ownedSlot={session.OwnedSlot}, holdOnFailure={session.Plan.HoldOnFailure}");
                 return true;
             }
-            if (session.Plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0)
+            if (session.Plan.UsesSelectedProgressionSave && session.OwnedSlot < 0)
+            {
+                _entry = new(_dungeon, 1, selectedProgressionSlot: session.Plan.ProgressionSaveSlot);
+            }
+            else if (session.Plan.SaveUse == SaveUse.Prepared || session.OwnedSlot >= 0 ||
+                session.Plan.ContinuesAttachedProgression && session.AttachmentCompleted)
             {
                 var source = session.PrepareSource();
                 _entry = new(_dungeon, source.ExpectedFloor ?? 0, prepared: source);
@@ -320,7 +337,16 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             ctx.StatusIsError = true;
             return false;
         }
-        if (_creatingSave && !session.BindCreatedSave(entry.Slot))
+        if (session.Plan.UsesSelectedProgressionSave)
+        {
+            if (_entry.SelectedSource is not { } source || !session.BindSelectedSave(source))
+            {
+                ctx.StatusLine = "實際來源與死靈術士指定存檔不符；停止並保留存檔。";
+                ctx.StatusIsError = true;
+                return false;
+            }
+        }
+        else if (_creatingSave && !session.BindCreatedSave(entry.Slot))
         {
             ctx.StatusLine = "入場來源未由本任務建立；停止自動化，請手動退本。";
             ctx.StatusIsError = true;

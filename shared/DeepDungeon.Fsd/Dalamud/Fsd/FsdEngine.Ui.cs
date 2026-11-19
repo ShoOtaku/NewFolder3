@@ -315,7 +315,9 @@ namespace DeepDungeon.Fsd.Dalamud
 							var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor,
 								_configuration.Farming.Mode);
 							ImGui.TextDisabled($"{dungeon.Name} 第 {duty.Floor} 層 · {FarmingModeLabels[(int)mode]}");
-							ImGui.TextDisabled("接管目前層段，保留存檔。");
+							ImGui.TextDisabled(mode == FarmingMode.DeepProgression
+								? "接管並接續指定存檔；僅敗北後重置該槽，登頂保留存檔。"
+								: "接管目前層段，保留存檔。");
 						}
 						else
 							ImGui.TextDisabled(attachmentError);

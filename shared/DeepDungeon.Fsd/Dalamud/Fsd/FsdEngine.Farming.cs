@@ -15,6 +15,7 @@ internal partial class FsdEngine
         ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士", "受控採集（研究）"];
     private static readonly string[] HoardFloorsetLabels = ["21–30 層", "31–40 層"];
     private static readonly string[] FarmingDungeonLabels = ["朝聖交錯路", "死者宮殿", "天之御柱"];
+    private static readonly string[] ProgressionSaveSlotLabels = ["存檔槽位 1", "存檔槽位 2"];
 
     private bool IsFixedFloorsetHoard => _configuration.Farming.DungeonId == 4 &&
         _fsfScenarioIndex is 0 or 1 &&
@@ -81,7 +82,18 @@ internal partial class FsdEngine
         ImGui.BeginDisabled(running);
         if (!research)
         {
-            if (effectiveMode == FarmingMode.Hoard)
+            if (effectiveMode == FarmingMode.DeepProgression)
+            {
+                int slot = _configuration.NecromancerSaveSlot;
+                ImGui.SetNextItemWidth(180);
+                if (ImGui.Combo("死靈術士存檔##fsdProgressionSave", ref slot, ProgressionSaveSlotLabels, ProgressionSaveSlotLabels.Length))
+                {
+                    _configuration.NecromancerSaveSlot = slot;
+                    _configuration.Save();
+                }
+                ImGui.TextWrapped("只使用指定槽位：有存檔就接續進度，空槽才從第1層新建。每10層自動接續；確認敗北後重置該槽重開，登頂後停止並保留存檔。");
+            }
+            else if (effectiveMode == FarmingMode.Hoard)
             {
                 int floor = _fsfScenarioIndex;
                 ImGui.SetNextItemWidth(180);
@@ -112,6 +124,10 @@ internal partial class FsdEngine
         bool running = _ddHost?.FsdActive == true;
         var activePlan = running ? _ddHost?.Context?.FarmingPlan : null;
         bool attached = activePlan?.AttachCurrentDuty == true;
+        if (activePlan?.UsesSelectedProgressionSave == true)
+            ImGui.TextWrapped($"本次攻略使用存檔槽位 {activePlan.ProgressionSaveSlot + 1}；成功時保留存檔，確認敗北後才重置該槽。");
+        else if (activePlan?.ContinuesAttachedProgression == true)
+            ImGui.TextWrapped("深層攻略將接續後續層段；存檔來源須唯一且進度相符。敗北或登頂後停止，保留原存檔。");
         bool pt = (activePlan?.DungeonId ?? _configuration.Farming.DungeonId) == 4;
         bool research = activePlan == null && pt && _fsfScenarioIndex == 2;
         var mode = activePlan?.Mode ?? (pt ? _configuration.Farming.Mode : FarmingMode.DeepProgression);
@@ -163,7 +179,17 @@ internal partial class FsdEngine
         }
         ImGui.EndDisabled();
         ImGui.Spacing();
-        if (!attached)
+        ImGui.BeginDisabled(research || mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery);
+        bool pauseAfterCurrentFloorset = _configuration.PauseAfterCurrentFloorset;
+        if (ImGui.Checkbox("完成當前10層後暫停##fsdPauseAfterFloorset", ref pauseAfterCurrentFloorset))
+        {
+            _configuration.PauseAfterCurrentFloorset = pauseAfterCurrentFloorset;
+            _configuration.Save();
+        }
+        ImGui.EndDisabled();
+        if (pauseAfterCurrentFloorset)
+            ImGui.TextWrapped("通關目前層段並退本後停止，保留存檔；不再接續下一層段或循環。僅適用挖寶藏與死靈術士模式。");
+        if (!attached && mode != FarmingMode.DeepProgression)
             DrawCycleOptions(preferences);
         if (running)
         {
@@ -266,7 +292,12 @@ internal partial class FsdEngine
                 out var plan, out error, dungeon.DungeonId))
             return new FsdControlResult(false, error);
 
-        var session = new FarmingSession(plan! with { StartFloor = entryFloor, AttachCurrentDuty = true });
+        var session = new FarmingSession(plan! with
+        {
+            StartFloor = entryFloor,
+            AttachCurrentDuty = true,
+            ProgressionSaveSlot = mode == FarmingMode.DeepProgression ? _configuration.NecromancerSaveSlot : null
+        });
         if (!TryStartFsd(() => new FarmingScenario(session), 1, false,
                 GetFarmingDetailedMapKey(session.Plan), out error))
             return new FsdControlResult(false, error);
@@ -372,6 +403,9 @@ internal partial class FsdEngine
         plan = plan! with { StopAfterFloor = stopAfterFloor, StartFloor = diagnosticStartFloor ?? plan.StartFloor,
             HoldOnFailure = holdOnFailure,
             HoldAfterClear = holdAfterClear };
+        if (mode == FarmingMode.DeepProgression && !stopAfterFloor.HasValue && !diagnosticStartFloor.HasValue &&
+            !resumeSlot.HasValue && !holdOnFailure && !holdAfterClear)
+            plan = plan with { ProgressionSaveSlot = _configuration.NecromancerSaveSlot };
         if (_dutyState is { IsInDuty: true } duty &&
             ((!holdOnFailure && !hoardReview) || !resumeSlot.HasValue || resumeSlot is < 0 or > 1 ||
             duty.IsTransitioning || duty.DungeonId != dungeonId ||
@@ -381,7 +415,8 @@ internal partial class FsdEngine
             return false;
         }
         var session = new FarmingSession(plan, resumeSlot ?? -1);
-        bool started = TryStartFsd(() => new FarmingScenario(session), cycles, infinite,
+        bool started = TryStartFsd(() => new FarmingScenario(session), plan.UsesSelectedProgressionSave ? 1 : cycles,
+            !plan.UsesSelectedProgressionSave && infinite,
             GetFarmingDetailedMapKey(plan), out error);
         if (started)
         {

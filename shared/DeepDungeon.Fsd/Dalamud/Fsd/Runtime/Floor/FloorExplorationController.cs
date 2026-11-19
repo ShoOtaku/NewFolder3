@@ -465,6 +465,7 @@ bool primaryOwnsOperation = true)
                 UpdateEncounterTask();
             return false;
         }
+        _navHelper?.Cancel();
         if (Service.Condition[ConditionFlag.BetweenAreas]
             || Service.Condition[ConditionFlag.BetweenAreas51])
         {
@@ -642,6 +643,8 @@ bool primaryOwnsOperation = true)
             _coordTookOver = takeover;
             var boundary = (INativeBoundary)_coordReal!;
             var pipeline = _coordPipeline!;
+            if (takeover && TryRoomEscape(dd, coordPlayer.Position, _normalActivity.InCombat, coordPlayer.IsDead))
+                return;
             pipeline.Tick(
                 this.Floor,
                 RoomGraph.GetLocalPlayerRoomIndex(dd),
@@ -835,6 +838,7 @@ bool primaryOwnsOperation = true)
     /// only the legacy nav helper. Claims resolve fresh next tick.</summary>
     internal void CancelCoordMovement()
     {
+        roomEscape?.Pause();
         _navigation?.Cancel();
         if (UsesEncounterCoordination || _coordPipeline?.CurrentEncounterOp != null)
             _coordPipeline?.SuspendEncounter();
@@ -844,7 +848,8 @@ bool primaryOwnsOperation = true)
     {
         if (active) CancelCoordMovement();
         SuspendTask(active);
-        _coordPipeline?.SetExternalMovement(active, DateTime.UtcNow);
+        roomEscape?.Pause();
+        _coordPipeline?.SetExternalMovement(active || roomEscapeOwnsMovement, DateTime.UtcNow);
     }
 
     private readonly int[] _pomanderStock = new int[RunKnowledge.PomanderSlotCount];

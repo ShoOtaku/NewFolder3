@@ -23,8 +23,11 @@ public sealed record FarmingPlan(
     // Run-only diagnostic option: retain the duty and save for in-place inspection.
     public bool HoldOnFailure { get; init; }
     public bool HoldAfterClear { get; init; }
-    // Live attachment is scoped to the observed duty and confers no save ownership.
+    // Attachment alone confers no deletion ownership; an explicitly selected progression slot may reset on failure.
     public bool AttachCurrentDuty { get; init; }
+    public int? ProgressionSaveSlot { get; init; }
+    public bool UsesSelectedProgressionSave => Mode == FarmingMode.DeepProgression && ProgressionSaveSlot is 0 or 1;
+    public bool ContinuesAttachedProgression => AttachCurrentDuty && Mode == FarmingMode.DeepProgression;
     public bool StopsForTerminalReview => Mode == FarmingMode.DeepProgression && StopAfterFloor == MaxFloor;
     public bool ReusesSave => Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
     public bool ShowsDetailedMap => Mode == FarmingMode.Hoard && BandedEnabled;
@@ -122,11 +125,21 @@ public static class PreparedSavePolicy
         int terminalEntry = Math.Max(1, maxFloor - 9);
         int occupied = 0;
         bool managed = requiredSlot.HasValue && !reusable;
+        // An unbound progression resumed from inside the duty has no slot yet.
+        // Match the next floorset uniquely before the binding pins its identity.
+        bool continuation = !reusable && expectedFloor.HasValue && !managed;
         foreach (var slot in slots)
-            if (!slot.Empty && (!managed || slot.Index == requiredSlot.GetValueOrDefault())) { source = slot; occupied++; }
+            if (!slot.Empty && (!managed || slot.Index == requiredSlot.GetValueOrDefault()) &&
+                (!continuation || slot.StartFloor == expectedFloor.GetValueOrDefault())) { source = slot; occupied++; }
         if (occupied != 1)
-            error = managed ? "本任務管理的存檔不存在或槽位資料不唯一；已停止，不會改選其他存檔。"
-                : occupied == 0 ? "請先準備一個存檔。" : "使用既有存檔要求有且只有一個存檔；請自行整理後重試。";
+        {
+            if (managed)
+                error = "本任務管理的存檔不存在或槽位資料不唯一；已停止，不會改選其他存檔。";
+            else if (continuation)
+                error = $"無法唯一識別 {expectedFloor} 層續接存檔；保留存檔，請確認來源。";
+            else
+                error = occupied == 0 ? "請先準備一個存檔。" : "使用既有存檔要求有且只有一個存檔；請自行整理後重試。";
+        }
         else if (source.Index < 0)
             error = "無法識別來源槽位。";
         else if (!source.Enterable)

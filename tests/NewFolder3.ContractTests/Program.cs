@@ -16,6 +16,7 @@ internal static class Program
     {
         int passed = 0;
         passed += Run("fsd-diagnostic-progress-and-ipc-contract", FsdDiagnosticsTests.Run);
+        passed += Run("entry-reset-menu-label-matching", EntryMenuChoiceTests.Run);
         passed += Run("entry-save-reset-selection-and-source-guard", SaveSlotResetTests.Run);
         passed += Run("y-axis-movement-packets", YAxisPacketTests.Run);
         passed += Run("public-no-service-build-profile", TestPublicNoServiceBuildProfile);

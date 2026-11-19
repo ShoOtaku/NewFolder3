@@ -14,7 +14,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 /// <summary>Owns one floor's boss navigation, combat buffs and diagnostic cadence.</summary>
 internal sealed class FloorBossController : IDisposable
 {
-    private const float BossNavigationArrivalTolerance = 3f;
     private const uint SteelStatusId = 1100;
     private const uint StrengthStatusId = 687;
     private const uint PtHasteStatusId = 4718;
@@ -80,10 +79,14 @@ internal sealed class FloorBossController : IDisposable
 
     private void StopMovement()
     {
-        if (!_movementStarted) return;
+        if (!_movementStarted)
+        {
+            _navHelper.Cancel();
+            return;
+        }
         _movementStarted = false;
         try { _movementStrategy.Stop(); }
-        finally { _navHelper.Cancel(cancelPathfinding: _movementStrategy is PromeRadarBossMovementStrategy); }
+        finally { _navHelper.Cancel(); }
         _recordReplayEvent("boss-movement-stopped", new { floor = _floor, strategy = _movementStrategy.Name });
     }
 
@@ -203,7 +206,13 @@ internal sealed class FloorBossController : IDisposable
             _ctx.PrepareCombat(boss.GameObjectId);
             return "Boss floor - in attack range, waiting for pull";
         }
-        var state = _navHelper.Navigate(boss.Position, player.Position, retryIntervalSeconds: 5.0);
+        var destination = BossApproachPosition.Resolve(player.Position, boss.Position, range);
+        if (destination == null)
+        {
+            StopPromeRadarApproach();
+            return "Boss floor - waiting for a valid approach point";
+        }
+        var state = _navHelper.Navigate(destination.Value, player.Position, retryIntervalSeconds: 5.0);
         return state switch
         {
             NavigationState.Arrived => "Boss floor - waiting for a clear shot",
@@ -267,9 +276,10 @@ internal sealed class FloorBossController : IDisposable
             return;
         }
 
-        var boss = Runtime.Helpers.CombatTargetingHelpers.PickNearestHostile(60f, out _);
+        var boss = CombatTargetingHelpers.PickNearestHostile(60f, out _, _ctx.IsNewCombatTargetAllowed);
         if (boss == null)
         {
+            _navHelper.Cancel();
             Status = "Boss floor - waiting for boss target";
             return;
         }
@@ -281,7 +291,7 @@ internal sealed class FloorBossController : IDisposable
             if (currentTarget != null &&
                 currentTarget.GameObjectId == boss.GameObjectId &&
                 !currentTarget.IsDead &&
-                IsWithinBossEngageRadius(player.Position, boss.Position))
+                IsWithinBossEngageRadius(player.Position, boss.Position, _ctx.CombatAssist.GetEngageRange()))
             {
                 Status = "Boss floor - waiting for boss combat";
                 return;
@@ -297,7 +307,7 @@ internal sealed class FloorBossController : IDisposable
             });
         }
 
-        var withinRange = IsWithinBossEngageRadius(player.Position, boss.Position);
+        var withinRange = IsWithinBossEngageRadius(player.Position, boss.Position, _ctx.CombatAssist.GetEngageRange());
         if (withinRange)
         {
             _navHelper?.Cancel();
@@ -307,13 +317,21 @@ internal sealed class FloorBossController : IDisposable
             return;
         }
 
-        var state = _navHelper!.Navigate(boss.Position, player.Position, BossNavigationArrivalTolerance, retryIntervalSeconds: 5.0);
+        var destination = BossApproachPosition.Resolve(player.Position, boss.Position, _ctx.CombatAssist.GetEngageRange());
+        if (destination == null)
+        {
+            _navHelper.Cancel();
+            Status = "Boss floor - waiting for a valid approach point";
+            return;
+        }
+        var state = _navHelper.Navigate(destination.Value, player.Position, retryIntervalSeconds: 5.0);
         switch (state)
         {
             case NavigationState.Moving:
                 Status = "Boss floor - navigating to boss";
                 break;
             case NavigationState.Arrived:
+                _navHelper.Cancel();
                 BossNavigationResolved = true;
                 Status = "Boss floor - at boss";
                 Service.Log.Info("[FloorPhase] Boss navigation complete -> arrived");
@@ -322,11 +340,13 @@ internal sealed class FloorBossController : IDisposable
                 Status = $"Boss floor - repathing to boss ({_navHelper.StuckRetryCount}/3)";
                 break;
             case NavigationState.StuckGiveUp:
+                _navHelper.Cancel();
                 BossNavigationResolved = true;
                 Status = "Boss floor - boss navigation failed";
                 Service.Log.Warning("[FloorPhase] Boss navigation gave up");
                 break;
             case NavigationState.Failed:
+                _navHelper.Cancel();
                 BossNavigationResolved = true;
                 Status = "Boss floor - boss navigation unavailable";
                 Service.Log.Warning("[FloorPhase] Boss navigation failed to start");
@@ -334,12 +354,10 @@ internal sealed class FloorBossController : IDisposable
         }
     }
 
-    private static bool IsWithinBossEngageRadius(Vector3 playerPosition, Vector3 bossPosition)
+    private static bool IsWithinBossEngageRadius(Vector3 playerPosition, Vector3 bossPosition, float actionRange)
     {
-        var dx = playerPosition.X - bossPosition.X;
-        var dz = playerPosition.Z - bossPosition.Z;
-        return dx * dx + dz * dz <=
-               BossNavigationArrivalTolerance * BossNavigationArrivalTolerance;
+        var attack = CombatPositionNavigation.CheckAttack(playerPosition, bossPosition, MathF.Min(3, actionRange), margin: .25f);
+        return attack.InRange && !attack.SightBlocked;
     }
 
     private bool CombatBuffUsable(uint slot, bool overcapRelief = false) =>

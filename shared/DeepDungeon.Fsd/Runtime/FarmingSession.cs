@@ -11,7 +11,13 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public bool OpenSilver { get; private set; } = plan.OpenSilver;
     public bool OpenBronze { get; private set; } = plan.OpenBronze;
     public int NextFloor { get; private set; } = plan.StartFloor;
-    public int OwnedSlot { get; private set; } = ownedSlot;
+    public int OwnedSlot { get; private set; } = ownedSlot switch
+    {
+        >= 0 => ownedSlot,
+        _ when plan.AttachCurrentDuty && plan.UsesSelectedProgressionSave => plan.ProgressionSaveSlot.GetValueOrDefault(),
+        _ => -1
+    };
+    public bool AttachmentCompleted { get; private set; }
     public int Failures { get; private set; }
     public int Discoveries { get; private set; }
 
@@ -28,7 +34,7 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public PreparedSaveBinding PrepareSource()
     {
         Source.ConfigureForEntry(Plan.ReusesSave, Plan.SaveUse == SaveUse.Prepared ? null : NextFloor,
-            OwnedSlot >= 0 ? OwnedSlot : null, Plan.MaxFloor);
+            OwnedSlot >= 0 ? OwnedSlot : Source.Pinned?.Index, Plan.MaxFloor);
         return Source;
     }
 
@@ -36,6 +42,20 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     {
         OwnedSlot = slot;
         return slot >= 0;
+    }
+
+    public bool BindSelectedSave(in SaveSlotSnapshot source)
+    {
+        if (!Plan.UsesSelectedProgressionSave || source.Index != Plan.ProgressionSaveSlot ||
+            OwnedSlot >= 0 && (source.Empty || source.StartFloor != NextFloor)) return false;
+        if (!source.Empty)
+        {
+            Source.ConfigureForEntry(false, source.StartFloor, source.Index, Plan.MaxFloor);
+            if (!Source.Observe([source], out _, out _)) return false;
+        }
+        OwnedSlot = source.Index;
+        NextFloor = source.Empty ? 1 : source.StartFloor;
+        return true;
     }
 
     public void ConfirmOwnedSaveDeleted()
@@ -47,6 +67,8 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public void CompleteAttempt(in FarmingSessionDecision decision, int discoveries)
     {
         NextFloor = decision.NextFloor;
+        if (Plan.ContinuesAttachedProgression && decision.Error.Length == 0)
+            AttachmentCompleted = true;
         Discoveries += discoveries;
         if (decision.RecoverFailure) Failures++;
     }
