@@ -6,10 +6,12 @@ namespace MasterPlayer.MechanicRuntime;
 /// <summary>Protect a cast while standing still is safe; mechanic escape can preempt the wait.</summary>
 public static class CastMovementPolicy
 {
-    public static bool ShouldWait(bool casting, float remaining, Vector2 position, ulong playerId,
+    public static bool ShouldWait(bool casting, float elapsed, float remaining, Vector2 position, ulong playerId,
         ushort territory, DateTime now, EncounterPlanningSnapshot? snapshot, float speed = 6f)
     {
         if (!casting) return false;
+        // Let navigation continue through cast startup; protect only established casts.
+        if (float.IsFinite(elapsed) && elapsed >= 0 && elapsed < .5f) return false;
         if (snapshot == null || snapshot.BossDead || snapshot.Territory != territory ||
             now - snapshot.CapturedAt > TimeSpan.FromMilliseconds(500) || snapshot.CapturedAt > now)
             return true;
