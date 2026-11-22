@@ -125,6 +125,11 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
         NavigationPath? path, NavigationRegionGoal? region)
     {
         if (_disposed) return NavigationState.Failed;
+        if (PromeRadarMovementGate.IsBlocked)
+        {
+            Cancel();
+            return NavigationState.Moving;
+        }
         var now = DateTime.UtcNow;
         var speed = _movementSpeed();
         CaptureDiagnosticContext(now, dest, playerPos, arrivalRadius, speed);
@@ -287,6 +292,17 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
         _follower.Reset(); _planner.Reset(); _displayPath.Clear(); _nextReplan = default;
         // Keep observation history through claim changes and pending-effect gaps.
         ReleaseDirect();
+        // Hold/no-claim also owns a stationary objective. Keep local cleanup
+        // complete on IPC failure; the coordinator retains the denied grant.
+        if (MovementCoordinator.Shared.DirectRequired && !PromeRadarMovementGate.IsBlocked)
+        {
+            try { MovementCoordinator.Shared.QuiesceVNav(); }
+            catch (Exception error)
+            {
+                _failure = error.Message;
+                Diag(DateTime.UtcNow, "waiting-vnav-stop");
+            }
+        }
     }
     public void Dispose()
     {

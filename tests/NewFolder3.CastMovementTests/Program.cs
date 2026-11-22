@@ -3,6 +3,20 @@ using BossMod;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using MasterPlayer.MechanicRuntime;
 
+if (args.Contains("--pt99-targeting"))
+{
+    Pt99TargetTests.Run();
+    return;
+}
+
+if (args.Contains("--movement-ownership"))
+{
+    MovementCoordinatorTests.Run();
+    PromeRadarMovementTests.Run();
+    OutsideDutyNavigationTests.Run();
+    return;
+}
+
 var now = new DateTime(2026, 11, 17, 8, 0, 0, DateTimeKind.Utc);
 var snapshot = new EncounterPlanningSnapshot(1283, 1, 0x4609, now, default, 14, true, false,
     default, new ArenaBoundsCircle(20), [], [], [], []);
@@ -126,3 +140,5 @@ Check(bossFloors == 48, "Boss-floor coverage drifted");
 Console.WriteLine($"PASS shared approach matrix: {bossFloors} boss floors across all four deep dungeons, four entry directions each.");
 
 OutsideDutyNavigationTests.Run();
+PromeRadarMovementTests.Run();
+MovementCoordinatorTests.Run();

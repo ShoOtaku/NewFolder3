@@ -8,7 +8,7 @@ public readonly record struct FarmingItemPolicy(CombatBuffUse CombatBuffs, bool 
     public const float BossRefreshSeconds = 5f;
     public static FarmingItemPolicy For(FarmingMode? mode) => mode switch
     {
-        FarmingMode.DeepProgression => new(CombatBuffUse.ReserveForBoss, true),
+        FarmingMode.DeepProgression or FarmingMode.FreeExploration => new(CombatBuffUse.ReserveForBoss, true),
         FarmingMode.Aetherpool => new(CombatBuffUse.None, true),
         FarmingMode.HoardDiscovery => new(CombatBuffUse.None, false),
         _ => new(CombatBuffUse.Eager, true)

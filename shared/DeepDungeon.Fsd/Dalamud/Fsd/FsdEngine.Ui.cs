@@ -315,9 +315,12 @@ namespace DeepDungeon.Fsd.Dalamud
 							var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor,
 								_configuration.Farming.Mode);
 							ImGui.TextDisabled($"{dungeon.Name} 第 {duty.Floor} 層 · {FarmingModeLabels[(int)mode]}");
-							ImGui.TextDisabled(mode == FarmingMode.DeepProgression
-								? "接管並接續指定存檔；僅敗北後重置該槽，登頂保留存檔。"
-								: "接管目前層段，保留存檔。");
+							ImGui.TextDisabled(mode switch
+							{
+								FarmingMode.DeepProgression => "接管並接續指定存檔；僅敗北後重置該槽，登頂保留存檔。",
+								FarmingMode.FreeExploration => "接管並繼續探索至100層；敗北或登頂後停止，保留原存檔。",
+								_ => "接管目前層段，保留存檔。"
+							});
 						}
 						else
 							ImGui.TextDisabled(attachmentError);
@@ -886,7 +889,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						{
 							if (TryGetPassageDestination(deepDungeon, out var passageDest, out bool usedActor, out var passageRoomIndex))
 							{
-								if (DeepDungeon.Fsd.Dalamud.moveHelper.VNav.SimpleMove.PathfindAndMoveTo(passageDest, false))
+								if (TryManualNavigation(passageDest, false))
 								{
 									if (usedActor)
 									{
@@ -1147,7 +1150,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		private unsafe bool TryNavigateWithRoomFallback(InstanceContentDeepDungeon* dd, int playerRoom, int targetRoom, Vector3 finalDest)
 		{
-			if (DeepDungeon.Fsd.Dalamud.moveHelper.VNav.SimpleMove.PathfindAndMoveTo(finalDest, false))
+			if (TryManualNavigation(finalDest, false))
 				return true;
 
 			if (dd == null || playerRoom < 0 || targetRoom < 0)
@@ -1162,7 +1165,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			while (navigator.IsActive && navigator.TryHandleFailure(dd, playerRoom, out var stagedDest))
 			{
-				if (DeepDungeon.Fsd.Dalamud.moveHelper.VNav.SimpleMove.PathfindAndMoveTo(stagedDest, false))
+				if (TryManualNavigation(stagedDest, false))
 				{
 					Service.Log.Info($"[Necromancer] Click navigation fallback via {navigator.StageLabel}");
 					return true;
@@ -1686,6 +1689,11 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		private unsafe void ProcessPendingPassageFollowup()
 		{
+			if (IsRunActive || !Runtime.Navigation.MovementCoordinator.Shared.CanStartManual)
+			{
+				ClearPendingPassageFollowup();
+				return;
+			}
 			if (!_pendingPassageFollowup)
 				return;
 
@@ -1721,7 +1729,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			if (!usedActor)
 				return;
 
-			if (DeepDungeon.Fsd.Dalamud.moveHelper.VNav.SimpleMove.PathfindAndMoveTo(dest, false))
+			if (TryManualNavigation(dest, false))
 			{
 				Service.Log.Info("[Necromancer] Passage已顯示，已更新導航至出口。");
 				ClearPendingPassageFollowup();

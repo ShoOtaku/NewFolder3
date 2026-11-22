@@ -10,10 +10,12 @@ internal partial class FsdEngine
 {
     private string? _farmingError;
     private static readonly string[] FarmingModeLabels =
-        ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士"];
+        ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士", "自由探索"];
     private static readonly string[] FarmingModeWithSurveyLabels =
-        ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士", "受控採集（研究）"];
+        ["挖寶藏", "強化／陶片", "寶藏發現成就", "死靈術士", "自由探索", "受控採集（研究）"];
     private static readonly string[] HoardFloorsetLabels = ["21–30 層", "31–40 層"];
+    private static readonly int[] ExplorationStartFloors = [1, 21, 31, 51, 71];
+    private static readonly string[] ExplorationStartFloorLabels = ["1 層", "21 層", "31 層", "51 層", "71 層"];
     private static readonly string[] FarmingDungeonLabels = ["朝聖交錯路", "死者宮殿", "天之御柱"];
     private static readonly string[] ProgressionSaveSlotLabels = ["存檔槽位 1", "存檔槽位 2"];
 
@@ -59,7 +61,7 @@ internal partial class FsdEngine
         bool pt = settings.DungeonId == 4;
         bool research = pt && _fsfScenarioIndex == 2;
         var effectiveMode = pt ? settings.Mode : FarmingMode.DeepProgression;
-        int mode = !pt ? (int)FarmingMode.DeepProgression : research ? 4 : (int)settings.Mode;
+        int mode = !pt ? (int)FarmingMode.DeepProgression : research ? FarmingModeLabels.Length : (int)settings.Mode;
         var labels = pt && _detailedMapHostOptions.SupportsControlledPtSurvey
             ? FarmingModeWithSurveyLabels
             : FarmingModeLabels;
@@ -67,7 +69,7 @@ internal partial class FsdEngine
         ImGui.SetNextItemWidth(260);
         if (ImGui.Combo("模式##fsdMode", ref mode, labels, labels.Length) && pt)
         {
-            if (mode == 4) _fsfScenarioIndex = 2;
+            if (mode == FarmingModeLabels.Length) _fsfScenarioIndex = 2;
             else
             {
                 settings.Mode = (FarmingMode)mode;
@@ -76,6 +78,8 @@ internal partial class FsdEngine
             _configuration.NecromancerFsdScenarioIndex = _fsfScenarioIndex;
             _configuration.Save();
             _farmingError = null;
+            effectiveMode = settings.Mode;
+            research = _fsfScenarioIndex == 2;
         }
         ImGui.EndDisabled();
 
@@ -112,6 +116,21 @@ internal partial class FsdEngine
                 ImGui.TextWrapped("準備1份較多跳層松杜香的任意起點層存檔");
             else if (effectiveMode == FarmingMode.HoardDiscovery)
                 ImGui.TextWrapped("準備1份有至少1個感知寶藏的任意起點層存檔");
+            else if (effectiveMode == FarmingMode.FreeExploration)
+            {
+                int floor = Array.IndexOf(ExplorationStartFloors, settings.ExplorationStartFloor);
+                ImGui.SetNextItemWidth(180);
+                ImGui.BeginDisabled(inDuty);
+                if (ImGui.Combo("起始樓層##fsdExplorationStart", ref floor,
+                        ExplorationStartFloorLabels, ExplorationStartFloorLabels.Length))
+                {
+                    settings.ExplorationStartFloor = ExplorationStartFloors[floor];
+                    _configuration.Save();
+                    _farmingError = null;
+                }
+                ImGui.EndDisabled();
+                ImGui.TextWrapped("使用空槽從指定起點新建，每10層自動接續至100層。只清理本輪建立的存檔；失敗後從所選起點重開。寶藏與寶箱選項可自由調整。");
+            }
         }
         ImGui.EndDisabled();
     }
@@ -127,7 +146,7 @@ internal partial class FsdEngine
         if (activePlan?.UsesSelectedProgressionSave == true)
             ImGui.TextWrapped($"本次攻略使用存檔槽位 {activePlan.ProgressionSaveSlot + 1}；成功時保留存檔，確認敗北後才重置該槽。");
         else if (activePlan?.ContinuesAttachedProgression == true)
-            ImGui.TextWrapped("深層攻略將接續後續層段；存檔來源須唯一且進度相符。敗北或登頂後停止，保留原存檔。");
+            ImGui.TextWrapped("將接續後續層段；存檔來源須唯一且進度相符。敗北或登頂後停止，保留原存檔。");
         bool pt = (activePlan?.DungeonId ?? _configuration.Farming.DungeonId) == 4;
         bool research = activePlan == null && pt && _fsfScenarioIndex == 2;
         var mode = activePlan?.Mode ?? (pt ? _configuration.Farming.Mode : FarmingMode.DeepProgression);
@@ -188,7 +207,7 @@ internal partial class FsdEngine
         }
         ImGui.EndDisabled();
         if (pauseAfterCurrentFloorset)
-            ImGui.TextWrapped("通關目前層段並退本後停止，保留存檔；不再接續下一層段或循環。僅適用挖寶藏與死靈術士模式。");
+            ImGui.TextWrapped("通關目前層段並退本後停止，保留存檔；不再接續下一層段或循環。適用挖寶藏、死靈術士與自由探索模式。");
         if (!attached && mode != FarmingMode.DeepProgression)
             DrawCycleOptions(preferences);
         if (running)
@@ -197,7 +216,7 @@ internal partial class FsdEngine
             if (!attached)
             {
                 ImGui.TextDisabled($"完成循環：{host.CompletedLoops}/{(host.Infinite ? "∞" : host.TargetLoops)}");
-                if (mode == FarmingMode.DeepProgression && !research)
+                if (activePlan?.ClimbsToSummit == true)
                     ImGui.TextDisabled($"失敗重試：{host.FarmingFailures}");
             }
             if (mode == FarmingMode.HoardDiscovery && !research)
@@ -266,7 +285,12 @@ internal partial class FsdEngine
         var effectiveMode = pt ? settings.Mode : FarmingMode.DeepProgression;
         var p = settings.GetPreferences(_configuration, effectiveMode);
         bool prepared = effectiveMode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
-        int startFloor = effectiveMode == FarmingMode.DeepProgression ? 1 : _fsfScenarioIndex == 0 ? 21 : 31;
+        int startFloor = effectiveMode switch
+        {
+            FarmingMode.DeepProgression => 1,
+            FarmingMode.FreeExploration => settings.ExplorationStartFloor,
+            _ => _fsfScenarioIndex == 0 ? 21 : 31
+        };
         var farming = new FsdFarmingRequest(effectiveMode, prepared ? SaveUse.Prepared : SaveUse.Create,
             startFloor, p.Cycles, p.Infinite,
             new FarmingTargets(p.BandedEnabled == true, p.OpenGold, p.OpenSilver, p.OpenBronze),
@@ -281,9 +305,6 @@ internal partial class FsdEngine
             return new FsdControlResult(false, error);
 
         var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor, _configuration.Farming.Mode);
-        if (!IsSupportedFarmingJob(mode, dungeon.DungeonId))
-            return new FsdControlResult(false, UnsupportedFarmingJobError);
-
         var preferences = _configuration.Farming.GetPreferences(_configuration, mode);
         bool prepared = mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
         int validatedStart = mode == FarmingMode.Hoard ? entryFloor : 1;
@@ -340,13 +361,6 @@ internal partial class FsdEngine
         return true;
     }
 
-    private const string UnsupportedFarmingJobError =
-        "死宮／天宮死靈術士模式僅支援機工士、吟遊詩人、舞者。請切換職業後再啟動。";
-
-    private static bool IsSupportedFarmingJob(FarmingMode mode, uint dungeonId) =>
-        mode != FarmingMode.DeepProgression || dungeonId is not (1 or 2) ||
-        Service.LocalPlayer?.ClassJob.RowId is 23 or 31 or 38;
-
     private static string? GetFarmingDetailedMapKey(FarmingPlan plan)
     {
         if (!plan.ShowsDetailedMap)
@@ -359,11 +373,6 @@ internal partial class FsdEngine
     public bool TryStartFarming(FsdFarmingRequest request, out string error)
     {
         var (mode, saveUse, startFloor, cycles, infinite, targets, checkpointOptions, dungeonId) = request;
-        if (!IsSupportedFarmingJob(mode, dungeonId))
-        {
-            error = UnsupportedFarmingJobError;
-            return false;
-        }
         var (hoard, gold, silver, bronze) = targets;
         var (stopAfterFloor, diagnosticStartFloor, resumeSlot, holdOnFailure, _) = checkpointOptions ?? new FsdStartRequest();
         bool holdAfterClear = checkpointOptions?.HoldAfterClear == true;
@@ -424,6 +433,8 @@ internal partial class FsdEngine
             _configuration.Farming.DungeonId = dungeonId;
             if (dungeonId == 4)
                 _configuration.Farming.Mode = mode;
+            if (mode == FarmingMode.FreeExploration)
+                _configuration.Farming.ExplorationStartFloor = startFloor;
             _fsfScenarioIndex = dungeonId == 4 && mode == FarmingMode.Hoard && startFloor == 21 ? 0 : 1;
             _configuration.NecromancerFsdScenarioIndex = _fsfScenarioIndex;
             var p = _configuration.Farming.GetPreferences(_configuration, mode);

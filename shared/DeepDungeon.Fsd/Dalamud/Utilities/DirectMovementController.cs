@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using Dalamud.Hooking;
 using FFXIVClientStructs.FFXIV.Client.Game.Control;
 using OmenTools.Info.Models;
@@ -126,6 +127,8 @@ public sealed unsafe class DirectMovementController : IDisposable
             ObjectDisposedException.ThrowIf(disposed, this);
             if (!value) { Release(); return; }
             if (Current is { } current && current != this) throw new InvalidOperationException($"Direct movement is owned by {current.Name}.");
+            if (!MovementCoordinator.Shared.CanWriteDirect(this) && !MovementCoordinator.Shared.TryAcquireDirect(this))
+                throw new InvalidOperationException("Direct movement is waiting for exclusive ownership.");
             EnsureBackend();
             owner = this;
             Refresh();
@@ -214,12 +217,14 @@ public sealed unsafe class DirectMovementController : IDisposable
     }
     /// <summary>Commit a validated native heading under the current input owner.</summary>
     public bool TryWriteForcedDirection(float radians)
-        =>Enabled&&float.IsFinite(radians)&&backend!.TryWriteForcedDirection(radians);
+        =>MovementCoordinator.Shared.CanWriteDirect(this)&&Enabled&&float.IsFinite(radians)&&backend!.TryWriteForcedDirection(radians);
     public void ClearCancellation() => WasCancelledByUser = false;
+    internal static void ReleaseActive() => owner?.Release();
     public void Release()
     {
         if (owner != this) return;
         owner = null;
+        MovementCoordinator.Shared.ReleaseDirect(this);
         hold = false;
         directionalInput = null;
         steeringWorldInput = null;
@@ -335,9 +340,11 @@ public sealed unsafe class DirectMovementController : IDisposable
         }
         private byte OnInputActiveCore(void* self, byte flags)
         {
+            if (PromeRadarMovementGate.IsBlocked) return gate!.Original(self, flags);
             if (inputSuppressors.Count > 0) return 0;
             foreach(var observer in steeringObservers)observer.beforeSteeringInput?.Invoke();
             var c = Current;
+            if (c != null && !MovementCoordinator.Shared.CanWriteDirect(c)) return gate!.Original(self, flags);
             if (c?.hold == true) return 0;
             if (c?.steeringWorldInput is { } world)
             {
@@ -383,6 +390,8 @@ public sealed unsafe class DirectMovementController : IDisposable
                 try { walk.Original(self, left, forward, turn, strafe, unknown, additive); }
                 finally { timingObserver(DirectInputTimingStage.WalkOriginal, started, Stopwatch.GetTimestamp()); }
             }
+            // Original may already contain MP's output. Yield without clearing it.
+            if (PromeRadarMovementGate.IsBlocked) { Current?.Release(); return; }
             if (inputSuppressors.Count > 0)
             {
                 *left = *forward = *turn = 0;
@@ -397,6 +406,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             {observer.LastUserInput=new(*left,*forward);observer.LastInputTimestamp=now;}
             var c = Current;
             if (c == null) return;
+            if (!MovementCoordinator.Shared.CanWriteDirect(c)) { c.Release(); return; }
             c.LastUserInput = new(*left, *forward);
             if (c.CancelOnManualInput && (*left != 0 || *forward != 0 || c.facingInput != null && *turn != 0) && (c.directionalInput == null || c.ObserveUserInput))
             {
@@ -406,7 +416,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             }
             c.LastInputTimestamp=(double)Stopwatch.GetTimestamp()/Stopwatch.Frequency;
             c.BeforeWalkInput?.Invoke();
-            if(Current!=c)return;
+            if(Current!=c||!MovementCoordinator.Shared.CanWriteDirect(c))return;
             if(c.CanWriteWalkInput?.Invoke()==false)
             {c.Release();*left=*forward=*turn=0;return;}
             if (c.hold) { *left = *forward = *turn = 0;c.LastAppliedInput=Vector2.Zero;c.AfterWalkInput?.Invoke(); return; }
@@ -489,9 +499,11 @@ public sealed unsafe class DirectMovementController : IDisposable
                 try { fly.Original(self, result); }
                 finally { timingObserver(DirectInputTimingStage.FlyOriginal, started, Stopwatch.GetTimestamp()); }
             }
+            if (PromeRadarMovementGate.IsBlocked) { Current?.Release(); return; }
             if (inputSuppressors.Count > 0) { result->Left = result->Forward = result->Up = 0; return; }
             var c = Current;
             if (c == null) return;
+            if (!MovementCoordinator.Shared.CanWriteDirect(c)) { c.Release(); return; }
             if (c.hold) { result->Left = result->Forward = result->Up = 0; return; }
             if (!c.IsAutoMove && (result->Left != 0 || result->Forward != 0 || result->Up != 0)) return;
             if (Angle.TryGetDirectionToDestination(c.destination, true, out var dir, c.Precision))

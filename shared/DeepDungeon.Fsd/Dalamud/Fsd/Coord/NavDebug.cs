@@ -44,6 +44,7 @@ internal static class NavDebug
 
     internal static unsafe string StartAuto()
     {
+        if (!MovementCoordinator.Shared.CanStartManual) return "FSD or MP owns movement";
         StopAuto("");
         var dd = EventFramework.Instance()->GetInstanceContentDeepDungeon();
         if (dd == null)
@@ -104,6 +105,7 @@ internal static class NavDebug
     /// changes so a stale layout can never drive movement.</summary>
     internal static unsafe string StartGoto(Vector3 dest)
     {
+        if (!MovementCoordinator.Shared.CanStartManual) return "FSD or MP owns movement";
         StopGoto("");
         var dd = EventFramework.Instance()->GetInstanceContentDeepDungeon();
         if (dd == null)
@@ -141,6 +143,12 @@ internal static class NavDebug
     /// FsdEngine.Update so it works with no FSD session.</summary>
     internal static void Tick()
     {
+        if (!MovementCoordinator.Shared.CanStartManual)
+        {
+            StopAuto("FSD or MP owns movement");
+            StopGoto("FSD or MP owns movement");
+            return;
+        }
         if (_autoOn)
         {
             TickAuto();

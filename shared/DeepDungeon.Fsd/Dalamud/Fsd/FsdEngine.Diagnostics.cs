@@ -94,6 +94,15 @@ internal partial class FsdEngine
                     playerHp = player?.CurrentHp, playerMaxHp = player?.MaxHp,
                     targetMaxHp = target?.MaxHp, navigationReadError = navigationError,
                     floor = floor?.CaptureDiagnostics(), rotationFailure = _rotationControl.FailedProvider?.ToString(),
+                    movement = new
+                    {
+                        automatic = Runtime.Navigation.MovementCoordinator.Shared.AutomaticActive,
+                        directRequired = Runtime.Navigation.MovementCoordinator.Shared.DirectRequired,
+                        status = Runtime.Navigation.MovementCoordinator.Shared.Status,
+                        lastError = Runtime.Navigation.MovementCoordinator.Shared.LastError,
+                        mpBlocked = Runtime.Navigation.PromeRadarMovementGate.IsBlocked,
+                        mpHandoffComplete = Runtime.Navigation.PromeRadarMovementGate.HandoffComplete
+                    },
                     directMovement = new { owner = Utilities.DirectMovementController.ActiveOwner,
                         inputHooksReady = Utilities.DirectMovementController.InputHooksReady,
                         initializationFailure = Utilities.DirectMovementController.InitializationFailure }

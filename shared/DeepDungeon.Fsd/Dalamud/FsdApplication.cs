@@ -14,6 +14,7 @@ public sealed partial class FsdApplication : IFsdApplication
     private readonly FsdSettings _settings;
     private readonly FsdExecutionLease _lease;
     private readonly FsdEngine _module;
+    private readonly PromeRadarMovementIpc movementIpc;
     private readonly Func<float>? _playerYOffsetProvider;
     private readonly FsdFacadeLifecycle _lifecycle = new();
 
@@ -41,6 +42,7 @@ public sealed partial class FsdApplication : IFsdApplication
 
         FsdExecutionLease? lease = null;
         FsdEngine? module = null;
+        PromeRadarMovementIpc? handoff = null;
         try
         {
             pluginInterface.Create<Service>(Array.Empty<object>());
@@ -72,12 +74,15 @@ public sealed partial class FsdApplication : IFsdApplication
                 stateObserver);
             _module = module;
             _module.Initialize();
+            handoff = new PromeRadarMovementIpc(pluginInterface, module.YieldToPromeRadar);
+            movementIpc = handoff;
             Service.Log.Info($"[FSD] Host {hostIdentity}/{hostVersion}; engine {FsdEngineIdentity.InformationalVersion}.");
             Service.Log.Info($"[FSD] builds engineMvid={typeof(FsdApplication).Assembly.ManifestModule.ModuleVersionId}; coreMvid={typeof(DeepDungeon.Fsd.Core.NativeTreasureCompletionPlanner).Assembly.ManifestModule.ModuleVersionId}; runtimeMvid={typeof(DeepDungeon.Fsd.Runtime.FsdRotationController).Assembly.ManifestModule.ModuleVersionId}; mechanicMvid={typeof(MasterPlayer.MechanicRuntime.EncounterHintPlanner).Assembly.ManifestModule.ModuleVersionId}");
         }
         catch (Exception startupError)
         {
             var rollbackErrors = new List<Exception>();
+            try { handoff?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
             try { CombatPositionNavigation.ClearYOffsetProvider(playerYOffsetProvider); } catch (Exception error) { rollbackErrors.Add(error); }
             try { module?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
             try { lease?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
@@ -115,6 +120,7 @@ public sealed partial class FsdApplication : IFsdApplication
         ArgumentNullException.ThrowIfNull(framework);
         try
         {
+            movementIpc.Refresh();
             _settings.Refresh();
             FsdSettingsValidator.ValidateOrThrow(_settings);
             _module.Update(framework);
@@ -201,8 +207,12 @@ public sealed partial class FsdApplication : IFsdApplication
         if (!_lifecycle.TryDispose())
             return;
         CombatPositionNavigation.ClearYOffsetProvider(_playerYOffsetProvider);
-        try { _module.Dispose(); }
-        finally { _lease.Dispose(); }
+        try { movementIpc.Dispose(); }
+        finally
+        {
+            try { _module.Dispose(); }
+            finally { _lease.Dispose(); }
+        }
     }
 
     private void ThrowIfDisposed() => _lifecycle.EnsureActive();

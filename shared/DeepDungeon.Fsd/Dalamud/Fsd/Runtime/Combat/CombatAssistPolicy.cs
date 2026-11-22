@@ -16,6 +16,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat;
 /// </summary>
 internal sealed class CombatAssistPolicy
 {
+    private readonly ICombatTargetProvider _promeRadar = new PromeRadarTargetProvider();
     private readonly ICombatTargetProvider _encounter = new EncounterTargetProvider();
     private readonly ICombatTargetProvider _default = new DefaultTargetProvider();
     private CombatTargetChoice _decision;
@@ -38,7 +39,7 @@ internal sealed class CombatAssistPolicy
     }
 
     private CombatTargetChoice Choose(in CombatTargetRequest request) =>
-        _encounter.TrySelect(request, out var choice) || _default.TrySelect(request, out choice)
+        _promeRadar.TrySelect(request, out var choice) || _encounter.TrySelect(request, out choice) || _default.TrySelect(request, out choice)
             ? choice
             : default;
 

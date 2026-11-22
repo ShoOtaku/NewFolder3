@@ -8,21 +8,26 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 	public sealed class NavigatorVNavAdapter : INavigator, IDisposable
 	{
         private readonly Func<Vector3, bool, bool> _start;
-        private readonly Func<bool> _pathfindInProgress;
-        private readonly Action _cancelPathfinding;
-        private readonly Action _stop;
-        private bool _cancelPending;
+        private readonly MovementCoordinator coordinator;
+        private readonly bool manual;
 
-        public NavigatorVNavAdapter() : this(StartNative,
-            VNav.SimpleMove.PathfindInProgress, VNav.Nav.PathfindCancelAll, VNav.Path.Stop) { }
+        public NavigatorVNavAdapter() : this(StartNative, MovementCoordinator.Shared) { }
+
+        internal NavigatorVNavAdapter(bool manual) : this(StartNative, MovementCoordinator.Shared, manual) { }
+
+        internal NavigatorVNavAdapter(Func<Vector3, bool, bool> start, MovementCoordinator coordinator, bool manual = false)
+        {
+            _start = start;
+            this.coordinator = coordinator;
+            this.manual = manual;
+        }
 
         internal NavigatorVNavAdapter(Func<Vector3, bool, bool> start, Func<bool> pathfindInProgress,
             Action cancelPathfinding, Action stop)
         {
             _start = start;
-            _pathfindInProgress = pathfindInProgress;
-            _cancelPathfinding = cancelPathfinding;
-            _stop = stop;
+            coordinator = new(() => (false, pathfindInProgress()), cancelPathfinding, stop,
+                () => { }, () => PromeRadarMovementGate.IsBlocked);
         }
         private static bool StartNative(Vector3 destination, bool alignCamera)
         {
@@ -35,9 +40,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		{
 			try
 			{
-                bool started = _start(dest, alignCamera);
-				_cancelPending |= started;
-				return started;
+                return coordinator.StartVNav(this, manual, () => _start(dest, alignCamera));
 			}
 			catch
 			{
@@ -55,14 +58,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 
 		internal void CancelAll(bool cancelPathfinding)
 		{
-			if (!_cancelPending)
-				return;
-
-			// A pending SimpleMove could start following its route after Path.Stop.
-			if (cancelPathfinding && _pathfindInProgress())
-                _cancelPathfinding();
-            _stop();
-			_cancelPending = false;
+            coordinator.CancelVNav(this);
 		}
 
 		public void Dispose()

@@ -1,5 +1,6 @@
 using System.Numerics;
 using DeepDungeon.Fsd.Dalamud.Utilities;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using MasterPlayer.MechanicRuntime;
 
 namespace DeepDungeon.Fsd.Dalamud.Coord;
@@ -31,6 +32,8 @@ public static class NativeNavigationOutput
 {
     public static unsafe void Apply(DirectMovementController controller, NavigationCommand command, Vector3 position)
     {
+        if (PromeRadarMovementGate.IsBlocked) { controller.Release(); return; }
+        if (!MovementCoordinator.Shared.TryAcquireDirect(controller)) { controller.Release(); return; }
         if (command.Correction is { } correction && Service.LocalPlayer is { } player)
         {
             // The follower owns one correction at a walking endpoint. Preserve observed height.

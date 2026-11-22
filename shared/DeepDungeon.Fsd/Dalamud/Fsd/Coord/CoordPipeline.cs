@@ -360,7 +360,7 @@ internal sealed class CoordPipeline
         _lastMasked.Clear();
         _lastDt = 0f;
         _lastTickUtc = DateTime.MinValue;
-        if (active) _objectiveOp?.OnSuspended();
+        if (active) _objectiveOp?.OnSuspended(now);
         else _objectiveOp?.OnResumed(now);
     }
 

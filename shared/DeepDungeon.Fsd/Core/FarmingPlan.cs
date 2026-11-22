@@ -1,6 +1,6 @@
 namespace DeepDungeon.Fsd.Core;
 
-public enum FarmingMode { Hoard, Aetherpool, HoardDiscovery, DeepProgression }
+public enum FarmingMode { Hoard, Aetherpool, HoardDiscovery, DeepProgression, FreeExploration }
 public enum SaveUse { Create, Prepared }
 
 /// <summary>Validated, immutable intent shared by UI, API and the runtime.</summary>
@@ -13,6 +13,7 @@ public sealed record FarmingPlan(
         FarmingMode.Hoard => "挖寶藏",
         FarmingMode.Aetherpool => "強化／陶片",
         FarmingMode.HoardDiscovery => "寶藏發現成就",
+        FarmingMode.FreeExploration => "自由探索",
         _ => "死靈術士"
     };
     public uint DungeonId { get; init; } = 4;
@@ -27,11 +28,19 @@ public sealed record FarmingPlan(
     public bool AttachCurrentDuty { get; init; }
     public int? ProgressionSaveSlot { get; init; }
     public bool UsesSelectedProgressionSave => Mode == FarmingMode.DeepProgression && ProgressionSaveSlot is 0 or 1;
-    public bool ContinuesAttachedProgression => AttachCurrentDuty && Mode == FarmingMode.DeepProgression;
+    public bool ClimbsToSummit => Mode is FarmingMode.DeepProgression or FarmingMode.FreeExploration;
+    public bool ContinuesAttachedProgression => AttachCurrentDuty && ClimbsToSummit;
     public bool StopsForTerminalReview => Mode == FarmingMode.DeepProgression && StopAfterFloor == MaxFloor;
     public bool ReusesSave => Mode is FarmingMode.Aetherpool or FarmingMode.HoardDiscovery;
     public bool ShowsDetailedMap => Mode == FarmingMode.Hoard && BandedEnabled;
-    public string CycleUnit => Mode == FarmingMode.DeepProgression ? "登頂次數" : Mode == FarmingMode.Hoard ? "挖寶輪數" : "採集輪數";
+    public string CycleUnit => Mode switch
+    {
+        FarmingMode.DeepProgression or FarmingMode.FreeExploration => "登頂次數",
+        FarmingMode.Hoard => "挖寶輪數",
+        _ => "採集輪數"
+    };
+
+    public static bool IsExplorationStartFloor(int floor) => floor is 1 or 21 or 31 or 51 or 71;
 
     public static bool TryCreate(FarmingMode mode, SaveUse saveUse, int startFloor,
         int cycles, bool infinite, bool hoard, bool gold, bool silver, bool bronze,
@@ -53,6 +62,8 @@ public sealed record FarmingPlan(
                 ? "此模式的寶藏／寶箱選項不相容。"
             : mode == FarmingMode.DeepProgression && (saveUse != SaveUse.Create || !validProgressionStart)
                 ? "深層攻略起點與地宮設定不符。"
+            : mode == FarmingMode.FreeExploration && (saveUse != SaveUse.Create || !IsExplorationStartFloor(startFloor))
+                ? "自由探索須使用空槽新建朝聖交錯路存檔，起點為 1、21、31、51 或 71 層。"
             : mode == FarmingMode.Hoard && saveUse == SaveUse.Create && startFloor is not (21 or 31)
                 ? "目前固定層段挖寶支援 PT 21–30、31–40。"
             : string.Empty;

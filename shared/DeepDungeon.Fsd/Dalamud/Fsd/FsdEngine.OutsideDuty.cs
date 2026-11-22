@@ -54,6 +54,13 @@ namespace DeepDungeon.Fsd.Dalamud
             try
             {
                 _executionLease.Acquire();
+                ClearPendingPassageFollowup();
+                manualNavigator.CancelAll();
+                Coord.NavDebug.StopAuto("FSD starting");
+                Coord.NavDebug.StopGoto("FSD starting");
+                Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(true, false);
+                Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect();
+                Runtime.Navigation.MovementCoordinator.Shared.QuiesceVNav();
                 _ddHost ??= new RunHost(
                     _configuration,
                     _dutyState,
@@ -73,6 +80,8 @@ namespace DeepDungeon.Fsd.Dalamud
             }
             catch (Exception ex)
             {
+                try { Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(_ddHost?.FsdActive == true, false); }
+                catch (Exception cleanupError) { RecordDiagnosticFailure("fsd-start-rollback-movement", cleanupError); }
                 _detailedMapCatalogManager.ReleaseRunSnapshot();
                 if (_executionLease.IsHeld)
                     _executionLease.Release();
@@ -89,6 +98,8 @@ namespace DeepDungeon.Fsd.Dalamud
             }
 
             error = _farmingError ?? "Deep Dungeon FSD did not start.";
+            try { Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(false, false); }
+            catch (Exception cleanupError) { RecordDiagnosticFailure("fsd-start-rejected-movement", cleanupError); }
             _detailedMapCatalogManager.ReleaseRunSnapshot();
             if (_executionLease.IsHeld)
                 _executionLease.Release();

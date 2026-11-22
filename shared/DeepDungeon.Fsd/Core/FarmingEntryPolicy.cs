@@ -36,6 +36,7 @@ public static class FarmingEntryPolicy
 
         return preferredMode switch
         {
+            FarmingMode.FreeExploration => FarmingMode.FreeExploration,
             FarmingMode.Hoard when entryFloor is 21 or 31 => FarmingMode.Hoard,
             FarmingMode.Aetherpool or FarmingMode.HoardDiscovery when entryFloor <= 21 => preferredMode,
             _ => FarmingMode.DeepProgression

@@ -77,7 +77,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
         public NavigationState Navigate(Vector3 dest, Vector3 playerPos, NavigationRange range, double retryIntervalSeconds = 1.0)
         {
 			var now = _clock();
-				if (_shouldWaitForCast())
+				if (PromeRadarMovementGate.IsBlocked || _shouldWaitForCast())
 				{
 					if (!waitingForCast)
 					{
@@ -221,6 +221,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
 		/// Cancel current navigation and reset state
 		/// </summary>
 		public void Cancel() => Cancel(cancelPathfinding: true);
+
+        internal void YieldMovement()
+        {
+            // Handoff acknowledgement must not hide a failed cancellation.
+            _navigator.CancelAll();
+            waitingForCast = false;
+            Reset();
+            _initialDispatchIssued = false;
+        }
 
 		internal void Cancel(bool cancelPathfinding)
 		{

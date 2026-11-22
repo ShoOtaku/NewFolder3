@@ -34,6 +34,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
         private readonly FsdRotationController _rotationControl;
         private readonly Runtime.Navigation.FsdCameraController _camera = new();
+        private readonly Runtime.Navigation.NavigatorVNavAdapter manualNavigator = new(manual: true);
         private readonly FsdHoardStatistics _hoardStatistics;
         
 		private RunHost? _ddHost = null;
@@ -178,6 +179,9 @@ namespace DeepDungeon.Fsd.Dalamud
 
         private void OnTerritoryChanged(uint territoryId)
         {
+            ClearPendingPassageFollowup();
+            try { manualNavigator.CancelAll(); }
+            catch (Exception error) { RecordDiagnosticFailure("manual-navigation-territory-cleanup", error); }
             Map.FloorMap.Reset();
             try
             {
@@ -281,6 +285,39 @@ namespace DeepDungeon.Fsd.Dalamud
         }
 
         internal void SuspendBossMovement() => _ddHost?.FloorController.SuspendBossMovement();
+        internal void YieldToPromeRadar()
+        {
+            ClearPendingPassageFollowup();
+            Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect();
+            try { _ddHost?.FloorController.YieldToPromeRadar(); }
+            finally { Runtime.Navigation.MovementCoordinator.Shared.QuiesceVNav(); }
+        }
+
+        private void UpdateMovementOwnership()
+        {
+            if (IsRunActive)
+            {
+                ClearPendingPassageFollowup();
+                manualNavigator.CancelAll();
+                Coord.NavDebug.StopAuto("FSD owns movement");
+                Coord.NavDebug.StopGoto("FSD owns movement");
+            }
+            Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(IsRunActive,
+                _currentDeepDungeonState.IsInDuty && !_currentDeepDungeonState.IsTransitioning &&
+                _currentDeepDungeonState.FloorKind == DeepDungeonFloorKind.Mob &&
+                _ddHost?.FloorController.OwnsDirectFloorMovement == true);
+        }
+
+        private bool TryManualNavigation(System.Numerics.Vector3 destination, bool fly)
+        {
+            if (IsRunActive || !Runtime.Navigation.MovementCoordinator.Shared.CanStartManual)
+            {
+                ClearPendingPassageFollowup();
+                Service.Log.Warning("[FSD.Movement] Manual navigation rejected while FSD or MP owns movement.");
+                return false;
+            }
+            return manualNavigator.PathfindAndMoveTo(destination, fly);
+        }
 
         public void Update(IFramework framework)
         {
@@ -323,9 +360,11 @@ namespace DeepDungeon.Fsd.Dalamud
             if (dutyStateOk && _currentInDeepDungeon && _dutyState?.IsTransitioning == false)
                 Map.LiveTerrainCapture.Observe();
             _stateObserver?.Invoke(_currentDeepDungeonState);
+            UpdateMovementOwnership();
             // Tick the host to allow entry flows outside duty (FSD mode)
             UpdateCompanionControls();
             _ddHost?.Update(framework);
+            UpdateMovementOwnership();
             var now = DateTime.UtcNow;
             _hoardStatistics.Update(now);
             _camera.Update(_ddHost?.FsdActive == true && !Service.Condition[ConditionFlag.InCombat],
@@ -524,6 +563,8 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public void Dispose()
         {
+            ClearPendingPassageFollowup();
+            manualNavigator.Dispose();
             Map.LiveTerrainCapture.Dispose();
             _rotationControl.Reset();
             Service.ClientState.TerritoryChanged -= OnTerritoryChanged;
@@ -534,6 +575,9 @@ namespace DeepDungeon.Fsd.Dalamud
             
             try { _ddHost?.Dispose(); } catch { }
             _ddHost = null;
+            try { Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(false, false); }
+            catch (Exception cleanupError) { RecordDiagnosticFailure("fsd-dispose-movement", cleanupError); }
+            finally { Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect(); }
             _hoardStatistics.Update(DateTime.UtcNow, flush: true);
             try { _logMessageSource.Dispose(); } catch { }
             StopBridgeLeaveDutySession();

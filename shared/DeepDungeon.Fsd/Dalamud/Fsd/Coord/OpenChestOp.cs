@@ -16,6 +16,7 @@ internal sealed class OpenChestOp : FloorOperation
     private ChestTargetVerb? _arrived;
     private DateTime _preWaitSince, _openWaitSince, _awaySince, _lastFailure, _overcapWaitSince;
     private float _approachSeconds;
+    private DateTime suspendedAt;
 
     internal OpenChestOp(RoomWaypoint waypoint, SiteWorkToken token = default, int maxAttempts = 6)
         : base(FloorObjectiveKind.OpenVisibleBandedChest, OpPriority, maxAttempts)
@@ -34,6 +35,24 @@ internal sealed class OpenChestOp : FloorOperation
 
     internal override void OnNavArrived() => _arrived = Claim.Verb as ChestTargetVerb?;
     internal override void OnPreempted() => _arrived = null;
+    internal override void OnSuspended() => OnSuspended(DateTime.UtcNow);
+    internal override void OnSuspended(DateTime now)
+    {
+        base.OnSuspended();
+        Claim = MoveClaim.None;
+        if (suspendedAt == default) suspendedAt = now;
+    }
+
+    internal override void OnResumed(DateTime now)
+    {
+        if (suspendedAt == default) return;
+        var paused = now > suspendedAt ? now - suspendedAt : TimeSpan.Zero;
+        if (_preWaitSince != default) _preWaitSince += paused;
+        if (_openWaitSince != default) _openWaitSince += paused;
+        if (_awaySince != default) _awaySince += paused;
+        if (_overcapWaitSince != default) _overcapWaitSince += paused;
+        suspendedAt = default;
+    }
     internal override void OnNavFailed(DateTime now)
     {
         if (Claim.Verb is GoToVerb)
@@ -57,17 +76,18 @@ internal sealed class OpenChestOp : FloorOperation
         var arrived = _arrived;
         _arrived = null;
         Claim = MoveClaim.None;
+        if (native.IsChestAccepted(_attempt, facts.Evidence, out _))
+        {
+            Failure = null;
+            return OpStatus.Succeeded;
+        }
+        if (suspendedAt != default) return OpStatus.Running;
         // Item-channel waiting is not time spent waiting for the chest's
         // native reply. Keep that distinct from ordinary chest interaction.
         if (_overcapWaitSince != default)
         {
             if (_openWaitSince != default) _openWaitSince += now - _overcapWaitSince;
             _overcapWaitSince = now;
-        }
-        if (native.IsChestAccepted(_attempt, facts.Evidence, out _))
-        {
-            Failure = null;
-            return OpStatus.Succeeded;
         }
         if (Failure.HasValue) return OpStatus.Failed;
         if (facts.PlayerDead || authority.MaskedDt > 0) return OpStatus.Running;

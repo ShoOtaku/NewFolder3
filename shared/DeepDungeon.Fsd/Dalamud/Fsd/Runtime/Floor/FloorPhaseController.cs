@@ -78,6 +78,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
         internal bool UsesEncounterCoordination =>
             _floorRuntime is { IsDisposed: false, Boss.UsesSpinStrategy: false, UsesEncounterCoordination: true };
         internal bool BossRequestsNorthCamera => _floorRuntime?.Boss?.RequestsNorthCamera == true;
+        internal bool OwnsDirectFloorMovement => _floorRuntime is { IsDisposed: false, UsesSiteCoordination: true };
         internal object? BossMovementSnapshot => _floorRuntime is { Kind: FloorRuntimeKind.Boss, IsDisposed: false } runtime
             ? new { strategy = runtime.Boss.MovementStrategyName, running = runtime.Boss.MovementStarted,
                 northCamera = runtime.Boss.RequestsNorthCamera }
@@ -98,7 +99,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
 			_floorRuntime.Objectives.ObjectiveDecision.Channels.Transition == CommandChannelPermission.PrimaryObjective;
 		public bool AllowsChestSidecarInteraction =>
-            !yieldingToPromeRadar && !waitingForCast && _floorRuntime?.Objectives.HasObjectiveDecision == true &&
+            !PromeRadarMovementGate.IsBlocked && !yieldingToPromeRadar && !waitingForCast && _floorRuntime?.Objectives.HasObjectiveDecision == true &&
 			_floorRuntime.Objectives.ObjectiveDecision.Channels.Interaction != CommandChannelPermission.Blocked;
 
 		public FloorPhaseController(
@@ -197,6 +198,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			Service.Log.Info("[FloorPhase] Controller initialized");
 			Service.Log.Info($"[FloorPhase] DD run recorder -> {_runRecorder.FilePath}");
 		}
+
+        internal void YieldToPromeRadar()
+        {
+            if (_floorRuntime is { Kind: FloorRuntimeKind.Normal } runtime && !yieldingToPromeRadar)
+            {
+                if (!waitingForCast) runtime.SetExternalMovement(true);
+                yieldingToPromeRadar = true;
+                RecordReplayEvent("mp-normal-floor-movement", new { floor = runtime.Floor, mpOwnsMovement = true, source = "synchronous-handoff" });
+            }
+            _navHelper?.YieldMovement();
+        }
 
 		public unsafe void Update(IFramework _)
 		{
@@ -336,8 +348,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
                 // Keep MP smart movement on at every floor. Only its active
                 // dodge input preempts FSD travel; observation and combat remain live.
-                bool mpOwnsMovement = activeRuntime.Kind == FloorRuntimeKind.Normal &&
-                    _ctx.PromeRadarMovement?.ReadState()?.OwnsDodgeMovement(Service.ClientState.TerritoryType, DateTime.UtcNow) == true;
+                bool mpOwnsMovement = activeRuntime.Kind == FloorRuntimeKind.Normal && PromeRadarMovementGate.IsBlocked;
                 bool castWait = !mpOwnsMovement && CastMovementGuard.ShouldWait();
                 activeRuntime.Boss.ObservePromeRadarApproachBoundary(castWait);
                 if ((mpOwnsMovement || castWait) != (yieldingToPromeRadar || waitingForCast))
@@ -871,6 +882,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				runtime.Items.CancelPendingIntuitionAttempt(pendingFloorItemUse);
 			runtime.Dispose();
 			_floorRuntime = null;
+			yieldingToPromeRadar = false;
+			waitingForCast = false;
 			_phase = FloorPhase.FloorSetup;
 			_chaseHelper.Reset();
 			_floorRuntime?.ResetPatrolPlan();
@@ -1383,7 +1396,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
         public void TickInteractionChannel(IFramework framework)
         {
-            if (!yieldingToPromeRadar && !waitingForCast) _floorRuntime?.TickInteractionChannel(framework);
+            if (!PromeRadarMovementGate.IsBlocked && !yieldingToPromeRadar && !waitingForCast) _floorRuntime?.TickInteractionChannel(framework);
         }
         private void RequestPlanRefresh(string reason) => _floorRuntime?.RequestPlanRefresh(reason);
         private bool HandleNoHoardEvidenceInvalidated(string reason) => _floorRuntime?.HandleNoHoardEvidenceInvalidated(reason) == true;

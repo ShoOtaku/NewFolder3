@@ -12,6 +12,8 @@ public sealed record PromeRadarMovementState
     public bool Pt30ScriptReady { get; init; }
     public string? Pt30ScriptVersion { get; init; }
     public string? Pt30State { get; init; }
+    public bool Pt99TargetControlActive { get; init; }
+    public ulong Pt99TargetId { get; init; }
     public bool CanMove { get; init; }
     public bool HasMovementControl { get; init; }
     public bool ReplayActive { get; init; }

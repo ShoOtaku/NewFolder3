@@ -5,7 +5,7 @@ public static class MobPullPolicy
 {
     public static bool CanInitiate(FarmingMode? mode, uint dungeonId, int floor, uint nameId)
     {
-        if (mode != FarmingMode.DeepProgression) return true;
+        if (mode is not (FarmingMode.DeepProgression or FarmingMode.FreeExploration)) return true;
         return dungeonId switch
         {
             1 => !IsPotdHighRisk(floor, nameId),

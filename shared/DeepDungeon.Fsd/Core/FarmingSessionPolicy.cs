@@ -32,7 +32,7 @@ public static class FarmingSessionPolicy
                 result.HarvestCompleted ? string.Empty : "採集未正常收尾，未計完成次數。");
         if (!result.DutyCompleted)
             return new(false, result.EntryFloor, false, false, "未觀測到通關或敗北；保留存檔，停止接續。");
-        if (plan.Mode == FarmingMode.DeepProgression)
+        if (plan.ClimbsToSummit)
         {
             int terminalEntry = plan.DungeonId == 1 ? 191 : 91;
             if (result.EntryFloor < 1 || result.EntryFloor > terminalEntry || result.EntryFloor % 10 != 1)

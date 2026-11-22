@@ -7,6 +7,28 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
     // Lightweight VNAV IPC helper wrapper
     public static class VNav
     {
+        internal static (bool Running, bool Pending) ReadMovementState()
+        {
+            var running = TryReadMovementFlag("Path.IsRunning");
+            var pending = TryReadMovementFlag("SimpleMove.PathfindInProgress");
+            // An unloaded provider cannot own movement. A partially available or
+            // throwing provider is unknown, never proof of a completed handoff.
+            if (!running.HasValue && !pending.HasValue) return (false, false);
+            if (!running.HasValue || !pending.HasValue)
+                throw new InvalidOperationException("VNav movement state IPC is incomplete.");
+            return (running.Value, pending.Value);
+        }
+
+        private static bool? TryReadMovementFlag(string method)
+        {
+            foreach (var prefix in new[] { "vnavmesh.", "vnav." })
+            {
+                var query = Service.PluginInterface.GetIpcSubscriber<bool>(prefix + method);
+                if (query.HasFunction) return query.InvokeFunc();
+            }
+            return null;
+        }
+
 		private static ICallGateSubscriber<T1, T2, object>? TryGetActionAny<T1, T2>(params string[] names)
 		{
 			foreach (var n in names)
@@ -131,6 +153,7 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
             // Calls: vnavmesh.SimpleMove.PathfindAndMoveTo(Vector3 dest, bool fly)
             public static bool PathfindAndMoveTo(Vector3 dest, bool fly = false)
             {
+                if (Runtime.Navigation.PromeRadarMovementGate.IsBlocked) return false;
                 try
                 {
 					// Prefer function variant returning a bool per vnavmesh API
@@ -182,7 +205,7 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
         public static class Nav
         {
             // Calls: vnavmesh.Nav.PathfindCancelAll()
-            public static void PathfindCancelAll()
+            public static void PathfindCancelAll(bool throwOnFailure = false)
             {
                 try
                 {
@@ -193,11 +216,13 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
                     }
                     else
                     {
+						if (throwOnFailure) throw new InvalidOperationException("VNav pathfinding cancellation IPC is unavailable.");
 						Service.Log.Debug("[vnav] Nav.PathfindCancelAll not available (IPC not registered).");
                     }
                 }
                 catch (Exception ex)
                 {
+					if (throwOnFailure) throw;
 					Service.Log.Debug($"[vnav] Nav.PathfindCancelAll failed: {ex}");
                 }
             }
@@ -209,7 +234,7 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
             /// Stops the current path following without forcing a navmesh reload.
             /// Falls back to Nav.PathfindCancelAll only if the stop IPC is unavailable.
             /// </summary>
-            public static void Stop()
+            public static void Stop(bool throwOnFailure = false)
             {
                 try
                 {
@@ -228,10 +253,11 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
                     }
 
                     // No direct stop IPC exposed - fall back to the heavy cancel-all.
-                    Nav.PathfindCancelAll();
+                    Nav.PathfindCancelAll(throwOnFailure);
                 }
                 catch (Exception ex)
                 {
+                    if (throwOnFailure) throw;
                     Service.Log.Debug($"[vnav] Path.Stop failed: {ex}");
                 }
             }

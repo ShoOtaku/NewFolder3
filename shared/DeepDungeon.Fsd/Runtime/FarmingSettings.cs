@@ -6,6 +6,7 @@ public sealed class FarmingSettings
 {
     public uint DungeonId { get; set; } = 4;
     public FarmingMode Mode { get; set; }
+    public int ExplorationStartFloor { get; set; } = 71;
     public Dictionary<string, FarmingPreferences> Preferences { get; set; } = new();
 
     public FarmingPreferences GetPreferences(FsdSettings legacy, FarmingMode? modeOverride = null)
@@ -16,14 +17,15 @@ public sealed class FarmingSettings
             FarmingMode.Hoard => "Hoard:Create",
             FarmingMode.Aetherpool => "Aetherpool:Prepared",
             FarmingMode.HoardDiscovery => "HoardDiscovery:Prepared",
+            FarmingMode.FreeExploration => "FreeExploration:Create",
             _ => "DeepProgression:Create"
         };
         if (!Preferences.TryGetValue(key, out var value))
         {
             value = new FarmingPreferences
             {
-                OpenGold = mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenGoldChest,
-                OpenSilver = mode == FarmingMode.Aetherpool || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenSilverChest,
+                OpenGold = mode == FarmingMode.FreeExploration || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenGoldChest,
+                OpenSilver = mode is FarmingMode.Aetherpool or FarmingMode.FreeExploration || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenSilverChest,
                 OpenBronze = mode == FarmingMode.Aetherpool || mode != FarmingMode.HoardDiscovery && legacy.NecromancerAutoOpenBronzeChest,
                 Cycles = legacy.NecromancerFsdLoopCount,
                 Infinite = legacy.NecromancerFsdLoopInfinite

@@ -142,6 +142,7 @@ foreach (int selectedSlot in new[] { 0, 1 })
 }
 Check(!SelectedProgressionSavePolicy.TrySelect([], -1, 100, out _, out _) &&
     !SelectedProgressionSavePolicy.TrySelect([], 2, 100, out _, out _), "Only the two real save slots can be selected.");
+checks += FreeExplorationTests.Run();
 Console.WriteLine($"Progression continuation and selected-slot checks passed: {checks}.");
 
 void Check(bool condition, string message)

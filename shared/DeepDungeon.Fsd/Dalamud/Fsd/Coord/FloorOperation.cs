@@ -223,6 +223,7 @@ internal abstract class FloorOperation
     /// the movement claim but keeps all execution state; rebinding the
     /// same token resumes THIS attempt, never a fresh one.</summary>
     internal virtual void OnSuspended() => OnPreempted();
+    internal virtual void OnSuspended(DateTime now) => OnSuspended();
     /// <summary>Rebound after a suspension — ops may refresh transient
     /// state (last-tick timestamps), never reset their work clocks.</summary>
     internal virtual void OnResumed(DateTime now) { }
