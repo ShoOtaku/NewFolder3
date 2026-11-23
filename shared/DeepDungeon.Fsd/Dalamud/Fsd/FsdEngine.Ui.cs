@@ -317,8 +317,27 @@ namespace DeepDungeon.Fsd.Dalamud
 
 					ImGui.Spacing();
 					ImGui.Indent();
-					ImGui.BeginDisabled(fsdRunning || inDD || _bridgeLeaveDutyContext != null || _bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
-					if (ImGui.Button(ProgressionPauseLocked ? "繼續##fsf_start_top" : "啟動 FSD##fsf_start_top"))
+					bool attachmentReady = true;
+					if (inDD && !fsdRunning)
+					{
+						attachmentReady = TryGetCurrentDutyForAttachment(out var attachmentDungeon, out var attachmentDuty,
+							out var attachmentFloor, out var attachmentError);
+						if (attachmentReady)
+						{
+							var attachmentMode = FarmingEntryPolicy.ResolveAttachmentMode(attachmentDungeon.DungeonId, attachmentFloor, _configuration.Farming.Mode);
+							ImGui.TextWrapped($"接管 {attachmentDungeon.Name} 第 {attachmentDuty.Floor} 層：{FarmingModeLabels[(int)attachmentMode]}");
+						}
+						else
+							ImGui.TextWrapped(attachmentError);
+					}
+					ImGui.BeginDisabled(fsdRunning || !attachmentReady || (inDD && ProgressionPauseLocked) ||
+						_bridgeLeaveDutyContext != null || _bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
+					string startLabel = "啟動 FSD##fsf_start_top";
+					if (ProgressionPauseLocked)
+						startLabel = "繼續##fsf_start_top";
+					else if (inDD)
+						startLabel = "接管目前副本##fsf_start_top";
+					if (ImGui.Button(startLabel))
 					{
 						try
 						{

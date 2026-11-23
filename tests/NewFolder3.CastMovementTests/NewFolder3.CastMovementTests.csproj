@@ -5,10 +5,13 @@
     <TargetFramework>net10.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Platforms>x64</Platforms>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="Dalamud"><HintPath>$(DalamudLibPath)/Dalamud.dll</HintPath></Reference>
+    <Reference Include="FFXIVClientStructs"><HintPath>$(DalamudLibPath)/FFXIVClientStructs.dll</HintPath></Reference>
+    <Reference Include="InteropGenerator.Runtime"><HintPath>$(DalamudLibPath)/InteropGenerator.Runtime.dll</HintPath></Reference>
     <ProjectReference Include="../../shared/DeepDungeon.Fsd/Dalamud/DeepDungeon.Fsd.Dalamud.csproj" />
   </ItemGroup>
 </Project>

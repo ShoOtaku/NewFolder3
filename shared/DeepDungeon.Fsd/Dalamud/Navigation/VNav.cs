@@ -7,16 +7,36 @@ namespace DeepDungeon.Fsd.Dalamud.moveHelper
     // Lightweight VNAV IPC helper wrapper
     public static class VNav
     {
-        internal static (bool Running, bool Pending) ReadMovementState()
+        internal static (bool Available, bool Running, bool Pending) ReadMovementState()
         {
             var running = TryReadMovementFlag("Path.IsRunning");
             var pending = TryReadMovementFlag("SimpleMove.PathfindInProgress");
             // An unloaded provider cannot own movement. A partially available or
             // throwing provider is unknown, never proof of a completed handoff.
-            if (!running.HasValue && !pending.HasValue) return (false, false);
+            if (!running.HasValue && !pending.HasValue && !HasMovementEndpoints())
+                return (false, false, false);
             if (!running.HasValue || !pending.HasValue)
                 throw new InvalidOperationException("VNav movement state IPC is incomplete.");
-            return (running.Value, pending.Value);
+            return (true, running.Value, pending.Value);
+        }
+
+        private static bool HasMovementEndpoints()
+        {
+            // Missing state queries alone can be a partial registration/reload.
+            foreach (var prefix in new[] { "vnavmesh.", "vnav." })
+            {
+                if (Service.PluginInterface.GetIpcSubscriber<object>(prefix + "Nav.PathfindCancelAll").HasAction ||
+                    Service.PluginInterface.GetIpcSubscriber<object>(prefix + "Path.Stop").HasAction ||
+                    Service.PluginInterface.GetIpcSubscriber<bool>(prefix + "Nav.IsReady").HasFunction)
+                    return true;
+                foreach (var method in new[] { "SimpleMove.PathfindAndMoveTo", "Nav.PathfindAndMoveTo" })
+                {
+                    if (Service.PluginInterface.GetIpcSubscriber<Vector3, bool, bool>(prefix + method).HasFunction ||
+                        Service.PluginInterface.GetIpcSubscriber<Vector3, bool, object>(prefix + method).HasAction)
+                        return true;
+                }
+            }
+            return false;
         }
 
         private static bool? TryReadMovementFlag(string method)

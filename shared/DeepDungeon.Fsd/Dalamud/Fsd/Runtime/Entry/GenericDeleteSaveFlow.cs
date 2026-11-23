@@ -7,6 +7,8 @@ using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
+using Dalamud.Game.Addon.Lifecycle;
+using Dalamud.Game.Addon.Lifecycle.AddonArgTypes;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 {
@@ -18,9 +20,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 	{
             public void Dispose()
             {
-                _npcNavHelper?.Cancel();
-                _npcNavHelper = null;
-                _ctx = null;
+                try { StopConfirmationObservation(); }
+                finally
+                {
+                    try { _npcNavHelper?.Cancel(); }
+                    finally { _npcNavHelper = null; _ctx = null; }
+                }
             }
 		private EntranceWindowCleanup _cleanup = new();
 		private RunContext? _ctx;
@@ -39,6 +44,13 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		private DateTime _lastMenuFire = DateTime.MinValue;
 		private bool _firstProbeDone;
 		private bool _deleteSlotClickSent;
+		private readonly DeleteSaveConfirmationReceipt _confirmation = new();
+		private IAddonLifecycle? _confirmationLifecycle;
+		private static readonly AddonEvent[] ConfirmationChanges =
+		[
+			AddonEvent.PreSetup, AddonEvent.PreRefresh, AddonEvent.PreOpen, AddonEvent.PreShow,
+			AddonEvent.PreClose, AddonEvent.PreHide, AddonEvent.PreFinalize
+		];
 		private long? _deleteSubmittedAt;
 		private bool _targetSlotObservedEmptyAfterDelete;
 		private bool _freshListRequested;
@@ -59,6 +71,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 
 		public void Prepare(RunContext context)
 		{
+			StopConfirmationObservation();
 			_ctx = context;
 			_cleanup = new();
 			_cooldowns.Clear();
@@ -84,13 +97,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		public unsafe bool Update(IFramework framework)
 		{
 			if (_ctx == null) return false;
-			if (DutyState.IsClientTransitioning || _ctx.Duty.IsInDuty) return false;
+			if (DutyState.IsClientTransitioning || _ctx.Duty.IsInDuty)
+			{
+				_confirmation.Invalidate();
+				return false;
+			}
 			if (DateTime.Now < _nextTry) return false;
 
 			if (!_cleanup.Ready(_ctx)) return false;
 
 			// Snapshot addons
-			var hasYesno = DeepDungeonUi.TryGetSelectYesNo(out var yesno);
+			var hasYesno = DeepDungeonUi.TryGetSelectYesNo(out var yesno) && yesno->IsVisible;
 			var hasSave = DeepDungeonUi.TryGetAddon("DeepDungeonSaveData", out var save);
 			var hasMenu = DeepDungeonUi.TryGetAddon("DeepDungeonMenu", out var menu);
 
@@ -120,9 +137,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				}
 				if (!DeepDungeonUi.IsDeleteSaveConfirmationPrompt(yesno, out var promptError))
 				{
-					SetStatus($"{_dungeon.Name} Del: waiting for unrelated confirmation ({promptError})");
-					return false;
+					_confirmation.Invalidate();
+					return Fail($"刪除確認內容已變更；停止並保留存檔。({promptError})");
 				}
+				if (!DeepDungeonUi.TryGetConfirmationPromptText(yesno, out var prompt, out _) ||
+					!DeepDungeonUi.TryReadSaveSlots(out var confirmationSlots, out _) ||
+					confirmationSlots.Count(slot => slot.Index == _slotIndex) != 1)
+					return Fail("無法重新核驗刪除目標與確認視窗；停止並保留存檔。");
+				string? confirmationError = _validateSource?.Invoke(confirmationSlots);
+				if (!string.IsNullOrEmpty(confirmationError)) return Fail(confirmationError);
+				if (!_confirmation.TryConsume(confirmationSlots.Single(slot => slot.Index == _slotIndex), (nint)yesno, prompt))
+					return Fail("原刪除確認已取消、重建或目標已變更；停止，不確認其他存檔。");
 
 				SetStatus($"{_dungeon.Name} Del: confirming delete");
 				if (!DeepDungeonUi.Fire(yesno, 0))
@@ -156,7 +181,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 					return false;
 				}
-				if (!DeepDungeonUi.TryReadSaveSlots(out var slots, out _) || !slots.Any(slot => slot.Index == _slotIndex))
+				if (!DeepDungeonUi.TryReadSaveSlots(out var slots, out _) || slots.Count(slot => slot.Index == _slotIndex) != 1)
 				{
 					if (!_targetSlotObservedEmptyAfterDelete && DeleteVerificationExpired("save"))
 						return Fail($"已送出刪除確認，但無法從重新開啟的列表讀取存檔 {_slotIndex + 1}。刪除結果未確認。");
@@ -178,9 +203,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				}
 				if (_deleteSubmittedAt.HasValue)
 					return Fail($"已送出刪除確認，但重新讀取後存檔 {_slotIndex + 1} 仍非空，無法確認刪除結果。");
+				if (_deleteSlotClickSent && !_confirmation.IsArmed)
+					return Fail("原刪除確認已結束，但目標存檔仍非空；停止，不重新授權刪除。");
 				string? sourceError = _validateSource?.Invoke(slots);
 				if (!string.IsNullOrEmpty(sourceError)) return Fail(sourceError);
 				SetStatus($"{_dungeon.Name} Del: clicking slot {(_slotIndex + 1)}");
+				StartConfirmationObservation();
 				// Use Agent with delete mode parameter
 				if (!DeepDungeonUi.ClickSaveSlotForDelete(_slotIndex))
 				{
@@ -189,6 +217,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					return false;
 				}
 				_deleteSlotClickSent = true;
+				// Only the dialog produced in this synchronous slot request is authorized.
+				// A later identical dialog can belong to another user-selected slot.
+				if (!DeepDungeonUi.TryGetSelectYesNo(out var requestedDialog) || !requestedDialog->IsVisible ||
+					!DeepDungeonUi.IsDeleteSaveConfirmationPrompt(requestedDialog, out _) ||
+					!DeepDungeonUi.TryGetConfirmationPromptText(requestedDialog, out var requestedPrompt, out _))
+					return Fail("刪除請求未產生可核驗的確認視窗；停止並保留存檔。");
+				_confirmation.Arm(slots.Single(slot => slot.Index == _slotIndex), (nint)requestedDialog, requestedPrompt);
+				if (!_confirmation.IsArmed)
+					return Fail("刪除目標缺少可核驗的身份資訊；停止並保留存檔。");
 				SetCooldown("save-slot", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
 				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
@@ -316,6 +353,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				}
 				else
 				{
+						if (key == "yesno") _confirmation.Invalidate();
 					if (_seenSince.ContainsKey(key)) _seenSince.Remove(key);
 				}
 			}
@@ -367,5 +405,31 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				return true;
 			}
 		}
+
+		private void StartConfirmationObservation()
+		{
+			if (_confirmationLifecycle != null) return;
+			_confirmationLifecycle = Service.AddonLifecycle;
+			try
+			{
+				foreach (var change in ConfirmationChanges)
+					_confirmationLifecycle.RegisterListener(change, "SelectYesno", OnConfirmationChanged);
+			}
+			catch
+			{
+				StopConfirmationObservation();
+				throw;
+			}
+		}
+
+		private void StopConfirmationObservation()
+		{
+			_confirmation.Invalidate();
+			var lifecycle = _confirmationLifecycle;
+			_confirmationLifecycle = null;
+			lifecycle?.UnregisterListener(OnConfirmationChanged);
+		}
+
+		private void OnConfirmationChanged(AddonEvent type, AddonArgs args) => _confirmation.Invalidate();
 	}
 }

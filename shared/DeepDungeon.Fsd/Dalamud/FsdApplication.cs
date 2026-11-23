@@ -86,7 +86,8 @@ public sealed partial class FsdApplication : IFsdApplication
             _module = module;
             _module.Initialize();
             CastMovementGuard.Source = _encounters;
-            handoff = new PromeRadarMovementIpc(pluginInterface, module.YieldToPromeRadar);
+            handoff = new PromeRadarMovementIpc(pluginInterface, module.YieldToPromeRadar,
+                () => !module.SuppressPromeRadarControl);
             movementIpc = handoff;
             Service.Log.Info($"[FSD] Host {hostIdentity}/{hostVersion}; engine {FsdEngineIdentity.InformationalVersion}.");
             Service.Log.Info($"[FSD] builds engineMvid={typeof(FsdApplication).Assembly.ManifestModule.ModuleVersionId}; coreMvid={typeof(DeepDungeon.Fsd.Core.NativeTreasureCompletionPlanner).Assembly.ManifestModule.ModuleVersionId}; runtimeMvid={typeof(DeepDungeon.Fsd.Runtime.FsdRotationController).Assembly.ManifestModule.ModuleVersionId}; mechanicMvid={typeof(MasterPlayer.MechanicRuntime.EncounterHintPlanner).Assembly.ManifestModule.ModuleVersionId}");

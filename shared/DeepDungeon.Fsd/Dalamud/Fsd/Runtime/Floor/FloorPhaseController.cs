@@ -301,6 +301,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                 if (mpYield || castWait)
                 {
                     _navHelper?.Cancel();
+                    activeRuntime.RefreshObjectiveDecision(dd);
                     DiagnosticGate = castWait ? "waiting-cast" : "prome-radar-dodge";
                     _status = castWait ? "Waiting for cast completion" : "PromeRadar owns movement";
                     return;
@@ -422,13 +423,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			status = string.Empty;
 			var context = _ctx;
+			if (context == null || context.StatusIsError)
+				return false;
 			if (_floorRuntime is { Kind: FloorRuntimeKind.Boss } bossRuntime && !bossRuntime.Boss.AllowsCombatAssist)
 			{
 				context?.CombatAssist.Suspend();
 				status = _status;
 				return false;
 			}
-			if (context == null || context.FarmingPlan?.ReusesSave == true || !AllowsCombatChannel)
+			if (context.FarmingPlan?.ReusesSave == true || !AllowsCombatChannel)
 				return false;
 
 			context.CombatAssist.Tick(

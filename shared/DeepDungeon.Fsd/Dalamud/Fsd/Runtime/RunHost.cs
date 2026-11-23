@@ -425,6 +425,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 			}
 		}
 
+			if (_context.StatusIsError) return;
 			if (assistActive)
 				_floorController.TickCombatChannel(out _);
 

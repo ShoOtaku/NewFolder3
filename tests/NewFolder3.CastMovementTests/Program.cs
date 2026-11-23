@@ -3,6 +3,12 @@ using BossMod;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using MasterPlayer.MechanicRuntime;
 
+if (args.Contains("--mp-floor-policy"))
+{
+    PromeRadarFloorMovementTests.Run();
+    return;
+}
+
 if (args.Contains("--pt99-targeting"))
 {
     Pt99TargetTests.Run();
@@ -14,6 +20,8 @@ if (args.Contains("--movement-ownership"))
     MovementCoordinatorTests.Run();
     PromeRadarMovementTests.Run();
     OutsideDutyNavigationTests.Run();
+    ReviewBoundaryTests.Run();
+    PromeRadarFloorMovementTests.Run();
     return;
 }
 
@@ -142,3 +150,5 @@ Console.WriteLine($"PASS shared approach matrix: {bossFloors} boss floors across
 OutsideDutyNavigationTests.Run();
 PromeRadarMovementTests.Run();
 MovementCoordinatorTests.Run();
+ReviewBoundaryTests.Run();
+PromeRadarFloorMovementTests.Run();

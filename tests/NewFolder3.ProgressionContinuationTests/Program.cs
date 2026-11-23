@@ -128,6 +128,8 @@ foreach (int selectedSlot in new[] { 0, 1 })
 
     var attachedPlan = selectedPlan with { StartFloor = 21, AttachCurrentDuty = true };
     var attachedSession = new FarmingSession(attachedPlan);
+    Check(!attachedPlan.UsesSelectedProgressionSave,
+        "A selected-slot preference must not override the verified source of a borrowed attachment.");
     Check(attachedSession.OwnedSlot == -1 && !attachedSession.AttachmentCompleted,
         "A configured selected slot must not confer ownership during live takeover.");
     var attachedFailure = FarmingSessionPolicy.Decide(attachedPlan, new(21, false, true, false, false));
@@ -148,8 +150,31 @@ Check(OwnedSavePolicy.ValidateForDeletion([candidate], 0, 21, candidate) == null
     "A verified matching source may be cleaned.");
 var createdSession = new FarmingSession(owned with { StartFloor = 21 });
 Check(createdSession.BindCreatedSave(0) && createdSession.CreatedBySession &&
-    OwnedSavePolicy.ValidateForDeletion([candidate], createdSession.OwnedSlot, 21, null, createdSession.CreatedBySession) == null,
-    "A task-created source must remain eligible after its first failure before any saved progress is pinned.");
+    OwnedSavePolicy.ValidateForDeletion([candidate], createdSession.OwnedSlot, 21, null) != null,
+    "Creation provenance alone must not authorize deletion before an identity was pinned.");
+Check(OwnedSavePolicy.ValidateForDeletion([candidate with { Identity = "replacement" }],
+    createdSession.OwnedSlot, 21, null) != null,
+    "A replacement in the created slot must remain protected even at matching progress.");
+Check(!unbound.CreatedBySession && unbound.OwnedSlot == -1 && unbound.CanPersistPause &&
+      unbound.ContinuationSlot == resumed.Index,
+    "A verified borrowed continuation may persist a pause without acquiring deletion ownership.");
+var unknownAttachment = new FarmingSession(progression);
+Check(!unknownAttachment.CanPersistPause && unknownAttachment.ContinuationSlot == null,
+    "Unidentified live attachments must reject a persistent pause before promising a checkpoint.");
+var borrowedCheckpoint = new FarmingSession(progression);
+var pausedBorrowed = candidate with { Index = 1, StartFloor = 31, Progress = "31" };
+borrowedCheckpoint.RestoreCheckpoint(pausedBorrowed, 2, 123, () => null, _ => { });
+Check(borrowedCheckpoint.AttachmentCompleted && borrowedCheckpoint.OwnedSlot == -1 &&
+      borrowedCheckpoint.ContinuationSlot == 1 && !borrowedCheckpoint.CreatedBySession,
+    "Restoring a borrowed checkpoint must skip live takeover without claiming deletion ownership.");
+Check(FarmingEntryPolicy.Decide(new(true, false, 0, 0), 4, borrowedCheckpoint.NextFloor,
+    borrowedCheckpoint.OwnedSlot, progression.AttachCurrentDuty && !borrowedCheckpoint.AttachmentCompleted).Action
+    == FarmingEntryAction.Enter,
+    "A restored borrowed checkpoint must enter from outside instead of demanding the old live duty.");
+Check(borrowedCheckpoint.PrepareSource().Observe([pausedBorrowed], out _, out _),
+    "Restored borrowed continuation must verify the exact checkpoint before entry.");
+Check(!borrowedCheckpoint.PrepareSource().Observe([pausedBorrowed with { Identity = "replacement" }], out _, out _),
+    "Borrowed checkpoint recovery must reject a replacement source.");
 createdSession.ConfirmOwnedSaveDeleted();
 Check(!createdSession.CreatedBySession && createdSession.OwnedSlot == -1,
     "Deletion completion must revoke the old creation provenance.");

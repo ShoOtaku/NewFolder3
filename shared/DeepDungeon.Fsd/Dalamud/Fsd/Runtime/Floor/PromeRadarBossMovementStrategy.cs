@@ -41,7 +41,11 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
         }
     }
 
-    public string? Update(InstanceContentDeepDungeon* dungeon)
+    public string? Update(InstanceContentDeepDungeon* dungeon) => UpdateState(allowApproach: true);
+
+    internal void ObserveMovementPause() => UpdateState(allowApproach: false);
+
+    private string UpdateState(bool allowApproach)
     {
         ObserveCombatStart();
         var now = DateTime.UtcNow;
@@ -77,7 +81,8 @@ internal sealed unsafe class PromeRadarBossMovementStrategy(
                 if (current.CanMove && !combatStarted && !handedOver && !current.Pt30ScriptReady)
                 {
                     startedAtUtc = now;
-                    return floor.Boss.UpdatePromeRadarApproach();
+                    return allowApproach ? floor.Boss.UpdatePromeRadarApproach()
+                        : "Boss floor - cast protected; monitoring PromeRadar readiness";
                 }
                 reason = $"script={current.Pt30ScriptVersion}, ready={current.Pt30ScriptReady}, session={current.FsdSessionActive}, enabled={current.SmartMovementEnabled}, canMove={current.CanMove}, nav={current.NavigationActive}";
             }

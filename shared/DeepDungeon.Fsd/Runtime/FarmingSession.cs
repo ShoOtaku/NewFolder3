@@ -14,6 +14,8 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public int OwnedSlot { get; private set; } = ownedSlot;
     public bool CreatedBySession { get; private set; }
     public bool AttachmentCompleted { get; private set; }
+    public int? ContinuationSlot => OwnedSlot >= 0 ? OwnedSlot : Source.Pinned?.Index;
+    public bool CanPersistPause => ContinuationSlot.HasValue;
     public int Failures { get; private set; }
     public int Discoveries { get; private set; }
     public Func<SaveSlotSnapshot, string?>? PersistPause { get; set; }
@@ -25,7 +27,9 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
         Action<string> rejectResumeSource)
     {
         NextFloor = slot.StartFloor;
-        OwnedSlot = slot.Index;
+        // A resumed borrowed run keeps its source identity without acquiring deletion ownership.
+        OwnedSlot = Plan.AttachCurrentDuty ? -1 : slot.Index;
+        AttachmentCompleted = Plan.ContinuesAttachedProgression;
         Failures = failures;
         Source.PinCheckpoint(slot);
         ConfirmResume = confirmResume;
@@ -54,7 +58,7 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public PreparedSaveBinding PrepareSource()
     {
         Source.ConfigureForEntry(Plan.ReusesSave, Plan.SaveUse == SaveUse.Prepared ? null : NextFloor,
-            OwnedSlot >= 0 ? OwnedSlot : Source.Pinned?.Index, Plan.MaxFloor);
+            ContinuationSlot, Plan.MaxFloor);
         return Source;
     }
 

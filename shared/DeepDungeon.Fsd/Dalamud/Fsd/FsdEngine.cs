@@ -13,6 +13,7 @@ using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using DeepDungeon.Fsd.Dalamud.Map;
 using DeepDungeon.Fsd.Dalamud.Runtime;
 using DeepDungeon.Fsd.Dalamud.Runtime.Entry;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
@@ -290,6 +291,9 @@ namespace DeepDungeon.Fsd.Dalamud
 
         internal void SuspendBossMovement() => _ddHost?.FloorController.SuspendBossMovement();
 
+        private PromeRadarFloorMovement? _promeRadarFloorMovement;
+        internal bool SuppressPromeRadarControl => _promeRadarFloorMovement?.SuppressControl == true;
+
         internal void YieldToPromeRadar()
         {
             ClearPendingPassageFollowup();
@@ -367,7 +371,28 @@ namespace DeepDungeon.Fsd.Dalamud
             UpdateMovementOwnership();
             // Tick the host to allow entry flows outside duty (FSD mode)
             UpdateCompanionControls();
-            _ddHost?.Update(framework);
+            if (IsRunActive && _currentDeepDungeonState.DungeonId is 1 or 2)
+                _promeRadarFloorMovement ??= new(Service.PluginInterface, RecordDiagnosticEvent);
+            bool mpReady;
+            try { mpReady = _promeRadarFloorMovement?.Update(IsRunActive, _currentDeepDungeonState) != false; }
+            catch (Exception error)
+            {
+                _farmingError = error.Message;
+                try { SuspendBossMovement(); }
+                catch (Exception cleanup) { RecordDiagnosticFailure("mp-floor-spin-stop", cleanup); }
+                try { YieldToPromeRadar(); }
+                finally { _ddHost?.StopFsd("mp-floor-movement-failure", new { error = error.ToString() }); }
+                throw;
+            }
+            if (mpReady)
+                _ddHost?.Update(framework);
+            else
+            {
+                SuspendBossMovement();
+                YieldToPromeRadar();
+            }
+            if (!IsRunActive)
+                _promeRadarFloorMovement?.Update(false, _currentDeepDungeonState);
             UpdateMovementOwnership();
             var now = DateTime.UtcNow;
             _hoardStatistics.Update(now);
@@ -567,30 +592,45 @@ namespace DeepDungeon.Fsd.Dalamud
 
         public void Dispose()
         {
-            ClearPendingPassageFollowup();
-            Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(false, false);
-            Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect();
-            manualNavigator.Dispose();
-            _hoardStatistics.Update(DateTime.UtcNow, flush: true);
-            Map.FloorMapSource.Live?.Dispose();
-            _rotationControl.Reset();
-            Service.ClientState.TerritoryChanged -= OnTerritoryChanged;
-            ResetRoomPresentation();
-            _detailedMapCatalogManager.ReleaseRunSnapshot();
-            _detailedMapCatalogManager.Dispose();
-
-            
-            try { _ddHost?.Dispose(); } catch { }
+            Cleanup("passage", ClearPendingPassageFollowup);
+            Cleanup("movement", () => Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(false, false));
+            Cleanup("direct", Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect);
+            // Session release must run even when movement cancellation fails.
+            Cleanup("host", () => _ddHost?.Dispose());
             _ddHost = null;
-            try { _logMessageSource.Dispose(); } catch { }
-            StopBridgeLeaveDutySession();
+            Cleanup("mp-floor-movement", () => _promeRadarFloorMovement?.Dispose());
+            Cleanup("manual-navigation", () => manualNavigator.Dispose());
+            Cleanup("statistics", () => _hoardStatistics.Update(DateTime.UtcNow, flush: true));
+            Cleanup("floor-map", () => Map.FloorMapSource.Live?.Dispose());
+            Cleanup("rotation", () => _rotationControl.Reset());
+            Cleanup("territory", () => Service.ClientState.TerritoryChanged -= OnTerritoryChanged);
+            Cleanup("presentation", ResetRoomPresentation);
+            Cleanup("catalog-snapshot", () => _detailedMapCatalogManager.ReleaseRunSnapshot());
+            Cleanup("catalog", () => _detailedMapCatalogManager.Dispose());
+            Cleanup("log", () => _logMessageSource.Dispose());
+            Cleanup("leave", StopBridgeLeaveDutySession);
             if (_bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null)
-                StopBridgeDeleteSaveSlotSession();
+                Cleanup("delete", StopBridgeDeleteSaveSlotSession);
 
             _dutyState = null;
             _recoveryPotion = null;
             if (_executionLease.IsHeld)
-                _executionLease.Release();
+                Cleanup("lease", _executionLease.Release);
+
+            void Cleanup(string source, Action action)
+            {
+                try { action(); }
+                catch (Exception error)
+                {
+                    try { RecordDiagnosticFailure($"fsd-dispose-{source}", error); }
+                    catch
+                    {
+                        // Diagnostics may already be torn down; cleanup must still continue.
+                        try { Service.Log?.Error($"[FSD.Dispose] {source}: {error}"); }
+                        catch { /* The logger may also be unavailable during unload. */ }
+                    }
+                }
+            }
         }
 
         private static bool DispatchCompanionCommand(string command)

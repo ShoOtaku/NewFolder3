@@ -26,7 +26,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation
             Action cancelPathfinding, Action stop)
         {
             _start = start;
-            coordinator = new(() => (false, pathfindInProgress()), cancelPathfinding, stop,
+            coordinator = new(() => (true, false, pathfindInProgress()), cancelPathfinding, stop,
                 () => { }, () => PromeRadarMovementGate.IsBlocked);
         }
         private static bool StartNative(Vector3 destination, bool alignCamera)

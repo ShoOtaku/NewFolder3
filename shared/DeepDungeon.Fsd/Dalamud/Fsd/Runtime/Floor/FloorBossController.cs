@@ -263,7 +263,10 @@ internal sealed class FloorBossController : IDisposable
 
         strategy.ObserveCombatStart();
         if (waitingForCast)
+        {
             StopPromeRadarApproach();
+            strategy.ObserveMovementPause();
+        }
     }
 
     internal unsafe void UpdateApproach(InstanceContentDeepDungeon* dd)

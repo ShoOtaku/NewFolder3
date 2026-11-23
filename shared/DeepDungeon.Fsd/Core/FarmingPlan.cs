@@ -27,7 +27,8 @@ public sealed record FarmingPlan(
     // Attachment alone confers no deletion ownership; an explicitly selected progression slot may reset on failure.
     public bool AttachCurrentDuty { get; init; }
     public int? ProgressionSaveSlot { get; init; }
-    public bool UsesSelectedProgressionSave => Mode == FarmingMode.DeepProgression && ProgressionSaveSlot is 0 or 1;
+    public bool UsesSelectedProgressionSave => !AttachCurrentDuty &&
+        Mode == FarmingMode.DeepProgression && ProgressionSaveSlot is 0 or 1;
     public bool ClimbsToSummit => Mode is FarmingMode.DeepProgression or FarmingMode.FreeExploration;
     public bool ContinuesAttachedProgression => AttachCurrentDuty && ClimbsToSummit;
     public bool StopsForTerminalReview => Mode == FarmingMode.DeepProgression && StopAfterFloor == MaxFloor;
@@ -175,10 +176,11 @@ public static class PreparedSavePolicy
 public static class OwnedSavePolicy
 {
     public static string? ValidateForDeletion(IReadOnlyList<SaveSlotSnapshot> slots,
-        int ownedSlot, int entryFloor, SaveSlotSnapshot? pinned, bool createdBySession = false)
+        int ownedSlot, int entryFloor, SaveSlotSnapshot? pinned)
     {
-        if (pinned == null && !createdBySession)
-            return "無法證明存檔來源；停止清理，保留存檔。";
+        // Creation proves which slot was used, not which save occupies it now.
+        if (pinned == null)
+            return "尚未取得來源存檔的身份快照；無法排除同槽替換，停止清理並保留存檔。";
         SaveSlotSnapshot source = default;
         int matches = 0;
         foreach (var slot in slots)

@@ -13,7 +13,7 @@ internal sealed class MovementCoordinator
         DirectMovementController.ReleaseActive,
         () => PromeRadarMovementGate.IsBlocked);
 
-    private readonly Func<(bool Running, bool Pending)> readVNav;
+    private readonly Func<(bool Available, bool Running, bool Pending)> readVNav;
     private readonly Action cancelPathfinding;
     private readonly Action stopPath;
     private readonly Action releaseDirect;
@@ -23,7 +23,7 @@ internal sealed class MovementCoordinator
     private bool vnavDirty;
     private bool automaticStopPending;
 
-    internal MovementCoordinator(Func<(bool Running, bool Pending)> readVNav,
+    internal MovementCoordinator(Func<(bool Available, bool Running, bool Pending)> readVNav,
         Action cancelPathfinding, Action stopPath, Action releaseDirect, Func<bool> mpActive)
     {
         this.readVNav = readVNav;
@@ -110,6 +110,17 @@ internal sealed class MovementCoordinator
         try
         {
             var state = readVNav();
+            if (!state.Available)
+            {
+                // An entirely unregistered provider cannot retain queued work.
+                if (vnavDirty) RevokeDirect();
+                vnavOwner = null;
+                vnavDirty = false;
+                automaticStopPending = false;
+                LastError = null;
+                Status = mpActive() ? "prome-radar" : "idle";
+                return;
+            }
             if (!vnavDirty && !state.Running && !state.Pending)
             {
                 automaticStopPending = false;

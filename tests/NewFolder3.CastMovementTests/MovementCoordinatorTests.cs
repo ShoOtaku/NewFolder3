@@ -10,6 +10,7 @@ internal static class MovementCoordinatorTests
         FailedStopRetries();
         AdapterOwnership();
         ManualAndMp();
+        ProviderUnloadAndReload();
         Console.WriteLine("PASS movement ownership: orphan/pending VNav cleanup, stop readback, stationary objective, cancellation/read failure, stale adapter, manual rejection, MP acquire/release and fresh replan.");
     }
 
@@ -136,12 +137,34 @@ internal static class MovementCoordinatorTests
         if (!value) throw new InvalidOperationException(message);
     }
 
+    private static void ProviderUnloadAndReload()
+    {
+        var state = new State();
+        var coordinator = state.Create();
+        Check(coordinator.StartVNav(new object(), false, () => { state.Pending = true; return true; }),
+            "Failed to establish a dirty queued request.");
+        state.Available = false;
+        state.Running = state.Pending = false;
+        state.FailCancel = true;
+        var direct = new object();
+        Check(coordinator.TryAcquireDirect(direct) && coordinator.CanWriteDirect(direct),
+            "A completely unloaded provider retained stale ownership or called missing cancel IPC.");
+        state.Available = true;
+        state.Pending = true;
+        Check(!coordinator.TryAcquireDirect(direct) && !coordinator.CanWriteDirect(direct),
+            "Reloaded provider movement bypassed stop verification.");
+        state.FailCancel = false;
+        Check(coordinator.TryAcquireDirect(direct) && !state.Pending,
+            "Reloaded provider did not recover after verified cancellation.");
+    }
+
     private sealed class State
     {
         internal bool Running, Pending, KeepPending, FailCancel, FailRead, Mp;
+        internal bool Available = true;
         internal readonly List<string> Events = [];
         internal MovementCoordinator Create() => new(
-            () => FailRead ? throw new InvalidOperationException("read failed") : (Running, Pending),
+            () => FailRead ? throw new InvalidOperationException("read failed") : (Available, Running, Pending),
             () =>
             {
                 Events.Add("cancel");

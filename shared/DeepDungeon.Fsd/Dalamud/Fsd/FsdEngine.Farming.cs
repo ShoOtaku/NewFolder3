@@ -185,7 +185,7 @@ internal partial class FsdEngine
             if (ProgressionPauseLocked && _ddHost is { } active && !string.IsNullOrEmpty(active.CurrentStatus))
                 ImGui.TextWrapped(active.CurrentStatus);
             ImGui.TextDisabled($"完成循環：{_ddHost!.CompletedLoops}/{(_ddHost.Infinite ? "∞" : _ddHost.TargetLoops)}");
-            if (mode == FarmingMode.DeepProgression)
+            if (activePlan?.ClimbsToSummit == true)
                 ImGui.TextDisabled($"失敗重試：{_ddHost.FarmingFailures}");
             if (mode == FarmingMode.HoardDiscovery)
                 ImGui.TextDisabled($"寶藏發現：{_ddHost.HoardDiscoveries}");

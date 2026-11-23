@@ -11,11 +11,14 @@ internal sealed class PromeRadarMovementIpc : IDisposable
     private readonly ICallGateSubscriber<bool> getControl;
     private readonly ICallGateSubscriber<string> getState;
     private readonly Action suspendMovement;
+    private readonly Func<bool> allowControl;
     private bool disposed;
 
-    internal PromeRadarMovementIpc(IDalamudPluginInterface pluginInterface, Action suspendMovement)
+    internal PromeRadarMovementIpc(IDalamudPluginInterface pluginInterface, Action suspendMovement,
+        Func<bool>? allowControl = null)
     {
         this.suspendMovement = suspendMovement;
+        this.allowControl = allowControl ?? (() => true);
         getControl = pluginInterface.GetIpcSubscriber<bool>("PromeRadar.IsMechanicMovementActive");
         getState = pluginInterface.GetIpcSubscriber<string>("PromeRadar.GetState");
         setControl = pluginInterface.GetIpcProvider<bool, bool>("NewFolder3.Movement.SetPromeRadarControl");
@@ -25,31 +28,43 @@ internal sealed class PromeRadarMovementIpc : IDisposable
     private bool SetControl(bool active)
     {
         if (disposed || !Service.Framework.IsInFrameworkUpdateThread) return false;
-        if (active && !ReadCurrentState(requireMovementControl: false)) return false;
+        if (active && !allowControl()) return false;
+        if (active && !ReadCurrentState()) return false;
         PromeRadarMovementGate.SetControl(active, suspendMovement);
         return true;
     }
 
-    private bool ReadCurrentState(bool requireMovementControl)
+    private bool ReadCurrentState()
     {
         if (!getState.HasFunction) return false;
         var state = JsonSerializer.Deserialize<PromeRadarMovementState>(getState.InvokeFunc());
         var now = DateTime.UtcNow;
         return state != null && state.IsCurrent(Service.ClientState.TerritoryType, now) &&
-            state.SmartMovementEnabled && (!requireMovementControl ||
-                state.OwnsDodgeMovement(Service.ClientState.TerritoryType, now));
+            state.SmartMovementEnabled;
     }
 
     internal void Refresh()
     {
         // Reconcile reloads against the live scalar, independently of GetState's JSON cache.
         bool active;
-        try { active = getControl.HasFunction && getControl.InvokeFunc() && ReadCurrentState(requireMovementControl: true); }
+        try
+        {
+            active = getControl.HasFunction && getControl.InvokeFunc();
+            // The scalar owns the handshake, including stationary danger waits.
+            // Cached HasMovementControl describes actual path output, not release.
+            if (active && !ReadCurrentState())
+                throw new InvalidOperationException("MP movement ownership is active but its current session cannot be verified.");
+        }
         catch
         {
             // An unreadable provider is not evidence that MP released movement.
             PromeRadarMovementGate.SetControl(true, suspendMovement);
             throw;
+        }
+        if (active && !allowControl())
+        {
+            PromeRadarMovementGate.SetControl(true, suspendMovement);
+            return;
         }
         if (active != PromeRadarMovementGate.IsBlocked || active && !PromeRadarMovementGate.HandoffComplete)
             SetControl(active);

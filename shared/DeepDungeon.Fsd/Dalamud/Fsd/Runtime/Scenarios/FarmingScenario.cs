@@ -21,7 +21,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     private SaveSlotSnapshot? _resetSource;
     private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
-    internal bool CanRequestPause => _entered && !_complete &&
+    internal bool CanRequestPause => _entered && !_complete && session.CanPersistPause &&
         session.Plan is { Mode: FarmingMode.DeepProgression, HoldAfterClear: false, StopAfterFloor: null } &&
         _context is { Duty.IsInDuty: true, DutyFailureObserved: false, AttemptAborted: false };
     private bool AttachCurrentDuty => session.Plan.AttachCurrentDuty && !session.AttachmentCompleted;
@@ -266,14 +266,14 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
 
     private void VerifyPauseSave(RunContext ctx, int nextFloor, Func<SaveSlotSnapshot, string?> persist)
     {
-        if (session.OwnedSlot < 0)
+        if (session.ContinuationSlot is not { } continuationSlot)
         {
             FinishPause(ctx, "無法辨認本任務的存檔槽位。", error: true);
             return;
         }
         if (_verification == null)
         {
-            session.Source.ConfigureForEntry(false, nextFloor, session.OwnedSlot, session.Plan.MaxFloor);
+            session.Source.ConfigureForEntry(false, nextFloor, continuationSlot, session.Plan.MaxFloor);
             _verification = new(_dungeon, nextFloor, prepared: session.Source, verifyOnly: true);
             _verification.Prepare(ctx);
         }
@@ -481,7 +481,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _ => "PT"
     };
     private string? ValidateOwnedSave(IReadOnlyList<SaveSlotSnapshot> slots) =>
-        OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned, session.CreatedBySession);
+        OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned);
     private void RequestLeave()
     {
         if (_context == null || _context.RunOptions.Current.LeaveMode == LeaveMode.Immediate) return;

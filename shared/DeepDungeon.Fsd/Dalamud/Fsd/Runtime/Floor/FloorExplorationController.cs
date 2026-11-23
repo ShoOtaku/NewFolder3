@@ -714,8 +714,9 @@ bool primaryOwnsOperation = true)
     private void RefreshCoordObjectiveDecision()
     {
         var primary = _coordPipeline?.SelectedObjective ?? FloorObjectiveKind.None;
-        var passageOpen = _normalActivity.PassageOpen;
-        var inCombat = _normalActivity.InCombat;
+        // Permission observation must remain live while movement/scheduling is paused.
+        var passageOpen = _ctx.Duty.PassageOpen;
+        var inCombat = Service.Condition[ConditionFlag.InCombat];
         var combat = primary == FloorObjectiveKind.FinishCombatBeforePassage
             ? CommandChannelPermission.PrimaryObjective
             : inCombat || !passageOpen
