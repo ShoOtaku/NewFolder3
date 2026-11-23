@@ -1,5 +1,10 @@
 namespace MasterPlayer.MechanicRuntime;
 
+internal interface IResidenceBoundary
+{
+    float DistanceLowerBound(Vector2 position);
+}
+
 internal struct EncounterResidenceState
 {
     public bool Active, GroundUnsafe, Reported, Immune;

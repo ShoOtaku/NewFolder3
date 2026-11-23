@@ -5,6 +5,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 internal static class CastMovementGuard
 {
+    internal static MasterPlayer.MechanicRuntime.IEncounterSource? Source { get; set; }
+
     internal static bool ShouldWait()
     {
         var player = Service.LocalPlayer;
@@ -14,9 +16,10 @@ internal static class CastMovementGuard
         var position = new Vector2(player.Position.X, player.Position.Z);
         var territory = (ushort)Service.ClientState.TerritoryType;
         var now = DateTime.UtcNow;
+        var frame = Source?.Read();
         return CastMovementPolicy.ShouldWait(true, elapsed, remaining, position, player.GameObjectId,
-            territory, now, EncounterPlanningSnapshotRegistry.Read()) &&
+            territory, now, frame?.Encounter) &&
             CastMovementPolicy.ShouldWait(true, elapsed, remaining, position, player.GameObjectId,
-                territory, now, EncounterPlanningSnapshotRegistry.ReadLocalHazards());
+                territory, now, frame?.LocalHazards);
     }
 }

@@ -1,3 +1,6 @@
+using DeepDungeon.Fsd.Dalamud.Encounter;
+using DeepDungeon.Fsd.Dalamud.Movement;
+using MasterPlayer.MechanicRuntime;
 using global::Dalamud.Plugin;
 using global::Dalamud.Plugin.Services;
 using DeepDungeon.Fsd.Core;
@@ -8,6 +11,10 @@ namespace DeepDungeon.Fsd.Dalamud;
 
 public sealed partial class FsdApplication : IFsdApplication
 {
+    private readonly IEncounterSource _encounters;
+    private EncounterMechanicHost? _ownedEncounter;
+    private readonly SpinningMob _spin = new();
+    public SpinningMob BossSpin => _spin;
     private readonly string _hostIdentity;
     private readonly string _hostVersion;
     private readonly DetailedMapHostOptions _detailedMapHostOptions;
@@ -15,7 +22,7 @@ public sealed partial class FsdApplication : IFsdApplication
     private readonly FsdExecutionLease _lease;
     private readonly FsdEngine _module;
     private readonly PromeRadarMovementIpc movementIpc;
-    private readonly Func<float>? _playerYOffsetProvider;
+    private readonly Func<float> _playerYOffsetProvider;
     private readonly FsdFacadeLifecycle _lifecycle = new();
 
     public FsdApplication(
@@ -24,17 +31,20 @@ public sealed partial class FsdApplication : IFsdApplication
         string hostIdentity,
         string hostVersion,
         DetailedMapHostOptions detailedMapHostOptions,
+        IEncounterSource encounterSource,
+        Func<float> playerYOffsetProvider,
         IFloorEvidenceObserver? floorEvidenceObserver = null,
         IRunTelemetryObserver? runTelemetryObserver = null,
         FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
         Func<string?>? fsdStartDenialNoticeProvider = null,
-        Func<float>? playerYOffsetProvider = null,
-        Func<IBossMovementStrategy>? spinBossMovementFactory = null,
         Action<DeepDungeonStateSnapshot>? stateObserver = null)
     {
+        ArgumentNullException.ThrowIfNull(encounterSource);
+        _encounters = encounterSource;
         ArgumentNullException.ThrowIfNull(pluginInterface);
         ArgumentNullException.ThrowIfNull(settingsStore);
         ArgumentNullException.ThrowIfNull(detailedMapHostOptions);
+        ArgumentNullException.ThrowIfNull(playerYOffsetProvider);
         if (string.IsNullOrWhiteSpace(hostIdentity))
             throw new ArgumentException("FSD host identity is required.", nameof(hostIdentity));
         if (string.IsNullOrWhiteSpace(hostVersion))
@@ -61,6 +71,7 @@ public sealed partial class FsdApplication : IFsdApplication
             CombatPositionNavigation.SetYOffsetProvider(playerYOffsetProvider);
             module = new FsdEngine(
                 _settings,
+                _encounters,
                 _lease,
                 hostIdentity,
                 hostVersion,
@@ -70,10 +81,11 @@ public sealed partial class FsdApplication : IFsdApplication
                 runTelemetryObserver,
                 tryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider,
-                spinBossMovementFactory,
+                () => new SpinBossMovementStrategy(_spin),
                 stateObserver);
             _module = module;
             _module.Initialize();
+            CastMovementGuard.Source = _encounters;
             handoff = new PromeRadarMovementIpc(pluginInterface, module.YieldToPromeRadar);
             movementIpc = handoff;
             Service.Log.Info($"[FSD] Host {hostIdentity}/{hostVersion}; engine {FsdEngineIdentity.InformationalVersion}.");
@@ -83,8 +95,10 @@ public sealed partial class FsdApplication : IFsdApplication
         {
             var rollbackErrors = new List<Exception>();
             try { handoff?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
+            if (ReferenceEquals(CastMovementGuard.Source, _encounters)) CastMovementGuard.Source = null;
             try { CombatPositionNavigation.ClearYOffsetProvider(playerYOffsetProvider); } catch (Exception error) { rollbackErrors.Add(error); }
             try { module?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
+            try { _spin.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
             try { lease?.Dispose(); } catch (Exception error) { rollbackErrors.Add(error); }
 
             if (rollbackErrors.Count == 0)
@@ -95,9 +109,31 @@ public sealed partial class FsdApplication : IFsdApplication
         }
     }
 
+    /// <summary>Complete standalone composition. This application owns its host.</summary>
+    public static FsdApplication CreateStandalone(
+        IDalamudPluginInterface pluginInterface, IFsdSettingsStore settingsStore,
+        string hostIdentity, string hostVersion, DetailedMapHostOptions detailedMapHostOptions,
+        Func<float> playerYOffsetProvider,
+        IFloorEvidenceObserver? floorEvidenceObserver = null,
+        IRunTelemetryObserver? runTelemetryObserver = null,
+        FsdStartAuthorizationCallback? tryAuthorizeFsdStart = null,
+        Func<string?>? fsdStartDenialNoticeProvider = null,
+        Action<DeepDungeonStateSnapshot>? stateObserver = null)
+    {
+        var host = new EncounterMechanicHost(pluginInterface);
+        try
+        {
+            var app = new FsdApplication(pluginInterface, settingsStore, hostIdentity, hostVersion,
+                detailedMapHostOptions, host, playerYOffsetProvider, floorEvidenceObserver, runTelemetryObserver,
+                tryAuthorizeFsdStart, fsdStartDenialNoticeProvider, stateObserver);
+            app._ownedEncounter = host;
+            return app;
+        }
+        catch { host.Dispose(); throw; }
+    }
+
     public FsdSettings Settings => _settings;
     public bool IsRunActive => _module.IsRunActive;
-    public bool SupportsControlledPtSurvey => _detailedMapHostOptions.SupportsControlledPtSurvey;
     public string? ActiveDetailedMapReleaseId =>
         _module.ActiveDetailedMapReleaseId;
     public DeepDungeonStateSnapshot CurrentDeepDungeonState => _module.CurrentDeepDungeonState;
@@ -123,6 +159,12 @@ public sealed partial class FsdApplication : IFsdApplication
             movementIpc.Refresh();
             _settings.Refresh();
             FsdSettingsValidator.ValidateOrThrow(_settings);
+            if (_ownedEncounter is { } owned)
+            {
+                if (IsRunActive) owned.Update(framework);
+                else if (owned.IsAvailable || owned.LastError != null) owned.Reset();
+            }
+            _spin.Update();
             _module.Update(framework);
             _losDebug?.Update();
         }
@@ -160,6 +202,7 @@ public sealed partial class FsdApplication : IFsdApplication
         try { _module?.DrawSitePoolOverlay(); }
         catch (Exception ex) { Service.Log.Error($"[FSD] site-pool overlay: {ex}"); }
         _losDebug?.Draw();
+        _ownedEncounter?.DrawOverlay();
     }
 
     public void DrawDeepDungeonFormalPanel() { ThrowIfDisposed(); _module.DrawDeepDungeonFormalPanel(); }
@@ -182,36 +225,25 @@ public sealed partial class FsdApplication : IFsdApplication
     public object StartDeepDungeonLeaveDuty(string? confirmation) { ThrowIfDisposed(); return _module.StartDeepDungeonLeaveDuty(confirmation); }
     public object CloseDeepDungeonEntryWindowsForBridge() { ThrowIfDisposed(); return _module.CloseDeepDungeonEntryWindowsForBridge(); }
     public object StartPilgrimsTraverseDeleteSaveSlot(int slotNumber, string? confirmation) { ThrowIfDisposed(); return _module.StartPilgrimsTraverseDeleteSaveSlot(slotNumber, confirmation); }
-    public object ArmControlledReusableSaveSurveyCapture()
-    {
-        ThrowIfDisposed();
-        if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-        {
-            return new
-            {
-                ok = false,
-                error = "Controlled reusable-save survey capture is unavailable for this FSD host."
-            };
-        }
-
-        return _module.ArmControlledReusableSaveSurveyCapture();
-    }
-    public FsdControlResult StartControlledPilgrimsTraverseCapture(int targetLoops, bool infinite, string? confirmation)
-    {
-        ThrowIfDisposed();
-        return _module.StartControlledPilgrimsTraverseCapture(targetLoops, infinite, confirmation);
-    }
-
     public void Dispose()
     {
         if (!_lifecycle.TryDispose())
             return;
         CombatPositionNavigation.ClearYOffsetProvider(_playerYOffsetProvider);
+        if (ReferenceEquals(CastMovementGuard.Source, _encounters)) CastMovementGuard.Source = null;
         try { movementIpc.Dispose(); }
         finally
         {
             try { _module.Dispose(); }
-            finally { _lease.Dispose(); }
+            finally
+            {
+                try { _spin.Dispose(); }
+                finally
+                {
+                    try { _ownedEncounter?.Dispose(); }
+                    finally { _lease.Dispose(); }
+                }
+            }
         }
     }
 

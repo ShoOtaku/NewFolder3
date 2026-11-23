@@ -44,7 +44,7 @@ internal sealed class SiteWorkOp : FloorOperation
         _site = site;
         _token = token;
         _hoardAcquired = hoardAcquired;
-        var roomProbe = site.Kind == ObjectiveSiteKind.RoomProbe;
+        var roomProbe = site.Kind is ObjectiveSiteKind.RoomProbe or ObjectiveSiteKind.PassageSearch;
         _nav = new NavigateOp(site.Position, OpPriority, MaxNavAttempts,
             roomProbe ? RoomProbeRange.Radius : CandidateRange.Radius);
     }
@@ -62,6 +62,7 @@ internal sealed class SiteWorkOp : FloorOperation
         {
             ObjectiveSiteKind.Hoard or ObjectiveSiteKind.HoardIndicator
                 => FloorObjectiveKind.CompleteKnownHoard,
+            ObjectiveSiteKind.PassageSearch => FloorObjectiveKind.FindPassage,
             _ => FloorObjectiveKind.DiscoverHoard,
         };
 
@@ -75,7 +76,7 @@ internal sealed class SiteWorkOp : FloorOperation
             : Math.Clamp((float)(now - _lastTickUtc).TotalSeconds, 0f, 0.5f);
         _lastTickUtc = now;
 
-        var isRoomProbe = _site.Kind == ObjectiveSiteKind.RoomProbe;
+        var isRoomProbe = _site.Kind is ObjectiveSiteKind.RoomProbe or ObjectiveSiteKind.PassageSearch;
         var range = isRoomProbe ? RoomProbeRange : CandidateRange;
         var needed = isRoomProbe ? IntelSettleSeconds : CandidateDwellSeconds;
         var inside = range.HasArrived(facts.PlayerPosition, _site.Position);
@@ -146,9 +147,16 @@ internal sealed class SiteWorkOp : FloorOperation
                 // Postcondition evaluation needs a NEWER object refresh
                 // than the dwell finish — stale evidence never completes
                 // work, and there is no timeout success.
-                var fresh = facts.Evidence is { Available: true } ev &&
-                    ev.RefreshSequence > _evidenceAtDwell;
-                if (!fresh)
+                var fresh = facts.Evidence is { Available: true, PlayerPosition: { } observedPosition } ev &&
+                    ev.RefreshSequence > _evidenceAtDwell &&
+                    range.HasArrived(observedPosition, _site.Position);
+                if (!inside)
+                {
+                    _dwelled = false;
+                    _dwellSec = 0f;
+                    _evidenceAtDwell = -1;
+                }
+                else if (!fresh)
                 {
                     Claim = MoveClaim.Hold(Priority);
                     return OpStatus.Running;
@@ -156,7 +164,7 @@ internal sealed class SiteWorkOp : FloorOperation
                 // Candidate probe (3s dwell) / room intel (1s settle):
                 // fresh result observed → done. "Checked" is the
                 // postcondition, not "hoard found".
-                return OpStatus.Succeeded;
+                else return OpStatus.Succeeded;
             }
         }
 

@@ -52,34 +52,48 @@ public enum AID : uint
 [SkipLocalsInit]
 sealed class BrutalHalo(BossModule module) : Components.GenericAOEs(module)
 {
-    public readonly List<AOEInstance> AOEs = [with(8)];
+    private readonly List<AOEInstance> _aoes = [with(8)];
     private readonly AOEShapeDonut donut = new(3f, 20f);
     private DateTime activation;
     private ZealousGlower? _aoe1;
     private ArdorousEye? _aoe2;
 
-    public override ReadOnlySpan<AOEInstance> ActiveAOEs(int slot, Actor actor) => AOEs.Count != 0 ? CollectionsMarshal.AsSpan(AOEs)[..1] : [];
+    internal bool HasPendingRings => _aoes.Count != 0;
+    private int VisibleCount => Math.Min(_aoes.Count, 1);
+
+    public override ReadOnlySpan<AOEInstance> ActiveAOEs(int slot, Actor actor) => CollectionsMarshal.AsSpan(_aoes)[..VisibleCount];
+
+    public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
+    {
+        base.AddAIHints(slot, actor, assignment, hints);
+        foreach (ref readonly var ring in CollectionsMarshal.AsSpan(_aoes)[VisibleCount..])
+        {
+            if (ring.Risky)
+                hints.ImpactForecasts.Add(new(ring.ShapeDistance ?? ring.Shape.Distance(ring.Origin, ring.Rotation),
+                    ring.Activation, ring.ActorID) { SingleImpact = true });
+        }
+    }
 
     public override void OnActorCreated(Actor actor)
     {
         if (actor.OID == (uint)OID.HolySphere)
         {
             var pos = actor.Position.Quantized();
-            var count = AOEs.Count;
-            AOEs.Add(new(donut, pos, actorID: actor.InstanceID, activation: count == 0 ? activation : AOEs.Ref(count - 1).Activation.AddSeconds(2.5d), shapeDistance: donut.Distance(pos, default)));
+            var count = _aoes.Count;
+            _aoes.Add(new(donut, pos, actorID: actor.InstanceID, activation: count == 0 ? activation : _aoes.Ref(count - 1).Activation.AddSeconds(2.5d), shapeDistance: donut.Distance(pos, default), singleImpact: true));
 
             // actors spawn about 0.4s apart. Sort by instance ID to ensure correct order if player is lagging
-            SortHelpers.SortAOEsByActorID(AOEs);
+            SortHelpers.SortAOEsByActorID(_aoes);
         }
     }
 
     public override void Update()
     {
-        if (AOEs.Count != 0)
+        if (HasPendingRings)
         {
             _aoe1 ??= Module.FindComponent<ZealousGlower>()!;
             _aoe2 ??= Module.FindComponent<ArdorousEye>()!;
-            AOEs.Ref(0).Color = _aoe1.Casters.Count != 0 || _aoe2.Casters.Count != 0 ? Colors.Danger : default;
+            _aoes.Ref(0).Color = _aoe1.Casters.Count != 0 || _aoe2.Casters.Count != 0 ? Colors.Danger : default;
         }
     }
 
@@ -95,14 +109,22 @@ sealed class BrutalHalo(BossModule module) : Components.GenericAOEs(module)
             case (uint)AID.ZealousGlowerVisual2:
                 activation = Module.CastFinishAt(spell, 8.4d);
                 break;
+            case (uint)AID.BrutalHalo:
+                foreach (ref var ring in CollectionsMarshal.AsSpan(_aoes))
+                {
+                    if (ring.ActorID != caster.InstanceID) continue;
+                    ring.Activation = Module.CastFinishAt(spell);
+                    break;
+                }
+                break;
         }
     }
 
     public override void OnCastFinished(Actor caster, ActorCastInfo spell)
     {
-        if (AOEs.Count != 0 && spell.Action.ID == (uint)AID.BrutalHalo)
+        if (HasPendingRings && spell.Action.ID == (uint)AID.BrutalHalo)
         {
-            AOEs.RemoveAt(0);
+            _aoes.RemoveAt(0);
         }
     }
 }
@@ -181,7 +203,7 @@ sealed class DisorientingGroan(BossModule module) : Components.SimpleKnockbacks(
 
     public override void AddAIHints(int slot, Actor actor, PartyRolesConfig.Assignment assignment, AIHints hints)
     {
-        if (Casters.Count != 0 && _aoe.AOEs.Count == 0)
+        if (Casters.Count != 0 && !_aoe.HasPendingRings)
         {
             ref readonly var c = ref Casters.Ref(0);
             hints.AddForbiddenZone(new SDInvertedCircle(c.Origin, 2.5f), c.Activation);

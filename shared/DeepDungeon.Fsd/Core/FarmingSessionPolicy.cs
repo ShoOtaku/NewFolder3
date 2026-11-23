@@ -17,7 +17,7 @@ public static class FarmingSessionPolicy
 
     public static FarmingSessionDecision Decide(FarmingPlan plan, in FarmingAttemptResult result)
     {
-        bool ownsSave = plan.UsesSelectedProgressionSave || plan.SaveUse == SaveUse.Create && !plan.AttachCurrentDuty;
+        bool ownsSave = !plan.AttachCurrentDuty && (plan.UsesSelectedProgressionSave || plan.SaveUse == SaveUse.Create);
         int restartFloor = plan.UsesSelectedProgressionSave ? 1 : plan.StartFloor;
         if (plan.HoldOnFailure && (result.DutyFailed || result.Aborted))
             return new(false, result.EntryFloor, false, false, "診斷已停止；保留副本與存檔，等待人工處理。");

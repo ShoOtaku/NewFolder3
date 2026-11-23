@@ -40,7 +40,9 @@ public readonly record struct NavigationObservation(Vector2 Position, Vector2 Ve
 {
     public Vector2 DisplacementVelocity { get; init; }
     public bool MovementLocked { get; init; }
+    public bool PendingDisplacement { get; init; }
     public bool ForcedMovement { get; init; }
+    public NativeDisplacementObservation? Displacement { get; init; }
 }
 
 /// <summary>One observation owns walking response and externally imposed displacement.</summary>
@@ -69,16 +71,16 @@ public sealed class NavigationMotionObserver
         var before = _previous.Velocity.Length(); var speed = nativeVelocity.Length();
         // Position deltas are telemetry only. They do not identify a mechanic.
         // Pending removal releases the pending hold, not a claimed landing state.
-        var locked = movementLocked || pendingKnockback;
-        if (sampled && canCorrect && !locked && !_previous.MovementLocked)
+        var locked = movementLocked;
+        if (sampled && canCorrect && !locked && !pendingKnockback && !_previous.MovementLocked && !_previous.PendingDisplacement)
         {
             var rate = (speed - before) / (float)dt;
             if (hasInput && _hadInput && targetSpeed > speed + .01f && rate > .1f)
             { _acceleration = Blend(_acceleration, rate); ++AccelerationSamples; }
         }
         _hadInput = hasInput;
-        return Current = _previous = new(position, nativeVelocity, at, new(_acceleration), canCorrect && !locked)
-        { DisplacementVelocity = actualVelocity, MovementLocked = locked, ForcedMovement = false };
+        return Current = _previous = new(position, nativeVelocity, at, new(_acceleration), canCorrect && !locked && !pendingKnockback)
+        { DisplacementVelocity = actualVelocity, MovementLocked = locked, PendingDisplacement = pendingKnockback, ForcedMovement = false };
     }
     private static float Blend(float previous, float sample) => float.IsFinite(previous) ? previous * .8f + sample * .2f : sample;
 }

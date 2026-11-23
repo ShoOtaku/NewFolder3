@@ -11,6 +11,8 @@
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
     <IsPackable>true</IsPackable>
+    <FsdLiveTerrain>false</FsdLiveTerrain>
+    <DefineConstants Condition="'$(FsdLiveTerrain)' == 'true'">$(DefineConstants);FSD_LIVE_TERRAIN</DefineConstants>
     <PackageId>DeepDungeon.Fsd.Dalamud</PackageId>
     <Version>3.0.1</Version>
     <Authors>DeepDungeon.Fsd</Authors>
@@ -24,15 +26,17 @@
   <ItemGroup>
     <InternalsVisibleTo Include="FsdInteractionChecks" />
     <InternalsVisibleTo Include="NewFolder3.CastMovementTests" />
-    <EmbeddedResource Include="Resources/FloorMaps/*.map.gz" LogicalName="Fsd.FloorMaps.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Resources/DetailedMaps/pt-21-30/*.json" LogicalName="Fsd.DetailedMaps.pt-21-30.%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Resources/DetailedMaps/pt-31-40/*.json" LogicalName="Fsd.DetailedMaps.pt-31-40.%(Filename)%(Extension)" />
     <ProjectReference Include="..\Core\DeepDungeon.Fsd.Core.csproj" />
     <ProjectReference Include="..\Runtime\DeepDungeon.Fsd.Runtime.csproj" />
-    <ProjectReference Include="..\Terrain\DeepDungeon.Fsd.Terrain.csproj" />
     <ProjectReference Include="..\Native\FFXIVClientStructs.Expansion\FFXIVClientStructs.Expansion.csproj" />
     <ProjectReference Include="..\MechanicRuntime\DeepDungeon.MechanicRuntime.csproj" />
     <ProjectReference Include="..\..\..\third_party\OmenTools\OmenTools.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="Fsd/Map/LiveTerrainCapture.cs" Condition="'$(FsdLiveTerrain)' != 'true'" />
+    <EmbeddedResource Include="Resources/FloorMaps/*.map.gz" LogicalName="Fsd.FloorMaps.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Resources/DetailedMaps/pt-21-30/*.json" LogicalName="Fsd.DetailedMaps.pt-21-30.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Resources/DetailedMaps/pt-31-40/*.json" LogicalName="Fsd.DetailedMaps.pt-31-40.%(Filename)%(Extension)" />
   </ItemGroup>
   <ItemGroup>
     <Reference Include="Dalamud"><HintPath>$(DalamudLibPath)Dalamud.dll</HintPath><Private>False</Private></Reference>

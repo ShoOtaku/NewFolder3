@@ -10,7 +10,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime;
 /// captured token, never to whatever head happens to be current.</summary>
 internal readonly record struct SiteWorkToken(long FloorGeneration, string Key, long Attempt);
 
-internal enum SiteWorkOutcome { Completed, PolicySkipped, Failed }
+internal enum SiteWorkOutcome { Completed, PolicySkipped, Failed, Cancelled }
 
 /// <summary>Why room intel was required. A purpose is sticky: once completed
 /// for a room it stays completed for the rest of the floor; head-list churn
@@ -84,7 +84,10 @@ internal sealed class FloorKnowledge
         UsedIntuitionThisFloor || IntuitionUsePendingThisFloor;
     internal bool ChatSaysHoard { get; private set; }
     internal bool ChatSaysNoHoard { get; private set; }
-    internal bool InheritedNoHoardInferred { get; private set; }
+    private bool _inheritedWindowElapsed;
+    internal bool InheritedNoHoardInferred =>
+        _inheritedWindowElapsed && !ChatSaysHoard && !ExactHoardPosition.HasValue &&
+        ObservedBandedPositions.Count == 0;
     internal bool NativeIntuitionActive { get; private set; }
 
     // ---- hoard facts ----
@@ -172,18 +175,24 @@ internal sealed class FloorKnowledge
 
     private void Bump() => Revision++;
 
-    internal void ObserveIntuitionFacts(bool confirmed, bool pending,
-        bool saysHoard, bool saysNoHoard)
+    internal void ObserveIntuitionUse(bool confirmed, bool awaitingResult)
     {
-        if (UsedIntuitionThisFloor == confirmed &&
-            IntuitionUsePendingThisFloor == pending &&
-            ChatSaysHoard == saysHoard && ChatSaysNoHoard == saysNoHoard)
+        if (UsedIntuitionThisFloor == confirmed && IntuitionUsePendingThisFloor == awaitingResult)
             return;
         UsedIntuitionThisFloor = confirmed;
-        IntuitionUsePendingThisFloor = pending;
-        ChatSaysHoard = saysHoard;
-        ChatSaysNoHoard = saysNoHoard;
+        IntuitionUsePendingThisFloor = awaitingResult;
         Bump();
+    }
+
+    internal bool ObserveIntuitionResult(bool hasHoard)
+    {
+        // Positive evidence is irrevocable for this floor until acquisition.
+        if (ChatSaysHoard || (!hasHoard && ChatSaysNoHoard))
+            return false;
+        ChatSaysHoard = hasHoard;
+        ChatSaysNoHoard = !hasHoard;
+        Bump();
+        return true;
     }
 
     internal void ObserveNativeIntuition(bool active)
@@ -196,9 +205,9 @@ internal sealed class FloorKnowledge
 
     internal void MarkInheritedNoHoard()
     {
-        if (InheritedNoHoardInferred)
+        if (_inheritedWindowElapsed)
             return;
-        InheritedNoHoardInferred = true;
+        _inheritedWindowElapsed = true;
         Bump();
     }
 
@@ -232,16 +241,6 @@ internal sealed class FloorKnowledge
         ExactHoardPosition = position;
         ExactHoardRoomIndex = roomIndex;
         Bump();
-    }
-
-    internal bool ClearExactHoard()
-    {
-        if (!ExactHoardPosition.HasValue)
-            return false;
-        ExactHoardPosition = null;
-        ExactHoardRoomIndex = null;
-        Bump();
-        return true;
     }
 
     internal void ObserveBanded(Vector3 position)

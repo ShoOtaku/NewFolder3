@@ -11,7 +11,7 @@ internal sealed partial class FloorExplorationController
     {
         var ctx = _ctx;
         if (ctx?.FarmingPlan?.ReusesSave != true || this.Kind != FloorRuntimeKind.Normal ||
-            _phase != FloorPhase.FloorActive || _executor == null) return false;
+            _phase != FloorPhase.FloorActive) return false;
         if (ctx.HarvestComplete || ctx.AttemptAborted) return true;
         if (ctx.FarmingPlan.Mode == FarmingMode.HoardDiscovery)
         {
@@ -22,7 +22,8 @@ internal sealed partial class FloorExplorationController
                 ctx.HoardDiscoveries++;
                 ctx.HarvestComplete = true;
             }
-            else if (_chatWatchers?.ChatSaysNoHoard == true)
+            else if (ctx.Knowledge.Floor is { ChatSaysNoHoard: true, ChatSaysHoard: false,
+                         ExactHoardPosition: null })
                 ctx.HarvestComplete = true;
             else if (HarvestWorkResolved(ctx!))
             {
@@ -47,31 +48,17 @@ internal sealed partial class FloorExplorationController
         if (!ctx.HarvestComplete && !ctx.AttemptAborted) return false;
         CancelActiveMovement();
         this.Objectives.ClearObjectiveDecision();
-        if (ctx.FarmingPlan.AttachCurrentDuty)
-        {
-            _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；保留目前副本。";
-            return true;
-        }
         ctx.RunOptions.Update(o => o.LeaveMode = LeaveMode.Immediate);
         _status = ctx.AttemptAborted ? ctx.StatusLine : "本次採集完成；退本並驗證準備存檔。";
         return true;
     }
 
-    /// <summary>Chest-harvest completion from the selected work truth.
-    /// Coord floors read the knowledge scheduler — quota/passage are
-    /// progression-only and never count, and a real work decision must
-    /// exist (default zeros before the first route are not "done").
-    /// Legacy floors keep reading the executor's generated queue.</summary>
-    private bool HarvestWorkResolved(RunContext ctx)
+    private static bool HarvestWorkResolved(RunContext ctx)
     {
-        if (UsesSiteCoordination)
-        {
-            var fk = ctx.Knowledge.Floor;
-            return fk?.WorkDecisionInitialized == true &&
-                fk.SearchObligationsResolved && fk.RequiredWorkRemaining == 0 &&
-                fk.PendingWorkCount == 0 && !_activeWaypoint.HasValue;
-        }
-        return _executor!.IsHoardWorkResolved && _executor.PlannedRouteCount == 0 &&
-            _executor.IsComplete && !_activeWaypoint.HasValue;
+        var fk = ctx.Knowledge.Floor;
+        return fk?.WorkDecisionInitialized == true &&
+            fk.SearchObligationsResolved && fk.RequiredWorkRemaining == 0 &&
+            fk.PendingWorkCount == 0;
     }
+
 }

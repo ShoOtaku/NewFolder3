@@ -21,10 +21,18 @@ internal static class EncounterPlanningHorizon
             Include(hazard.Activation);
             if (hazard.ExpiresAt is { } expiry) Include(expiry);
         }
-        foreach (var knockback in q.Snapshot.Knockbacks) Include(knockback.Source.Activation);
+        foreach (var knockback in q.Snapshot.Knockbacks)
+        {
+            Include(knockback.Source.Activation);
+            if (knockback.Timing.Available && knockback.Source.Activation != default && knockback.Source.Activation != DateTime.MaxValue)
+                end = Math.Max(end, (knockback.Source.Activation - q.Now).TotalSeconds
+                    + knockback.Timing.ApplicationDelay + knockback.Timing.Duration);
+        }
+        if (q.Displacement is { } observed) Include(observed.End);
         foreach (var chase in q.Snapshot.ChasingHazards)
             if (chase.Remaining > 0 && chase.NextActivation != DateTime.MaxValue)
-                Include(chase.NextActivation.AddSeconds((chase.Remaining - 1) * chase.Interval));
+                Include(chase.NextActivation.AddSeconds((chase.Remaining - 1) * chase.Interval
+                    + (q.Snapshot.Residence?.ReentrySeconds ?? 0)));
         if (q.Snapshot.PathMechanic is { } mechanic)
             end = Math.Max(end, mechanic.RequiredHorizon(q.Now));
         if (q.Snapshot.Hints is { } hints)

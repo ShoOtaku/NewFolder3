@@ -23,14 +23,16 @@ public sealed partial class EncounterHintPlanner
     private byte[] _edges = [];
     private bool[] _baseWalk = [], _walk = [];
     private float[][] _distances = [];
-    private readonly Dictionary<ShapeDistance, float[]> _shapeDistances = new(ReferenceEqualityComparer.Instance);
+    private readonly Dictionary<(ShapeDistance Shape, float Margin), float[]> _shapeDistances = new();
     private readonly List<float[]> _fieldPool = new();
     private int _usedFields;
     private bool _walkPrepared;
 
     public double FirstWaveSeconds { get; private set; }
     public double SecondWaveSeconds { get; private set; }
-    public void Reset() { _arena = null; _topology = null; _shapeDistances.Clear(); ResetIntervals(); ResetForward(); }
+    public void Reset() { _arena = null; _topology = null; _shapeDistances.Clear(); ResetRoute(); }
+
+    internal void ResetRoute() { ResetIntervals(); ResetForward(); }
 
     public EncounterRoute Plan(in EncounterRouteRequest request, CancellationToken cancellationToken)
     {
@@ -38,29 +40,19 @@ public sealed partial class EncounterHintPlanner
         Solver = Work = "none"; SearchEvaluations = SearchExtensions = 0; SearchExit = null;
         var q = request;
         var snapshot = q.Snapshot;
+        if (snapshot.Residence is { } residence)
+            q = q with { Speed = Math.Min(q.Speed, residence.MaximumPlanningSpeed) };
         if (EncounterHintEvaluator.Validate(snapshot) is { } error
             || !float.IsFinite(q.Speed) || q.Speed <= 0 || !Finite(q.Position) || !Finite(q.Goal)
             || !float.IsFinite(q.GoalRadius) || q.GoalRadius < 0)
             return Route(q, EncounterRouteKind.NoRoute, [], 0, 0, 0, "invalid-hint-request");
-        // A character already in the buffer can step outward from its current
-        // clearance. Preserve that floor on every edge, including the first.
-        EncounterHazard[]? adjusted = null;
-        for (var index = 0; index < snapshot.Hazards.Length; ++index)
-        {
-            ref readonly var hazard = ref snapshot.Hazards[index];
-            if (hazard.Kind != EncounterHazardKind.Persistent || !EncounterHintEvaluator.Active(hazard, q.Now, 0)) continue;
-            var clearance = hazard.Shape.Distance(new(q.Position.X, q.Position.Y));
-            if (clearance < 0 || clearance >= hazard.ClearanceMargin) continue;
-            adjusted ??= (EncounterHazard[])snapshot.Hazards.Clone();
-            adjusted[index] = hazard with { ClearanceMargin = clearance };
-        }
-        if (adjusted != null) q = q with { Snapshot = snapshot with { Hazards = adjusted } };
         UpdateWaveTimes(q);
         var grid = q.Grid ?? GetArenaGrid(snapshot, cancellationToken);
         q = q with { Grid = grid, Terrain = q.Terrain ?? grid };
         EnsureGrid(grid, cancellationToken);
         _positions[_count] = q.Position;
-        if (q.Observation?.MovementLocked == true || snapshot.Hints?.HoldMovement(q.Now) == true)
+        if (q.Displacement == null && (q.Observation is { MovementLocked: true } or { PendingDisplacement: true } or { ForcedMovement: true }
+            || snapshot.Hints?.PendingKnockback == true) || snapshot.Hints?.HoldMovement(q.Now) == true)
         {
             var velocity = q.Velocity;
             var stopped = q.Position + q.Motion.Advance(ref velocity, Vector2.Zero, .25);
@@ -69,14 +61,43 @@ public sealed partial class EncounterHintPlanner
             return Route(q, EncounterRouteKind.Ready, hold, check.Violations, check.Exposure, 0, "hint-movement-hold") with { AllowCorrection = false };
         }
 
+        // A later displacement with missing timing cannot invalidate earlier walking.
+        // Keep the launch geometry but do not assign a time to the displacement.
+        KnockbackPrediction? unresolved = null;
+        var knockbacks = q.Snapshot.Knockbacks;
+        for (var i = 0; i < knockbacks.Length; ++i)
+        {
+            ref readonly var knockback = ref knockbacks[i];
+            if (knockback.Source.Activation < q.Now || knockback.Timing.Available) continue;
+            unresolved = knockback;
+            q = q with { Snapshot = q.Snapshot with { Knockbacks = knockbacks[..i] }, TimingBoundary = knockback };
+            break;
+        }
         _routeHorizon = EncounterPlanningHorizon.Calculate(q);
         foreach (var chase in snapshot.ChasingHazards)
             if (chase.Remaining > 0 && chase.NextActivation != DateTime.MaxValue)
                 _routeHorizon = Math.Max(_routeHorizon, (chase.NextActivation - q.Now).TotalSeconds
                     + (chase.Remaining - 1) * chase.Interval + ImpactLeadSeconds);
+        string? timingIssue = null;
+        if (unresolved is { } missing)
+        {
+            timingIssue = $"knockback-timing-unavailable:{missing.Source.ActionID}:{missing.Timing.TimelineKey ?? "missing-timeline"}";
+            if (missing.Source.Activation != DateTime.MaxValue)
+                _routeHorizon = (missing.Source.Activation - q.Now).TotalSeconds;
+            if (_routeHorizon <= 0)
+                return Route(q, EncounterRouteKind.NoRoute, [], 0, 0, 0, timingIssue) with { Complete = false };
+        }
         _planningHorizon = _routeHorizon;
         BeginCandidateBudget();
         var result = PlanAutomatic(q, cancellationToken);
+        if (result.Kind == EncounterRouteKind.NoRoute && _planBudgetReached)
+            result = result with { Reason = "hint-budget-exhausted" };
+        if (timingIssue != null)
+        {
+            result = result.Kind == EncounterRouteKind.Ready
+                ? result with { Complete = false, Reason = timingIssue }
+                : result with { Kind = EncounterRouteKind.NoRoute, Points = [], Complete = false, Reason = $"{timingIssue};prefix:{result.Reason}" };
+        }
         if (ReferenceEquals(result, q.Continuation)) return _deliveredRoute = result;
         IntervalExpanded = Solver != "sipp" ? SearchExtensions : _totalExpanded;
         IntervalBudgetReached = _planBudgetReached;
@@ -92,8 +113,8 @@ public sealed partial class EncounterHintPlanner
     {
         if (!ReferenceEquals(_arena, s.Arena) || _center != s.ArenaCenter)
         {
-            _arena = s.Arena; _center = s.ArenaCenter;
             _terrainGrid = new EncounterTerrainGrid(s, token);
+            _arena = s.Arena; _center = s.ArenaCenter;
         }
         return new MechanicNavigationGrid(_terrainGrid!, s);
     }
@@ -101,7 +122,7 @@ public sealed partial class EncounterHintPlanner
     private void EnsureGrid(INavigationGrid grid, CancellationToken token)
     {
         if (ReferenceEquals(_topology, grid.Topology)) return;
-        _topology = grid.Topology;
+        _topology = null; // A cancelled fill cannot be reused as a complete topology.
         _width = grid.Width; _height = grid.Height; _count = _width * _height;
         _positions = new Vector2[_count + 1]; _baseWalk = new bool[_count + 1]; _edges = new byte[_count];
         for (var i = 0; i < _count; ++i)
@@ -116,6 +137,7 @@ public sealed partial class EncounterHintPlanner
         }
         _walk = new bool[_count + 1]; _walkPrepared = false;
         _distances = []; _shapeDistances.Clear(); _fieldPool.Clear(); _usedFields = 0;
+        _topology = grid.Topology;
     }
 
     private static bool TerrainLegal(EncounterRouteRequest q, Vector2 from, Vector2 to) =>
@@ -130,21 +152,22 @@ public sealed partial class EncounterHintPlanner
         {
             if (CandidateBudgetExpired()) return false;
             var zone = s.Hazards[h];
-            if (!_shapeDistances.TryGetValue(zone.Shape, out var field))
+            var key = (zone.Shape, zone.ClearanceMargin);
+            if (!_shapeDistances.TryGetValue(key, out var field))
             {
                 if (_usedFields == _fieldPool.Count) _fieldPool.Add(new float[_count + 1]);
                 field = _fieldPool[_usedFields++];
                 for (var i = 0; i < _count; ++i)
                 {
                     if ((i & 255) == 0 && CandidateBudgetExpired()) return false;
-                    var d = _baseWalk[i] ? zone.Shape.Distance(new(_positions[i].X, _positions[i].Y)) - zone.ClearanceMargin
+                    var d = _baseWalk[i] ? EncounterHazardRules.Clearance(zone, _positions[i])
                         : float.PositiveInfinity;
                     field[i] = float.IsFinite(d) ? d : float.NegativeInfinity;
                 }
-                _shapeDistances[zone.Shape] = field;
+                _shapeDistances[key] = field;
             }
             _distances[h] = field;
-            var startDistance = zone.Shape.Distance(new(q.Position.X, q.Position.Y)) - zone.ClearanceMargin;
+            var startDistance = EncounterHazardRules.Clearance(zone, q.Position);
             field[_count] = float.IsFinite(startDistance) ? startDistance : float.NegativeInfinity;
         }
         if (!_walkPrepared)

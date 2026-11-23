@@ -2,6 +2,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 internal static class PromeRadarMovementGate
 {
+    internal static bool ShouldYield() => IsBlocked;
     internal static bool IsBlocked { get; private set; }
     internal static bool HandoffComplete { get; private set; }
 

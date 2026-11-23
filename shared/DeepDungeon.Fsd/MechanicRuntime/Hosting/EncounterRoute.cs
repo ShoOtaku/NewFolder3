@@ -9,28 +9,18 @@ public readonly record struct EncounterRoutePoint(Vector2 Position, double Secon
 {
     public Vector2? CommandVelocity { get; init; }
     public bool GameDriven { get; init; }
+    internal bool KeepMovingToEnd { get; init; }
 }
-
-public readonly record struct WindRouteComparison(double? OriginalSlack, double? SelectedSlack, int Candidates);
 
 public readonly record struct RecoveryComparison(int HoldHits, double HoldExposure,
     int? CandidateHits, double? CandidateExposure, double? CandidateFirstViolation);
-
-internal readonly record struct MechanicRouteComparison(string Kind, double? OriginalSlack, double? SelectedSlack, int Candidates);
 
 public sealed record EncounterRoute(ulong EncounterId, DateTime OriginUtc,
     EncounterRouteKind Kind, EncounterRoutePoint[] Points,
     int PredictedHits, float Exposure, int Expanded, string? Reason)
 {
     internal bool IntervalTiming { get; init; }
-    internal MechanicRouteComparison? ProposalComparison { get; init; }
-    public WindRouteComparison? WindComparison
-    {
-        get => ProposalComparison is { Kind: "wind-round-trip" } c
-            ? new(c.OriginalSlack, c.SelectedSlack, c.Candidates) : null;
-        init => ProposalComparison = value is { } c
-            ? new("wind-round-trip", c.OriginalSlack, c.SelectedSlack, c.Candidates) : null;
-    }
+    public double? CompletionSlack { get; init; }
     public RecoveryComparison? Recovery { get; init; }
     public bool Timed { get; init; } = true;
     public bool AllowCorrection { get; init; } = true;
@@ -55,6 +45,17 @@ public readonly record struct EncounterRouteRequest(
     public INavigationTerrain? Terrain { get; init; }
     public INavigationGrid? Grid { get; init; }
     internal bool IntervalTiming { get; init; }
+    internal KnockbackPrediction? TimingBoundary { get; init; }
+
+    internal bool CanEndAt(Vector2 position, double seconds, in MechanicBranchState branch)
+    {
+        if (TimingBoundary is not { } boundary || seconds + 1e-6 < (boundary.Source.Activation - Now).TotalSeconds)
+            return true;
+        var landing = EncounterDisplacement.Project(Snapshot, boundary, position, branch);
+        return boundary.AllowsLanding(landing) &&
+            Terrain!.CanTraverse(new(position.X, 0, position.Y), new(landing.X, 0, landing.Y));
+    }
+
     internal const double StartupSeconds = .1;
     internal static bool IsStopped(Vector2 velocity) => velocity.LengthSquared() < .0001f;
     // Startup consumes predicted travel time while walking input is already held.
@@ -69,6 +70,8 @@ public readonly record struct EncounterRouteRequest(
         return command * (float)(seconds - delay);
     }
     public NavigationMotion Motion => Observation?.Motion ?? NavigationMotion.Instant;
+    public NativeDisplacementObservation? Displacement => (Observation?.Displacement ?? Snapshot.Displacement) is { } motion
+        && motion.End > Now && (motion.Native || motion.MovementStart > Now) ? motion : null;
     public Vector2 Velocity => Observation?.Velocity ?? Vector2.Zero;
 }
 

@@ -34,27 +34,16 @@ internal sealed class CoordPipeline
     private FloorOperation? _lastWinner;
     private readonly HashSet<FloorOperation> _lastMasked = new(4);
     private float _objectiveMaskedSec;
-    private FloorObjectiveKind _lastObjective = FloorObjectiveKind.None;
-    private readonly Dictionary<FloorObjectiveKind, int> _objectiveFails = new();
     private int _lastFloor = -1;
     private INativeBoundary? _lastBoundary;
     private SiteWorkToken _boundToken;
-    private ObjectiveSiteKind? _boundKind;
-    private bool _lastWorkDriven;
+    private ObjectiveSite? _boundSite;
     // Floor-scoped work-op cache: suspension rebinds the SAME attempt;
     // completion, failure, explicit policy skip or teardown retires it.
     private readonly Dictionary<SiteWorkToken, FloorOperation> _workOperations = new();
-    private const int MaxObjectiveFails = 3;
     // Latest assembled facts — ops' late-bound providers read this snapshot
     // rather than stashing per-field copies of what facts already carries.
     private FloorFacts _lastFacts;
-
-    /// <summary>An objective that keeps failing stops taking over — the
-    /// legacy path resumes it for the rest of the floor (graceful
-    /// degradation instead of infinite op recreation).</summary>
-    internal bool IsObjectiveBlocked(FloorObjectiveKind objective) =>
-        _objectiveFails.TryGetValue(objective, out var n) && n >= MaxObjectiveFails;
-
 
     internal CoordPipeline(Action<string, object> recordEvent)
     {
@@ -74,24 +63,6 @@ internal sealed class CoordPipeline
     internal ChestInteractionAttempt? ActiveChestAttempt => _objectiveOp?.ActiveChestAttempt;
     private FloorObjectiveKind _selectedObjective = FloorObjectiveKind.None;
 
-    /// <summary>
-    /// Entity-dynamic objective selection, in local-opportunity order:
-    /// visible chest → open passage → coverage traversal → leftover-hunt.
-    /// No domain decision is consulted.
-    /// </summary>
-    private static FloorObjectiveKind SelectObjective(in FloorFacts facts, CoverageSet? coverage)
-    {
-        if (facts.ChestWaypoint != null)
-            return FloorObjectiveKind.OpenVisibleBandedChest;
-        if (facts.PassageOpen)
-            return FloorObjectiveKind.EnterPassage;
-        if (coverage != null && !coverage.AllVisited)
-            return FloorObjectiveKind.DiscoverHoard;
-        if (coverage != null)
-            return FloorObjectiveKind.FinishCombatBeforePassage;
-        return FloorObjectiveKind.None;
-    }
-
     internal void Tick(
         int floor,
         int rawRoomIndex,
@@ -101,20 +72,17 @@ internal sealed class CoordPipeline
         bool playerDead,
         bool passageOpen,
         bool planForHazards,
-        ObjectiveArbiterSnapshot snapshot,
         Vector3? passageDestination,
         Vector3? passageRoomCenter,
         int passageRoomIndex,
         FloorObjectEvidenceSnapshot? evidence,
-        RoomWaypoint? chestWaypoint,
-        CoverageSet? coverage,
         INativeBoundary native,
         Vector3? passageActorPosition = null)
     {
+        if (externalMovement) return;
         _lastBoundary = native;
         if (floor != _lastFloor)
         {
-            _objectiveFails.Clear();
             // A floor change retires every cached work attempt AND a
             // bound op that was never cached (legacy boundary binding) —
             // cached ops are floor-scoped like the knowledge they serve.
@@ -129,7 +97,7 @@ internal sealed class CoordPipeline
                 _objectiveOp?.OnRetired();
             _objectiveOp = null;
             _boundToken = default;
-            _boundKind = null;
+            _boundSite = null;
             _claims.Clear();
             _lastWinner = null;
             _lastMasked.Clear();
@@ -138,7 +106,7 @@ internal sealed class CoordPipeline
             _lastFloor = floor;
         }
         var facts = _obs.Assemble(floor, rawRoomIndex, now, playerPos, inCombat,
-            playerDead, passageOpen, snapshot, evidence, chestWaypoint,
+            playerDead, passageOpen, evidence,
             passageDestination, passageRoomCenter, passageRoomIndex,
             passageActorPosition);
         _lastFacts = facts;
@@ -154,31 +122,9 @@ internal sealed class CoordPipeline
             op != null && _lastMasked.Contains(op) ? _lastDt : 0f);
 
         _claims.Clear();
-        // Objective dispatch — knowledge-driven mode executes the
-        // committed work only (typed token binding); the legacy path keeps
-        // its fact-order selection for non-coord floors.
-        if (native.Search is SiteSearchBoundary workSb && workSb.KnowledgeDriven)
-        {
-            _lastWorkDriven = true;
-            EnsureWorkOp(workSb, facts);
-            _selectedObjective = _objectiveOp?.Objective ?? FloorObjectiveKind.None;
-        }
-        else
-        {
-            _lastWorkDriven = false;
-            var objective = SelectObjective(in facts, coverage);
-            // Head-kind dispatch — the site pool's committed head
-            // overrides the fact-order objective for execution shape.
-            if (native.Search is SiteSearchBoundary sb)
-                objective = sb.HeadKind switch
-                {
-                    ObjectiveSiteKind.Quota => FloorObjectiveKind.FinishCombatBeforePassage,
-                    ObjectiveSiteKind.Passage => FloorObjectiveKind.EnterPassage,
-                    _ => objective,
-                };
-            _selectedObjective = objective;
-            EnsureObjectiveOp(objective, facts);
-        }
+        if (native.Search is { } work)
+            EnsureWorkOp(work, facts);
+        _selectedObjective = _objectiveOp?.Objective ?? FloorObjectiveKind.None;
         // Only a RUNNING operation protects the commit — a retained
         // Failed op must never pin the head through ProtectsCommit.
         var protectsCommit = false;
@@ -196,19 +142,20 @@ internal sealed class CoordPipeline
         // Publish the bound op's actual in-progress state AFTER ticking —
         // the next scheduler decision sees the real dwell/interaction
         // protection, not the pre-tick snapshot.
-        if (native.Search is SiteSearchBoundary postSb && postSb.KnowledgeDriven)
+        if (native.Search is { } postSb)
             postSb.CommitProtected = protectsCommit;
 
         // Arbitration resolves the winner; the pipeline dispatches the
         // winning verb through the boundary — the arbiter never sees what
         // the claim does, the boundary never sees who lost.
         var winner = _arbiter.Resolve(_claims);
-        var outcome = ExecuteFloorMovement(native, winner?.Claim.Verb, planForHazards && !playerDead, playerPos);
+        var navigation = ExecuteFloorMovement(native, winner?.Claim.Verb, planForHazards && !playerDead, playerPos);
+        var outcome = navigation.Outcome;
         if (outcome == NavOutcome.Arrived && winner?.Claim.Verb is ChestTargetVerb)
             winner.OnNavArrived();
-        if (outcome == NavOutcome.Failed)
+        if (outcome is NavOutcome.Unreachable or NavOutcome.Failed)
         {
-            winner?.OnNavFailed(now);
+            if (outcome == NavOutcome.Failed) winner?.OnNavFailed(now);
             // Every failure episode gets its own record — LastNavFailure
             // only keeps the latest string, and consecutive episodes with
             // different destinations used to overwrite each other.
@@ -218,12 +165,17 @@ internal sealed class CoordPipeline
                 dest = winner?.Claim.Verb is GoToVerb g
                     ? $"{g.Dest.X:0.0},{g.Dest.Z:0.0}"
                     : winner?.Claim.Verb?.GetType().Name,
-                reason = native.LastNavFailure,
+                reason = outcome == NavOutcome.Unreachable ? "region-unreachable" : native.LastNavFailure,
                 pos = $"{facts.PlayerPosition.X:0.0},{facts.PlayerPosition.Z:0.0}",
                 head = native.Search is SiteSearchBoundary hf && hf.Head is { } hh
                     ? $"{hh.Kind}:{hh.Key} @{hh.Position.X:0.0},{hh.Position.Z:0.0}"
                     : null,
             });
+        }
+        if (navigation.Exhaustion is { } exhaustion && winner is OpenChestOp chest)
+        {
+            chest.OnNavUnreachable(exhaustion);
+            RetireObjectiveOp(OpStatus.Failed, native);
         }
 
         // Authority accounting for the NEXT tick: who held, who was masked.
@@ -256,28 +208,43 @@ internal sealed class CoordPipeline
     }
 
     /// <summary>The last arbitrated movement owner — diagnostics only.</summary>
-    internal string MovementOwner => _lastWinner?.Describe() ?? "none";
+    private bool externalMovement;
+    internal void SetExternalMovement(bool active, DateTime now)
+    {
+        if (externalMovement == active) return;
+        externalMovement = active;
+        _claims.Clear();
+        _lastWinner = null;
+        _lastMasked.Clear();
+        _lastDt = 0;
+        _lastTickUtc = DateTime.MinValue;
+        // Unbound cached operations are already suspended for their route head.
+        // Only release the external pause on the operation that is still bound.
+        if (active) _objectiveOp?.OnSuspended(now);
+        else _objectiveOp?.OnResumed(now);
+        if (active) SuspendEncounter();
+        else _encounter.Current?.OnResumed(now);
+    }
 
     internal object CaptureDiagnostics() => new
     {
-        objective = CurrentObjective.ToString(), selectedObjective = SelectedObjective.ToString(),
-        movementOwner = MovementOwner, objectiveMaskedSeconds = _objectiveMaskedSec,
-        operation = _objectiveOp?.Describe(), attempts = _objectiveOp?.Attempts,
-        maxAttempts = _objectiveOp?.MaxAttempts, failure = _objectiveOp?.Failure?.ToString(),
-        lastNavigationFailure = _lastBoundary?.LastNavFailure,
-        blockedObjectives = _objectiveFails.Select(pair => new { objective = pair.Key.ToString(), count = pair.Value }).ToArray(),
-        encounterStatus = EncounterStatus.ToString()
+        objective = CurrentObjective.ToString(), selected = SelectedObjective.ToString(),
+        op = _objectiveOp?.Describe(), movementOwner = MovementOwner, externalMovement,
+        token = _boundToken, site = _boundSite, cachedAttempts = _workOperations.Count,
+        maskedSeconds = _objectiveMaskedSec, encounterId = EncounterId, encounterStatus = EncounterStatus.ToString()
     };
+
+    internal string MovementOwner => _lastWinner?.Describe() ?? "none";
 
     // A stationary objective supplies a preference to stay where it was when
     // the hazards appeared. Keep the anchor stable as the follower moves.
-    internal NavOutcome ExecuteFloorMovement(INativeBoundary native, IClaimVerb? verb,
+    internal NavResult ExecuteFloorMovement(INativeBoundary native, IClaimVerb? verb,
         bool planForHazards, Vector3 playerPos)
     {
         if (planForHazards && verb is null or HoldVerb)
         {
             _idleAnchor ??= playerPos;
-            return native.Navigate(_idleAnchor.Value, NavigationRange.MovementTolerance);
+            return new(native.Navigate(_idleAnchor.Value, NavigationRange.MovementTolerance));
         }
         _idleAnchor = null;
         return native.Execute(verb);
@@ -293,11 +260,11 @@ internal sealed class CoordPipeline
         int floor, int rawRoomIndex, DateTime now, Vector3 playerPos,
         bool inCombat, bool playerDead,
         MasterPlayer.MechanicRuntime.EncounterPlanningSnapshot? snapshot,
-        ObjectiveArbiterSnapshot snapshot2,
         FloorObjectEvidenceSnapshot? evidence, INativeBoundary native)
     {
+        if (externalMovement) return;
         var facts = _obs.Assemble(floor, rawRoomIndex, now, playerPos, inCombat,
-            playerDead, false, snapshot2, evidence, null);
+            playerDead, false, evidence);
         _lastFacts = facts;
         _lastBoundary = native;
         var dt = _lastTickUtc == DateTime.MinValue ? 0f
@@ -331,7 +298,7 @@ internal sealed class CoordPipeline
         _lastMasked.Clear();
         if (op != null && winner != op && op.Claim.Verb != null)
             _lastMasked.Add(op);
-        var outcome = native.Execute(winner?.Claim.Verb);
+        var outcome = native.Execute(winner?.Claim.Verb).Outcome;
         if (outcome == NavOutcome.Failed)
             winner?.OnNavFailed(now);
         // Held interval recorded AFTER dispatch, matching ordinary Tick's
@@ -353,17 +320,6 @@ internal sealed class CoordPipeline
         _encounter.Current?.OnSuspended();
     }
 
-    internal void SetExternalMovement(bool active, DateTime now)
-    {
-        _claims.Clear();
-        _lastWinner = null;
-        _lastMasked.Clear();
-        _lastDt = 0f;
-        _lastTickUtc = DateTime.MinValue;
-        if (active) _objectiveOp?.OnSuspended(now);
-        else _objectiveOp?.OnResumed(now);
-    }
-
     /// <summary>Retire the encounter driver before cancelling the boundary
     /// — a floor change/dispose must not leave a stale bound op. Suspend
     /// first so its input/claims clear; ordinary-floor authority is not
@@ -381,32 +337,6 @@ internal sealed class CoordPipeline
     internal OpStatus EncounterStatus => _encounter.LastReported;
     /// <summary>Bound encounter identity, if any.</summary>
     internal ulong EncounterId => _encounter.EncounterId;
-
-    private void EnsureObjectiveOp(FloorObjectiveKind objective, in FloorFacts facts)
-    {
-        if (objective == _lastObjective && _objectiveOp != null)
-            return;
-        _objectiveOp?.OnRetired();
-        _objectiveMaskedSec = 0;
-        _lastObjective = objective;
-        _objectiveOp = objective switch
-        {
-            FloorObjectiveKind.EnterPassage when facts.PassageDestination is { } dest
-                => new ExitPassageOp(dest, facts.Floor, facts.PassageRoomIndex,
-                    () => _lastFacts.PassageRoomCenter, () => _lastFacts.PassageDestination,
-                    () => _lastFacts.PassageActorPosition),
-            FloorObjectiveKind.OpenVisibleBandedChest when facts.ChestWaypoint is { } wp
-                => new OpenChestOp(wp),
-            FloorObjectiveKind.CompleteKnownHoard or FloorObjectiveKind.DiscoverHoard
-                or FloorObjectiveKind.OpenPlannedChest
-                => new ExploreRoomOp(objective),
-            FloorObjectiveKind.ActivatePassage or FloorObjectiveKind.FinishCombatBeforePassage
-                => new ChaseMobsOp(objective),
-            // Unhandled kinds supply no movement goal; the
-            // legacy path stays the real mover for those objectives.
-            _ => null
-        };
-    }
 
     /// <summary>Bind the objective op to the committed work token. Work
     /// ops are CACHED per token — a route rebuild/suspension rebinds the
@@ -426,12 +356,12 @@ internal sealed class CoordPipeline
                 _objectiveOp = null;
             }
             _boundToken = default;
-            _boundKind = null;
+            _boundSite = null;
             sb.CommitProtected = false;
             return;
         }
         if (_objectiveOp != null && _boundToken == token &&
-            _boundKind == head.Value.Kind)
+            _boundSite?.Kind == head.Value.Kind)
         {
             sb.CommitProtected = _objectiveOp.ProtectsCommit;
             return;
@@ -450,8 +380,8 @@ internal sealed class CoordPipeline
             op = head.Value.Kind switch
             {
                 ObjectiveSiteKind.ConfirmedChest
-                    => new OpenChestOp(new RoomWaypoint(head.Value.Position,
-                        WaypointTypeFor(head.Value)) , token),
+                    => new OpenChestOp(new ChestInteractionTarget(head.Value.Position, head.Value.Chest), token,
+                        overcap: sb.TakeChestOvercapObservation(token.Key)),
                 ObjectiveSiteKind.Passage
                     => new ExitPassageOp(
                         facts.PassageDestination ?? head.Value.Position,
@@ -460,7 +390,7 @@ internal sealed class CoordPipeline
                             ? facts.PassageRoomIndex : head.Value.RoomIndex,
                         () => _lastFacts.PassageRoomCenter,
                         () => _lastFacts.PassageDestination,
-                        () => _lastFacts.PassageActorPosition),
+                        () => _lastFacts.PassageActorPosition, head.Value.ActorId),
                 ObjectiveSiteKind.Quota
                     => new ChaseMobsOp(FloorObjectiveKind.FinishCombatBeforePassage),
                 _ => new SiteWorkOp(head.Value, token, () => sb.KnowledgeHoardAcquired),
@@ -470,19 +400,9 @@ internal sealed class CoordPipeline
         _objectiveOp = op;
         _objectiveOp.OnResumed(DateTime.UtcNow);
         _boundToken = token;
-        _boundKind = head.Value.Kind;
-        _lastObjective = _objectiveOp?.Objective ?? FloorObjectiveKind.None;
+        _boundSite = head;
         sb.CommitProtected = _objectiveOp?.ProtectsCommit == true;
     }
-
-    private static RoomObjectiveType WaypointTypeFor(in ObjectiveSite s) =>
-        s.Chest switch
-        {
-            Runtime.Floor.FloorChestKind.Silver => RoomObjectiveType.ChestSilver,
-            Runtime.Floor.FloorChestKind.Gold => RoomObjectiveType.ChestGold,
-            Runtime.Floor.FloorChestKind.Banded => RoomObjectiveType.ChestBanded,
-            _ => RoomObjectiveType.ChestBronze,
-        };
 
     /// <summary>Floor teardown: retire EVERY operation — cached work ops
     /// AND a bound op that was never cached (legacy boundary binding) —
@@ -500,8 +420,7 @@ internal sealed class CoordPipeline
             _objectiveOp?.OnRetired();
         _objectiveOp = null;
         _boundToken = default;
-        _boundKind = null;
-        _lastObjective = FloorObjectiveKind.None;
+        _boundSite = null;
         _claims.Clear();
         _lastWinner = null;
         _lastMasked.Clear();
@@ -515,22 +434,17 @@ internal sealed class CoordPipeline
     {
         var retiredToken = _boundToken;
         var boundary = native ?? _lastBoundary;
-        if (_lastWorkDriven && !string.IsNullOrEmpty(_boundToken.Key) &&
-            boundary?.Search is SiteSearchBoundary wsb && wsb.KnowledgeDriven)
+        if (!string.IsNullOrEmpty(_boundToken.Key) && boundary?.Search is { } wsb && _boundSite is { } site)
         {
             var outcome = status switch
             {
                 OpStatus.Succeeded => SiteWorkOutcome.Completed,
                 OpStatus.Failed => SiteWorkOutcome.Failed,
-                _ => SiteWorkOutcome.PolicySkipped,
+                OpStatus.PolicySkipped => SiteWorkOutcome.PolicySkipped,
+                _ => SiteWorkOutcome.Cancelled,
             };
-            // "chest-overcap-policy" identifies the explicit policy skip —
-            // cancellations report PolicySkipped without it and must not
-            // suppress future selection of the work.
-            var reason = status == OpStatus.PolicySkipped
-                ? "chest-overcap-policy"
-                : _objectiveOp?.Failure?.ToString();
-            wsb.ReportWorkOutcome(_boundToken, outcome, reason);
+            wsb.ReportWorkOutcome(_boundToken, site, outcome, _objectiveOp?.Failure, _objectiveOp?.ActiveChestAttempt,
+                (_objectiveOp as OpenChestOp)?.Exhaustion);
         }
         // Terminal outcome (success / failure / skip / cancel): the
         // execution attempt is done — release the cached op. Failed work
@@ -538,17 +452,7 @@ internal sealed class CoordPipeline
         if (!string.IsNullOrEmpty(_boundToken.Key))
             _workOperations.Remove(_boundToken);
         _boundToken = default;
-        _boundKind = null;
-        // Policy skips are policy conclusions, not failures — only real
-        // failures count toward the objective block counter. Work-driven
-        // failures were already reported above; this covers legacy ops.
-        if (status == OpStatus.Failed && _objectiveOp != null && !_lastWorkDriven)
-        {
-            var kind = _objectiveOp.Objective;
-            _objectiveFails[kind] = _objectiveFails.TryGetValue(kind, out var n) ? n + 1 : 1;
-            if (_objectiveFails[kind] >= MaxObjectiveFails)
-                _record("coord-objective-blocked", new { objective = kind.ToString(), fails = _objectiveFails[kind] });
-        }
+        _boundSite = null;
         _record("coord-op-retired", new
         {
             op = _objectiveOp?.GetType().Name,
@@ -566,6 +470,5 @@ internal sealed class CoordPipeline
         });
         _objectiveOp?.OnRetired();
         _objectiveOp = null;
-        _lastObjective = FloorObjectiveKind.None;
     }
 }

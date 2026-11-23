@@ -121,8 +121,6 @@ internal static class ObjectiveSiteSource
         // required, not-yet-completed purposes — never every room.
         foreach (var (room, pos, purpose) in intelProbes)
         {
-            if (room == spawnRoom)
-                continue;
             sites.Add(new ObjectiveSite(
                 id++, ObjectiveSiteKind.RoomProbe, room, pos,
                 RewardOf(ObjectiveSiteKind.RoomProbe, 0), 6f,

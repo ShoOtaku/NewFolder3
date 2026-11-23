@@ -36,8 +36,7 @@ public sealed partial class EncounterHintPlanner
         {
             _planningEpoch = request.Now;
             _intervalSolver = new(this);
-            _automatic = new(_intervalSolver, new HybridTreePlanner<EncounterForecastState>(_searchBudget, _searchRounds, _seed,
-                .05, sparsify: false, stopOnFeasible: true, reusePrefix: true, requireImpactMargin: true),
+            _automatic = new(_intervalSolver, new EncounterEventSearch(Math.Max(1, _searchBudget) * Math.Max(1, _searchRounds)),
                 _method.ToString().ToLowerInvariant(), CreateOverride());
             _sharedPlanner = new(_automatic);
         }
@@ -49,7 +48,8 @@ public sealed partial class EncounterHintPlanner
         _routeHorizon = _planningHorizon = problem.End - start;
         if ((request.Continuation ?? _deliveredRoute) is { Kind: EncounterRouteKind.Ready } previous
             && previous.EncounterId == request.Snapshot.EncounterId
-            && !previous.Points.Any(p => p.GameDriven))
+            && request.Displacement == null
+            && !previous.Points.Any(p => p.GameDriven && previous.OriginUtc.AddSeconds(p.Seconds) <= request.Now))
         {
             if (ReferenceEquals(request.Follower?.Plan, previous) && problem.CanKeep(previous))
             {
@@ -89,23 +89,18 @@ public sealed partial class EncounterHintPlanner
                 Work = "escape-step";
             }
         }
-        var selection = new MechanicRouteSelection(plan);
-        request.Snapshot.PathMechanic?.ProposeRoutes(problem, ref selection);
-        SearchEvaluations += selection.Evaluations;
-        if (selection.Replaced)
-        {
-            plan = selection.Plan;
-            _sharedPlanner.Retain(plan);
-            Work = selection.ProposalKind!;
-        }
         // The chosen candidate already carries its simulation result. Conversion
         // below integrates walking and the same upstream displacement projection.
         var assessment = plan.Assessment!.Value;
-        var points = ToPoints(plan, request, start);
+        var intervalRoute = Solver == "sipp" && Work == "search" ? _intervalSolver!.LastRoute : null;
+        var points = intervalRoute is { Points.Length: > 1, Complete: true, Assessment: { } graphScore }
+            && graphScore == assessment && !history && request.Snapshot.Hints is not { StackGoals.Length: > 0 }
+            && request.Displacement == null
+            ? intervalRoute.Points : ToPoints(plan, request, start);
         if (assessment.GeometryFailures != 0)
             return Route(request, EncounterRouteKind.NoRoute, [], assessment.Failures, (float)assessment.Exposure,
                 _totalExpanded, "auto-invalid-geometry");
-        var complete = true;
+        var complete = !assessment.RecoveryPending;
         if (Solver == "sipp" && Work == "search" && _intervalSolver!.LastRoute is { Complete: false } prefix)
         {
             complete = false;
@@ -119,7 +114,8 @@ public sealed partial class EncounterHintPlanner
             Recovery = _intervalSolver.Recovery,
             IntervalTiming = request.IntervalTiming,
             Complete = complete,
-            ProposalComparison = selection.Comparison
+            CompletionSlack = assessment.CompletionSlack,
+            Assessment = assessment
         };
     }
 
@@ -144,29 +140,36 @@ public sealed partial class EncounterHintPlanner
 
     private static EncounterRoutePoint[] ToPoints(ControlPlan plan, EncounterRouteRequest request, double time)
     {
-        double startupRemaining = 0;
-        var origin = time; var p = request.Position; var velocity = request.Velocity;
-        var branch = EncounterDisplacement.CreateBranch(request, origin);
-        var points = new List<EncounterRoutePoint> { new(p, 0) };
-        var knockbacks = request.Snapshot.Knockbacks; var k = 0;
+        var origin = time;
+        var simulation = new EncounterSimulation(request, origin, plan.Ends[^1] - origin, CancellationToken.None);
+        var state = simulation.CreateState();
+        var points = new List<EncounterRoutePoint> { new(request.Position, 0) };
+        var knockbacks = request.Snapshot.Knockbacks;
+        var k = 0;
         while (k < knockbacks.Length && knockbacks[k].Source.Activation < request.Now) ++k;
         for (var i = 0; i < plan.Ends.Length; ++i)
         {
             var command = plan.Velocities[i];
-            while (k < knockbacks.Length)
+            while (state.Time < plan.Ends[i] - 1e-8)
             {
-                var at = origin + (knockbacks[k].Source.Activation - request.Now).TotalSeconds;
-                if (at > plan.Ends[i] + 1e-8) break;
-                p = EncounterDisplacement.AdvanceWalking(request, p, ref velocity, ref startupRemaining, ref branch, command, time, at); time = at;
-                var landing = EncounterDisplacement.Project(request.Snapshot, knockbacks[k++], p, branch);
-                if (landing == p) continue;
-                points.Add(new(p, time - origin) { CommandVelocity = command });
-                p = landing; velocity = Vector2.Zero; startupRemaining = 0;
-                points.Add(new(p, time - origin) { CommandVelocity = Vector2.Zero, GameDriven = true });
+                while (k < knockbacks.Length && origin + (knockbacks[k].Source.Activation - request.Now).TotalSeconds <= state.Time + 1e-8) ++k;
+                var at = k < knockbacks.Length
+                    ? origin + (knockbacks[k].Source.Activation - request.Now).TotalSeconds : double.PositiveInfinity;
+                var motion = state.Forced;
+                var end = Math.Min(plan.Ends[i], Math.Min(at, motion?.End ?? double.PositiveInfinity));
+                simulation.Advance(state, command, end);
+                if (motion.HasValue)
+                {
+                    if (end >= motion.Value.End - 1e-8 || end >= at - 1e-8)
+                        points.Add(new(state.P, end - origin) { CommandVelocity = Vector2.Zero, GameDriven = true });
+                }
+                else if (end >= at - 1e-8 || i + 1 == plan.Ends.Length || command != plan.Velocities[i + 1])
+                    points.Add(new(state.P, end - origin)
+                    {
+                        CommandVelocity = command,
+                        KeepMovingToEnd = command != Vector2.Zero && simulation.RequiresMovement(end - 1e-6, end)
+                    });
             }
-            p = EncounterDisplacement.AdvanceWalking(request, p, ref velocity, ref startupRemaining, ref branch, command, time, plan.Ends[i]); time = plan.Ends[i];
-            if (i + 1 == plan.Ends.Length || command != plan.Velocities[i + 1])
-                points.Add(new(p, time - origin) { CommandVelocity = command });
         }
         return points.ToArray();
     }
@@ -200,7 +203,9 @@ public sealed partial class EncounterHintPlanner
             // Model construction and retained-candidate evaluation precede it.
             owner._planStarted = System.Diagnostics.Stopwatch.GetTimestamp();
             LastRoute = null;
-            if (owner.Prepare(q))
+            if (q.Displacement != null)
+                LastRoute = owner.PlanAfterObservedDisplacement(q);
+            else if (owner.Prepare(q))
             {
                 LastRoute = owner.PlanIntervals(q, CancellationToken.None);
                 // A short prefix can still end inside a resolving hazard. Compare
@@ -236,7 +241,8 @@ public sealed partial class EncounterHintPlanner
             var result = ToControls(points, problem);
             // Static SIPP accumulates the common score during its edge queries.
             // A forced research override with history still needs that model's evolution.
-            var assessment = !problem.RequiresHistory && q.Snapshot.Hints is not { StackGoals.Length: > 0 } && q.Snapshot.Knockbacks.Length == 0 && LastRoute.Assessment is { } scored ? scored
+            var assessment = !problem.RequiresHistory && q.Snapshot.Hints is not { StackGoals.Length: > 0 }
+                && LastRoute.Assessment is { } scored ? scored
                 : problem.Evaluate(result.Velocities, result.Ends);
             LastCost = assessment.Display; Evaluations = 1;
             return result with { Assessment = assessment };

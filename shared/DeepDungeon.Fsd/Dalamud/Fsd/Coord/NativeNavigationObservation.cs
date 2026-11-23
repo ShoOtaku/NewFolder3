@@ -1,6 +1,5 @@
 using System.Numerics;
 using DeepDungeon.Fsd.Dalamud.Utilities;
-using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using MasterPlayer.MechanicRuntime;
 
 namespace DeepDungeon.Fsd.Dalamud.Coord;
@@ -21,8 +20,15 @@ public sealed class NativeNavigationObservation
         }
         else grounded = false;
         var allowed = DirectMovementController.ObservedInputAllowed;
-        return _motion.Observe(new(position.X, position.Z), velocity, input, target, now,
-            grounded && allowed == true, pendingKnockback, movementLocked || allowed == false);
+        NativeDisplacementObservation? displacement;
+        unsafe
+        {
+            displacement = Service.LocalPlayer is { } player
+                ? NativeDisplacementReader.Capture((FFXIVClientStructs.FFXIV.Client.Game.Character.Character*)player.Address, now) : null;
+        }
+        var observation = _motion.Observe(new(position.X, position.Z), velocity, input, target, now,
+            grounded && allowed == true && displacement == null, pendingKnockback, movementLocked || allowed == false);
+        return observation with { Displacement = displacement, ForcedMovement = displacement != null };
     }
     public void CorrectPosition(Vector2 position) => _motion.CorrectPosition(position);
     public void Reset() => _motion.Reset();
@@ -30,20 +36,25 @@ public sealed class NativeNavigationObservation
 
 public static class NativeNavigationOutput
 {
-    public static unsafe void Apply(DirectMovementController controller, NavigationCommand command, Vector3 position)
+    public static unsafe bool Apply(DirectMovementController controller, NavigationCommand command, Vector3 position)
     {
-        if (PromeRadarMovementGate.IsBlocked) { controller.Release(); return; }
-        if (!MovementCoordinator.Shared.TryAcquireDirect(controller)) { controller.Release(); return; }
+        if (Runtime.Navigation.PromeRadarMovementGate.ShouldYield() ||
+            Runtime.Navigation.CastMovementGuard.ShouldWait())
+        {
+            controller.Release();
+            return false;
+        }
         if (command.Correction is { } correction && Service.LocalPlayer is { } player)
         {
             // The follower owns one correction at a walking endpoint. Preserve observed height.
             ((FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)player.Address)
                 ->SetPosition(correction.X, position.Y, correction.Y);
         }
-        if (command.Kind != NavigationCommandKind.Move) { controller.Release(); return; }
+        if (command.Kind != NavigationCommandKind.Move) { controller.Release(); return true; }
         controller.Enabled = true;
         controller.DesiredPosition = new(command.Target.X, position.Y, command.Target.Y);
         controller.InputScale = 1;
         controller.ClampFinalStep = false;
+        return true;
     }
 }

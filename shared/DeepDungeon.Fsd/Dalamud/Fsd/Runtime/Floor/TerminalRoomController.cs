@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using DeepDungeon.Fsd.Core;
+using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Enums;
@@ -173,18 +174,16 @@ internal sealed partial class TerminalRoomController
             _resultExitBefore, exit?.GameObjectId ?? 0, context.DutyFailureObserved))
         {
             _resultAltarComplete = true;
-            _navHelper.Cancel();
-            context.Navigator.CancelAll();
-            context.TerminalRewardsRequired = false;
-            if (!context.DutyCompletionObserved) context.MarkDutyCompleted();
-            context.StatusLine = Status = "100層祭壇互動完成；正常退本。";
+            bool stayInDuty = context.Duty.DungeonId == DungeonCatalog.HeavenOnHigh.DutyDungeonId ||
+                context.FarmingPlan?.HoldAfterClear == true;
+            FinishResult(stayInDuty);
             RecordReplayEvent("result-altar-completed", new
             {
                 altar.GameObjectId, altar.BaseId, before = _resultAltarCompletionBefore,
                 after = context.DutyCompletionSequence, evidence = profile.Evidence.ToString(),
                 exitBefore = _resultExitBefore, exitNow = exit?.GameObjectId
             });
-            Service.Log.Info($"[ResultRoom] Dungeon {context.Duty.DungeonId} altar {altar.BaseId} confirmed by {profile.Evidence}; normal leave enabled.");
+            Service.Log.Info($"[ResultRoom] Dungeon {context.Duty.DungeonId} altar {altar.BaseId} confirmed by {profile.Evidence}; stayInDuty={stayInDuty}.");
             return;
         }
         if ((now - _resultStarted).TotalSeconds > 60)
@@ -230,6 +229,18 @@ internal sealed partial class TerminalRoomController
         RecordReplayEvent("result-altar-interaction", new { altar.GameObjectId, altar.BaseId,
             dispatched, failure, completionBefore });
         Service.Log.Info($"[ResultRoom] Dungeon {context.Duty.DungeonId} altar interaction: id={altar.GameObjectId}, dispatched={dispatched}, reason={failure}; awaiting {profile.Evidence}.");
+    }
+
+    private void FinishResult(bool stayInDuty)
+    {
+        _navHelper.Cancel();
+        _ctx.Navigator.CancelAll();
+        _ctx.TerminalRewardsRequired = false;
+        if (!_ctx.DutyCompletionObserved) _ctx.MarkDutyCompleted();
+        _ctx.TerminalStayRequested = stayInDuty;
+        _ctx.StatusLine = Status = stayInDuty
+            ? $"{_ctx.Duty.Floor} 層獎勵已領取，FSD 結束。"
+            : "100層祭壇互動完成；正常退本。";
     }
 
     private void StopResultReview(string message, DateTime now)

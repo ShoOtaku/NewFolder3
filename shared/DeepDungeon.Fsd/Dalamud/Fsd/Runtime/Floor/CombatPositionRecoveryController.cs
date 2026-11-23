@@ -1,7 +1,9 @@
 using System.Numerics;
+using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Coord;
+using DeepDungeon.Fsd.Dalamud.Encounter;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
@@ -9,23 +11,39 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 /// <summary>Combat policy for a persistent attack goal. Navigation owns the region,
 /// path and hold state. This policy observes damage, requests another stand, or releases a target.</summary>
 internal sealed class CombatPositionRecoveryController(RunContext context, EnemyChaseHelper chase,
-    CombatRecoveryBudget budget, RunFloorTelemetryTrace? telemetry, Action<string> setStatus,
+    RunFloorTelemetryTrace? telemetry, CombatActionEvidence actionEvidence, Action<string> setStatus,
     Action<string, object> record)
 {
-    private static readonly NavigationRange RejectedStandRange = new(2f, NavigationDistanceMetric.Spatial);
     private ulong _id;
+    private uint _entityId;
     private uint _hp;
-    private TimeSpan _approachTime;
+    private bool _aggroObserved;
     private DateTime _lastUpdate;
-    private bool _walking;
     private Vector3 _lastPosition;
-    private DateTime _lastDamage, _lastMove, _recovery, _verify, _pause;
-    public DateTime AttackWindowStartedAt { get; private set; }
-    internal string? FailureReason { get; private set; }
+    private TimeSpan _stalledMovementTime;
+    private bool _recovering, _hadAttackOpportunity, _wasDriving;
+    private int _failures;
+    internal ulong BlockedAggroId { get; private set; }
+    private TimeSpan _attackTime;
+    private bool _suspended;
+    private DateTime _attackWindowStartedAt;
 
     internal void Suspend()
     {
-        if (_id != 0 && _pause == default) _pause = DateTime.UtcNow;
+        _suspended = true;
+        _hadAttackOpportunity = _wasDriving = false;
+    }
+
+    internal void ObserveTargetEngagement(NavigationSurface surface)
+    {
+        if (_id == 0 || _suspended || EnemyChaseHelper.ReadAggro(_entityId) is not bool hasAggro) return;
+        if (hasAggro)
+        {
+            _aggroObserved = true;
+            return;
+        }
+        if (_aggroObserved && Service.GameObjects.SearchById(_id) is IBattleChara { IsDead: false, CurrentHp: > 0 } target)
+            FailTarget(surface, "target-disengaged", target.CurrentHp);
     }
 
     internal NavOutcome Navigate(NavigationSurface surface, IBattleChara target, Vector3 player,
@@ -35,113 +53,149 @@ internal sealed class CombatPositionRecoveryController(RunContext context, Enemy
         if (id != _id)
         {
             _id = id;
+            _entityId = target.EntityId;
             _hp = target.CurrentHp;
-            _lastDamage = _lastMove = _lastUpdate = now;
-            _approachTime = default; _walking = false;
-            _lastPosition = player;
-            _recovery = _verify = _pause = AttackWindowStartedAt = default;
-        }
-        if (_pause != default)
-        {
-            var gap = now - _pause;
+            _aggroObserved = EnemyChaseHelper.IsAggroedToPlayer(_entityId);
             _lastUpdate = now;
-            _lastDamage += gap; _lastMove += gap;
-            if (_recovery != default) _recovery += gap;
-            if (_verify != default) _verify += gap;
-            if (AttackWindowStartedAt != default) AttackWindowStartedAt += gap;
-            _pause = default;
+            _attackTime = _stalledMovementTime = default;
+            _recovering = _hadAttackOpportunity = _wasDriving = false;
+            _lastPosition = player;
+            _attackWindowStartedAt = default;
         }
-        if (budget.Exhausted)
-            return Stop(surface, "Combat position recovery exhausted the floor retry limit.");
+        if (_suspended)
+        {
+            _lastUpdate = now;
+            _suspended = false;
+            ObserveTargetEngagement(surface);
+            if (_id == 0) return NavOutcome.Pending;
+        }
+        bool needsSafety = surface.NeedsSafetyPlan;
         var state = surface.NavigateToAttack(id, targetPosition, player, range);
         var region = surface.AttackRegion;
-        if (_walking) _approachTime += now - _lastUpdate;
+        var elapsed = TimeSpan.FromSeconds(Math.Clamp((now - _lastUpdate).TotalSeconds, 0, .5));
         _lastUpdate = now;
-        _walking = state == NavigationState.Moving && !region.Holding && !surface.NeedsSafetyPlan;
 
         if (target.CurrentHp < _hp)
         {
-            _lastDamage = now;
-            if (_recovery != default)
+            if (BlockedAggroId == id) BlockedAggroId = 0;
+            _attackTime = default;
+            _attackWindowStartedAt = default;
+            if (_recovering)
             {
                 record("sight-recovery-completed", new { targetId = id, reason = "target-hp-progress" });
-                _recovery = _verify = default;
+                _recovering = false;
                 region.ClearRejected();
             }
+            elapsed = default;
         }
         _hp = target.CurrentHp;
         if (region.Holding || Vector3.DistanceSquared(player, _lastPosition) > .04f)
         {
-            _lastMove = now;
+            _stalledMovementTime = default;
             _lastPosition = player;
         }
-        if (region.Holding && AttackWindowStartedAt == default) AttackWindowStartedAt = now;
-        var stalled = AttackWindowStartedAt != default
-            && now - AttackWindowStartedAt >= CombatPositionPolicy.UnknownNoProgressLimit
-            && now - _lastDamage >= CombatPositionPolicy.UnknownNoProgressLimit;
-        if (_recovery == default && stalled)
+        bool canAttack = region.Holding && target.IsTargetable && !needsSafety &&
+            !MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked &&
+            Service.TargetManager.Target?.GameObjectId == id;
+        if (canAttack)
         {
-            if (budget.IsTargetExhausted(id))
-                return SwitchTarget(surface, id);
-            _recovery = now;
-            if (region.Path is { } path) region.Reject(path.Points[^1], RejectedStandRange);
-            region.Reject(player, RejectedStandRange);
-            telemetry?.ObserveStalledEngageRecoveryStarted();
-            record("sight-recovery-started", new { targetId = id, reason = "no-target-progress",
-                failures = budget.TotalFailures, previousAttackTargetId = context.CombatAssist.SelectedId,
-                currentGameTargetId = Service.TargetManager.Target?.GameObjectId,
-                distance = Vector3.Distance(player, targetPosition), rejectedStandRadius = RejectedStandRange.Radius });
+            if (_attackWindowStartedAt == default) _attackWindowStartedAt = now;
+            if (_hadAttackOpportunity) _attackTime += elapsed;
         }
-        else if (_recovery != default && region.Holding)
+        _hadAttackOpportunity = canAttack;
+        var attackLimit = _recovering ? TimeSpan.FromSeconds(6) : CombatPositionPolicy.UnknownNoProgressLimit;
+        if (canAttack && _attackTime >= attackLimit)
         {
-            if (_verify == default) _verify = now;
-            if (now - _verify >= TimeSpan.FromSeconds(6))
-            {
-                region.Reject(player, RejectedStandRange);
-                _verify = default;
+            if (_recovering)
                 record("sight-recovery-position-rejected", new { targetId = id, reason = "attack-no-progress" });
+            else
+            {
+                RecordStalledAttack(target, player, region.Holding, now);
+                telemetry?.ObserveStalledEngageRecoveryStarted();
+                record("sight-recovery-started", new { targetId = id, reason = "no-target-progress", failures = _failures });
             }
+            _recovering = true;
+            _attackTime = default;
+            _attackWindowStartedAt = default;
+            _hadAttackOpportunity = false;
+            if (region.Path is { } path) region.Reject(path.Points[^1]);
+            region.Reject(player);
         }
-        else _verify = default;
 
-        // Preserve the former four held 30-second navigation attempts for one target.
-        var approachExhausted = _approachTime >= 4 * CombatPositionPolicy.AttemptLimit;
-        if (region.Unreachable || approachExhausted || state == NavigationState.Failed ||
-            now - _lastMove >= CombatPositionPolicy.AttemptLimit ||
-            (_recovery != default && now - _recovery >= CombatPositionPolicy.AttemptLimit))
+        bool driving = state == NavigationState.Moving && surface.InputEnabled && !needsSafety;
+        if (driving && _wasDriving) _stalledMovementTime += elapsed;
+        _wasDriving = driving;
+        bool stalledMovement = driving && _stalledMovementTime >= CombatPositionPolicy.AttemptLimit;
+        if (!needsSafety && (region.Unreachable || state == NavigationState.Failed || stalledMovement))
         {
             var reason = region.Unreachable ? "no-reachable-standing-position"
-                : approachExhausted ? "chase-navigation-exhausted" : "combat-position-no-progress";
-            budget.RecordFailure(id);
-            record("clearing-target-deprioritized", new { targetId = id, reason, hp = _hp,
-                failures = budget.TotalFailures, targetExhausted = budget.IsTargetExhausted(id) });
-            if (budget.Exhausted) return Stop(surface, "Combat position recovery exhausted the floor retry limit.");
-            return SwitchTarget(surface, id);
-        }
+                : surface.Failure ?? "combat-position-no-progress";
+            if (!EnemyChaseHelper.IsAggroedToPlayer(_entityId))
+                return FailTarget(surface, reason, _hp);
 
-        if (state != NavigationState.Arrived) return NavOutcome.Moving;
-        if (region.Holding) context.CombatAssist.OfferChaseTarget(id);
-        return NavOutcome.Arrived;
+            var status = $"已交戰，等待可攻擊站位：{reason}";
+            if (BlockedAggroId != id)
+            {
+                BlockedAggroId = id;
+                _failures++;
+                record("combat-position-blocked", new { targetId = id, reason, hp = _hp, failures = _failures });
+            }
+            if (stalledMovement)
+            {
+                _stalledMovementTime = default;
+                surface.CancelAttack(id);
+            }
+            setStatus(status);
+            return NavOutcome.Pending;
+        }
+        if (BlockedAggroId == id && state == NavigationState.Arrived) BlockedAggroId = 0;
+        return state == NavigationState.Arrived ? NavOutcome.Arrived : NavOutcome.Moving;
     }
 
-    private NavOutcome SwitchTarget(NavigationSurface surface, ulong id)
+    private void RecordStalledAttack(IBattleChara target, Vector3 player, bool holding, DateTime now)
     {
-        chase.DeprioritizeCurrentTarget();
-        context.SuppressCombatTarget(id, TimeSpan.FromSeconds(20));
-        context.ClearPreferredAggroTarget();
-        surface.Cancel();
+        try
+        {
+            var position = target.Position;
+            record("combat-attack-no-progress", new
+            {
+                floor = context.Duty.Floor,
+                observedAtUtc = now,
+                attackWindowStartedAtUtc = _attackWindowStartedAt,
+                inCombat = Service.Condition[ConditionFlag.InCombat],
+                fsdTargetId = target.GameObjectId,
+                fsdTargetEntityId = target.EntityId,
+                gameTargetId = Service.TargetManager.Target?.GameObjectId,
+                hp = target.CurrentHp,
+                maxHp = target.MaxHp,
+                targetable = target.IsTargetable,
+                holding,
+                playerPosition = new { player.X, player.Y, player.Z },
+                targetPosition = new { position.X, position.Y, position.Z },
+                native = actionEvidence.Snapshot(_attackWindowStartedAt),
+            });
+        }
+        catch (Exception ex)
+        {
+            Service.Log.Warning(ex, "[FSD] Could not record combat attack evidence.");
+        }
+    }
+
+    private NavOutcome FailTarget(NavigationSurface surface, string reason, uint hp)
+    {
+        var id = _id;
+        _failures++;
+        record("clearing-target-deprioritized", new { targetId = id, reason, hp,
+            failures = _failures });
+        if (BlockedAggroId == id) BlockedAggroId = 0;
+        context.SuppressCombatTarget(id);
+        chase.ReleaseTarget(id);
+        context.ClearingTargetId = null;
+        surface.CancelAttack(id);
         _id = 0;
-        AttackWindowStartedAt = default;
+        _attackWindowStartedAt = default;
         setStatus("Switching target after combat position recovery failed");
         return NavOutcome.Pending;
     }
 
-    private NavOutcome Stop(NavigationSurface surface, string reason)
-    {
-        surface.Cancel();
-        FailureReason = reason;
-        setStatus(reason);
-        record("sight-recovery-exhausted", new { reason, targetId = _id, failures = budget.TotalFailures });
-        return NavOutcome.Failed;
-    }
 }

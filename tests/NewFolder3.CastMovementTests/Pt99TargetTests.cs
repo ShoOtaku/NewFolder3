@@ -54,7 +54,7 @@ internal static class Pt99TargetTests
                 throw new NotSupportedException(name);
             }));
             Set("Log", TargetServiceProxy.Create<IPluginLog>((_, _) => { ++warnings; return null; }));
-            var request = new CombatTargetRequest(null, true, true, false, 25, true, null);
+            var request = new CombatTargetRequest(null, true, true, false, 25, null);
             var provider = new PromeRadarTargetProvider();
             void State(PromeRadarMovementState state)
             {

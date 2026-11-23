@@ -21,6 +21,9 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
     private SaveSlotSnapshot? _resetSource;
     private bool _creatingSave, _entered, _restDone, _complete, _recoverFailure, _aborted;
     private int _entryFloor;
+    internal bool CanRequestPause => _entered && !_complete &&
+        session.Plan is { Mode: FarmingMode.DeepProgression, HoldAfterClear: false, StopAfterFloor: null } &&
+        _context is { Duty.IsInDuty: true, DutyFailureObserved: false, AttemptAborted: false };
     private bool AttachCurrentDuty => session.Plan.AttachCurrentDuty && !session.AttachmentCompleted;
 
     public string Name => $"{DungeonShortLabel(session.Plan.DungeonId)} {session.Plan.DisplayName} ({(session.Plan.SaveUse == SaveUse.Prepared ? session.Source.Description : $"{session.NextFloor} 層")})";
@@ -86,7 +89,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             return;
         }
         ObserveDutyCompletion(ctx);
-        if (session.Plan.HoldAfterClear && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved)
+        if (session.Plan.HoldAfterClear && ctx.DutyCompletionObserved && !ctx.DutyFailureObserved && !ctx.TerminalRewardsRequired)
         {
             ctx.EntryReadyForDuty = false;
             ctx.Navigator.CancelAll();
@@ -98,7 +101,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         }
         if (ctx.Duty.IsInDuty)
         {
-            if (session.Plan.AttachCurrentDuty && !session.Plan.UsesSelectedProgressionSave &&
+            if (session.Plan.AttachCurrentDuty && !session.CreatedBySession && session.Source.Pinned == null &&
                 (ctx.AttemptAborted || ctx.DutyFailureObserved))
             {
                 string reason = ctx.AttemptAborted ? ctx.AttemptAbortReason : "攻略失敗";
@@ -157,7 +160,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _complete = true;
             return;
         }
-        if (session.Plan.AttachCurrentDuty && !session.Plan.UsesSelectedProgressionSave &&
+        if (session.Plan.AttachCurrentDuty && !session.CreatedBySession && session.Source.Pinned == null &&
             (!session.Plan.ContinuesAttachedProgression || !ctx.DutyCompletionObserved || ctx.DutyFailureObserved))
         {
             bool completed = ctx.DutyCompletionObserved && !ctx.DutyFailureObserved;
@@ -176,7 +179,8 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _aborted |= ctx.AttemptAborted;
         var result = new FarmingAttemptResult(
             _entryFloor, ctx.DutyCompletionObserved, ctx.DutyFailureObserved, ctx.HarvestComplete, _aborted);
-        if (FarmingSessionPolicy.ReachedStopBoundary(session.Plan, result, ctx.Configuration.PauseAfterCurrentFloorset))
+        if (session.PersistPause == null &&
+            FarmingSessionPolicy.ReachedStopBoundary(session.Plan, result, ctx.Configuration.PauseAfterCurrentFloorset))
         {
             _aborted = true; // Stop the host before it can construct the next entry attempt.
             _complete = true;
@@ -193,6 +197,19 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             return;
         }
         var decision = FarmingSessionPolicy.Decide(session.Plan, result);
+        if (session.PersistPause is { } persistPause)
+        {
+            if (!result.DutyCompleted || result.DutyFailed || result.Aborted || decision.Error.Length > 0)
+            {
+                FinishPause(ctx, "本組未正常通關，沒有可續跑的存檔。", error: true);
+                return;
+            }
+            if (!decision.CountCycle)
+            {
+                VerifyPauseSave(ctx, decision.NextFloor, persistPause);
+                return;
+            }
+        }
         if (session.Plan.ReusesSave)
         {
             _verification ??= new(_dungeon, session.Source.ExpectedFloor ?? 0, prepared: session.Source, verifyOnly: true);
@@ -220,6 +237,11 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             session.ConfirmOwnedSaveDeleted();
             ctx.RecordDiagnostic?.Invoke("farming-owned-save-reset-completed", new { entryFloor = _entryFloor, failed = ctx.DutyFailureObserved });
         }
+        if (session.PersistPause != null && decision.CountCycle)
+        {
+            FinishPause(ctx, "已完成最終層與收尾，任務已停止。");
+            return;
+        }
         CountsAsCycle = decision.CountCycle;
         _recoverFailure = decision.RecoverFailure;
         session.CompleteAttempt(decision, ctx.HoardDiscoveries);
@@ -242,6 +264,40 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _complete = true;
     }
 
+    private void VerifyPauseSave(RunContext ctx, int nextFloor, Func<SaveSlotSnapshot, string?> persist)
+    {
+        if (session.OwnedSlot < 0)
+        {
+            FinishPause(ctx, "無法辨認本任務的存檔槽位。", error: true);
+            return;
+        }
+        if (_verification == null)
+        {
+            session.Source.ConfigureForEntry(false, nextFloor, session.OwnedSlot, session.Plan.MaxFloor);
+            _verification = new(_dungeon, nextFloor, prepared: session.Source, verifyOnly: true);
+            _verification.Prepare(ctx);
+        }
+        var result = _verification.Update();
+        if (result.Outcome == EntryOutcome.Pending) return;
+        if (result.Outcome != EntryOutcome.SourceVerified || session.Source.Pinned is not { } slot)
+        {
+            FinishPause(ctx, result.Reason, error: true);
+            return;
+        }
+        var error = persist(slot);
+        FinishPause(ctx, error ?? $"已暫停。繼續時從第 {nextFloor} 層開始。", error != null);
+    }
+
+    private void FinishPause(RunContext ctx, string status, bool error = false)
+    {
+        _aborted = true;
+        _complete = true;
+        ctx.StatusLine = status;
+        ctx.StatusIsError = error;
+        ctx.RecordDiagnostic?.Invoke(error ? "farming-pause-failed" : "farming-pause-complete",
+            new { floor = _entryFloor, slot = session.OwnedSlot, status });
+    }
+
     private bool TryEnterDuty(RunContext ctx, IFramework framework)
     {
         if (_entryReset != null)
@@ -262,6 +318,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             _entry?.Dispose();
             _entry = null;
         }
+        if (session.ResumeCharacter is { } character && Service.PlayerState.ContentId != character)
+        {
+            ctx.StatusLine = "繼續期間角色已變更，請使用暫停時的角色重試。";
+            ctx.StatusIsError = true;
+            return false;
+        }
+
         // An entry controller owns its selected source and UI confirmation.
         // Do not bypass it by attaching when its own entry arrives in-game.
         if (_entry == null)
@@ -287,6 +350,12 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             }
             if (decision.Action == FarmingEntryAction.Attach)
             {
+                if (session.ConfirmResume != null)
+                {
+                    ctx.StatusLine = "繼續前須在副本外驗證原存檔。";
+                    ctx.StatusIsError = true;
+                    return false;
+                }
                 BeginDuty(ctx, session.NextFloor);
                 ctx.PreparedSaveDescription = AttachCurrentDuty
                     ? $"原副本接續，起點 {_entryFloor} 層，保留存檔"
@@ -309,11 +378,13 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             {
                 _creatingSave = true;
                 _entry = new(_dungeon, session.NextFloor, preferredSlot: _resetSource?.Index ?? 0,
-                    resetWhenFull: session.Plan.Mode == FarmingMode.Hoard && _resetSource == null);
+                    resetWhenFull: session.Plan.Mode == FarmingMode.Hoard && _resetSource == null,
+                    requiredEmptySlot: _resetSource?.Index);
             }
             _entry.Prepare(ctx);
         }
         var entry = _entry.Update();
+        if (entry.Outcome == EntryOutcome.SourceConflict) session.RejectResumeSource?.Invoke(entry.Reason);
         if (entry.Outcome == EntryOutcome.ResetRequired)
         {
             if (session.Plan.Mode != FarmingMode.Hoard || session.Plan.SaveUse != SaveUse.Create || _resetSource != null || _entry.ResetSource == null)
@@ -351,6 +422,16 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
             ctx.StatusLine = "入場來源未由本任務建立；停止自動化，請手動退本。";
             ctx.StatusIsError = true;
             return false;
+        }
+        if (session.ConfirmResume is { } confirmResume)
+        {
+            if (confirmResume() is { } error)
+            {
+                ctx.StatusLine = error;
+                ctx.StatusIsError = true;
+                return false;
+            }
+            session.MarkResumed();
         }
         BeginDuty(ctx, entry.Floor);
         return true;
@@ -400,7 +481,7 @@ internal sealed class FarmingScenario(FarmingSession session) : IScenario
         _ => "PT"
     };
     private string? ValidateOwnedSave(IReadOnlyList<SaveSlotSnapshot> slots) =>
-        OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned);
+        OwnedSavePolicy.ValidateForDeletion(slots, session.OwnedSlot, _entryFloor, session.Source.Pinned, session.CreatedBySession);
     private void RequestLeave()
     {
         if (_context == null || _context.RunOptions.Current.LeaveMode == LeaveMode.Immediate) return;

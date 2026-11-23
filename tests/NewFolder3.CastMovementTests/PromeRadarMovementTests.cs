@@ -18,6 +18,7 @@ internal static class PromeRadarMovementTests
             GateAndNavigation();
             foreach (bool precondition in new[] { false, true }) ChestPause(precondition);
             AcceptedDuringPause();
+            CachedChestStaysSuspended();
         }
         finally { PromeRadarMovementGate.SetControl(false, () => { }); }
         Console.WriteLine("PASS MP exclusive movement: synchronous revocation, denied cancellation, output/correction gates, long navigation wait, chest identity, frozen timers, reapproach and observed acceptance.");
@@ -45,7 +46,9 @@ internal static class PromeRadarMovementTests
             "FSD redispatched or consumed retries during MP ownership.");
         using (var direct = new DirectMovementController("test"))
         {
-            NativeNavigationOutput.Apply(direct, new(NavigationCommandKind.Move, Vector2.One, Vector2.One), Vector3.Zero);
+            Check(!NativeNavigationOutput.Apply(direct,
+                    new(NavigationCommandKind.Move, Vector2.One, Vector2.One), Vector3.Zero),
+                "A blocked correction was reported as applied.");
             Check(!direct.Enabled && !DirectMovementController.InputHooksReady,
                 "A blocked output reached native initialization/position correction.");
             Check(!direct.TryWriteForcedDirection(0), "A blocked output wrote forced direction.");
@@ -85,7 +88,7 @@ internal static class PromeRadarMovementTests
     {
         var now = new DateTime(2026, 11, 19, 0, 0, 0, DateTimeKind.Utc);
         var native = new ChestBoundary { CanStart = !precondition };
-        var op = new OpenChestOp(new RoomWaypoint(Vector3.UnitZ, RoomObjectiveType.ChestGold));
+        var op = new OpenChestOp(new ChestInteractionTarget(Vector3.UnitZ, FloorChestKind.Gold));
         var facts = Facts(now);
         op.Tick(facts, native, now, OpAuthority.None);
         op.OnNavArrived();
@@ -117,7 +120,7 @@ internal static class PromeRadarMovementTests
     {
         var now = new DateTime(2026, 11, 19, 0, 0, 0, DateTimeKind.Utc);
         var native = new ChestBoundary();
-        var op = new OpenChestOp(new RoomWaypoint(Vector3.UnitZ, RoomObjectiveType.ChestGold));
+        var op = new OpenChestOp(new ChestInteractionTarget(Vector3.UnitZ, FloorChestKind.Gold));
         op.Tick(Facts(now), native, now, OpAuthority.None);
         op.OnSuspended(now);
         native.Accepted = true;
@@ -126,7 +129,32 @@ internal static class PromeRadarMovementTests
     }
 
     private static FloorFacts Facts(DateTime now) => new FloorObservation().Assemble(21, 0, now, Vector3.Zero,
-        false, false, false, default, new(true, 1, 1, now, Vector3.Zero, 0, [], [], [], [], []), null, null, null, -1);
+        false, false, false, new(true, 1, 1, now, Vector3.Zero, 0, [], [], [], []));
+    private static void CachedChestStaysSuspended()
+    {
+        var now = new DateTime(2026, 11, 23, 0, 0, 0, DateTimeKind.Utc);
+        var native = new ChestBoundary();
+        var cached = new OpenChestOp(new ChestInteractionTarget(Vector3.UnitZ, FloorChestKind.Gold));
+        cached.Tick(Facts(now), native, now, OpAuthority.None);
+        cached.OnNavArrived();
+        cached.Tick(Facts(now), native, now.AddMilliseconds(100), OpAuthority.None);
+        var attempt = cached.ActiveChestAttempt;
+        cached.OnSuspended(now.AddMilliseconds(200)); // Its route head was replaced.
+        var bound = new OpenChestOp(new ChestInteractionTarget(Vector3.UnitX, FloorChestKind.Gold));
+        var pipeline = new CoordPipeline((_, _) => { });
+        var fields = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        var cache = (Dictionary<SiteWorkToken, FloorOperation>)typeof(CoordPipeline)
+            .GetField("_workOperations", fields)!.GetValue(pipeline)!;
+        cache[new(1, "cached", 1)] = cached;
+        cache[new(1, "bound", 1)] = bound;
+        typeof(CoordPipeline).GetField("_objectiveOp", fields)!.SetValue(pipeline, bound);
+        pipeline.SetExternalMovement(true, now.AddSeconds(1));
+        pipeline.SetExternalMovement(false, now.AddSeconds(60));
+        cached.OnResumed(now.AddSeconds(120)); // Rebind A only after B's external pause ended.
+        Check(cached.Tick(Facts(now), native, now.AddSeconds(120), OpAuthority.None) == OpStatus.Running &&
+              cached.Failure == null && ReferenceEquals(attempt, cached.ActiveChestAttempt),
+            "An external pause resumed an unbound cached chest and consumed its deadline.");
+    }
     private static void Check(bool ok, string message) { if (!ok) throw new InvalidOperationException(message); }
 
     private sealed class ChestBoundary : INativeBoundary
@@ -135,8 +163,8 @@ internal static class PromeRadarMovementTests
         internal bool Accepted;
         internal int Interactions;
         internal ChestInteractionAttempt? LastAttempt;
-        public ISearchBoundary? Search => null;
-        public NavOutcome Execute(IClaimVerb? verb) => NavOutcome.Arrived;
+        public SiteSearchBoundary? Search => null;
+        public NavResult Execute(IClaimVerb? verb) => new(NavOutcome.Arrived);
         public NavOutcome Navigate(Vector3 dest, float radius) => NavOutcome.Arrived;
         public void CancelMovement() { }
         public bool IsChestAccepted(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot? evidence, out ChestLifecycleSnapshot snapshot)
@@ -144,7 +172,7 @@ internal static class PromeRadarMovementTests
         public bool IsChestTargetMissing(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot? evidence) => false;
         public bool TryChestInteract(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot evidence, out ChestLifecycleSnapshot snapshot, out bool retry)
         { LastAttempt = attempt; Interactions++; snapshot = default; retry = false; return true; }
-        public float ChestOpenTimeoutSeconds(RoomWaypoint waypoint) => 30;
+        public float ChestOpenTimeoutSeconds(ChestInteractionTarget waypoint) => 30;
         public bool CanStartChest(ChestInteractionAttempt attempt) => CanStart;
         public ChestPositionObservation ObserveChestPosition(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot? evidence) =>
             new(true, Interactions > 0, true, false, 100, Vector3.UnitZ, new(3));

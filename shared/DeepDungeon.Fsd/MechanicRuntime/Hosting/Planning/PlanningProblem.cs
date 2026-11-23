@@ -66,16 +66,7 @@ interface ISearchWork { string LastWork { get; } int Transitions { get; } }
 interface ITreeDiagnostics { TreeDiagnostics? SearchDiagnostics { get; } }
 sealed class TreeDiagnostics
 {
-    public string Acceptance { get; init; } = "refine";
-    public bool ReusePrefix { get; init; }
-    public double SetupMs { get; set; }
-    public double WarmMs { get; set; }
-    public double ExpandMs { get; set; }
-    public double TailMs { get; set; }
-    public int Iterations { get; set; }
     public int Extensions { get; set; }
-    public int DistanceTests { get; set; }
-    public int TailPrefixStepsSaved { get; set; }
     public string Exit { get; set; } = "budget";
 }
 readonly record struct ExecutedControl(double from, double until, float vx, float vz);
@@ -86,6 +77,8 @@ readonly record struct PlanScore(int Failures, double Soft, double Travel, doubl
     public bool HasStackGoal { get; init; }
     public float StackDistance { get; init; }
     public double? CompletionSlack { get; init; }
+    public bool RecoveryPending { get; init; }
+    public double ResidenceMarginShortfall { get; init; }
     public double Display => GeometryFailures * 1e12 + Failures * 1e7 + Soft + Travel * .01;
     public int CompareTo(PlanScore other)
     {
@@ -95,11 +88,19 @@ readonly record struct PlanScore(int Failures, double Soft, double Travel, doubl
         {
             c = other.FirstViolation.CompareTo(FirstViolation); if (c != 0) return c;
         }
+        c = RecoveryPending.CompareTo(other.RecoveryPending); if (c != 0) return c;
+        c = ResidenceMarginShortfall.CompareTo(other.ResidenceMarginShortfall); if (c != 0) return c;
         if (Failures > 0 || HasStackGoal || other.HasStackGoal)
         {
             c = ImpactMarginShortfall.CompareTo(other.ImpactMarginShortfall); if (c != 0) return c;
             c = Exposure.CompareTo(other.Exposure); if (c != 0) return c;
             c = StackDistance.CompareTo(other.StackDistance); if (c != 0) return c;
+        }
+        if (Failures == 0 && (CompletionSlack.HasValue || other.CompletionSlack.HasValue))
+        {
+            c = ImpactMarginShortfall.CompareTo(other.ImpactMarginShortfall); if (c != 0) return c;
+            c = (other.CompletionSlack ?? double.NegativeInfinity).CompareTo(CompletionSlack ?? double.NegativeInfinity);
+            if (c != 0) return c;
         }
         c = Soft.CompareTo(other.Soft); return c != 0 ? c : Travel.CompareTo(other.Travel);
     }

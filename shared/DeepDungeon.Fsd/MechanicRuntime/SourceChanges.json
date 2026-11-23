@@ -10,9 +10,9 @@
     "importedSha256": "f29e286d8722bb88228fb4108fd7cc55c90af4f4c4c8a474724b4ef3e4e66322"
   },
   "BossModule/AIHints.cs": {
-    "reason": "寻路引擎与 AI 执行器已移除：删除 InitPathfindMap 及 AIConfig 静态引用；Teleporter 结构体自 Pathfinding/ThetaStar.cs 迁入本文件（BossMod 命名空间，字段原样），Teleporters 列表与 PathfindMapObstacles 数据面保留。",
+    "reason": "寻路引擎与 AI 执行器已移除：删除 InitPathfindMap 及 AIConfig 静态引用；Teleporter 结构体自 Pathfinding/ThetaStar.cs 迁入本文件（BossMod 命名空间，字段原样），Teleporters 列表与 PathfindMapObstacles 数据面保留。保留宿主的单次结算、击退、追逐及分摊资料，另提供仅供规划消费的后续结算预报。",
     "originalSha256": "fb0937a1c69e43acc54eac99fae844e52839e54d222b626bb6ea0a6f4ba1cce7",
-    "importedSha256": "93e8276007902be9694f33e259e709b9efb76d0a59a87b93ead1ac443da3ea11"
+    "importedSha256": "c2559d60f2c7383f7b5c6eea3a72f568999d5b3df38f56ae20a8d428828068e6"
   },
   "BossModule/ArenaBounds.cs": {
     "reason": "寻路引擎已移除：删除 PathfindMap 抽象方法与 Circle/ABRect/Custom 三处实现及各自 BuildMap/_cachedMap；allowObstacleMap 构造参数与字段保留，模块构造签名不变。",
@@ -43,6 +43,11 @@
     "reason": "Teleporter 结构体已迁入 BossMod 命名空间（AIHints.cs）：字段声明去 Pathfinding 限定；传送圈绘制与状态逻辑不变。",
     "originalSha256": "8c4b3d6a002f5105b05d92db69ebdf79fa52a2918e16e7689748ad9479010865",
     "importedSha256": "964b4156846c7df390796f9b1b7a743ae772f757b495bc00de7880dd3dbf959d"
+  },
+  "Modules/Dawntrail/DeepDungeon/PilgrimsTraverse/DD70ForgivenZeal.cs": {
+    "reason": "光轮标记为单次结算，按光球自身读条校正结算时间。元件将后续光轮另行提供给规划器，保留当前光轮的提示和绘制范围。",
+    "originalSha256": "70b949968c53eef120c4b8d81b9982321c2e590a1c36625a065570e0cf8b501c",
+    "importedSha256": "b35b19685cb1ec4af5a0a1a11ccc3530e180182d95d03b240bc7947518701d48"
   },
   "Modules/RealmReborn/Extreme/Ex3Titan/Ex3TitanAI.cs": {
     "reason": "删除 AIRotationModule 子类 Ex3TitanAIRotation（寻路与 AI 执行器已移除）；保留同名 BossComponent（Ex3TitanStates 以 ActivateOnEnter/ExecOnExit 使用），组件逻辑不变。",
@@ -123,5 +128,15 @@
     "reason": "动态解析穿山甲，缺失时不构造虚假的连线接取位置。",
     "originalSha256": "98c04d8161d04797dd557faa4056855cfbda4c33ffb7610547aead29d106f2eb",
     "importedSha256": "55933f1518be13becc3d25d14c667ffcf98f3afd7f41c76c3a75a539f89ad7a9"
+  },
+  "Components/Knockback.cs": {
+    "reason": "发布原始击退资料，并标记该元件在起跳时刻提供的单次限制。时间轴和效果资料由宿主解析。",
+    "originalSha256": "18eec2fdb4836cf16b2060a68f29a04fc625a95a1db33c064e7fd7703d842075",
+    "importedSha256": "9ba6bba8a870882a94319dd85be0c541687e4240eb161dd6b39696df5b4be341"
+  },
+  "Util/ShapeDistance/KnockbackInSquare.cs": {
+    "reason": "提供相同位移和平面落点范围的判定，使宿主可直接验证投影落点，保留原始禁区行为与边距。",
+    "originalSha256": "599b2b76edf898c331e8d36b16ed90352f9183db4b3e7d33a58cd6128d77c40d",
+    "importedSha256": "8c714fed5995c756eade5627c87aaef5e2de068dd3847da9a36bdcc726003671"
   }
 }

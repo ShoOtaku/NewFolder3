@@ -8,7 +8,9 @@ using DeepDungeon.Fsd.Dalamud.GameState;
 using DeepDungeon.Fsd.Dalamud.Map;
 using DeepDungeon.Fsd.Dalamud.Runtime;
 using DeepDungeon.Fsd.Dalamud.Runtime.Floor;
+using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using MasterPlayer.MechanicRuntime;
 
 namespace DeepDungeon.Fsd.Dalamud.Coord;
 
@@ -27,16 +29,13 @@ namespace DeepDungeon.Fsd.Dalamud.Coord;
 /// </summary>
 internal sealed class ObjectiveSiteDriver : IDisposable
 {
-    private readonly ObjectiveIntent _intent = new();
     private readonly List<ObjectiveSite> _sites = new();
-    private readonly List<int> _tail = new();
     private string _committedKey = "";
     private SiteWorkToken _committedToken;
     private long _lastRebuildMs;
     private ObjectiveSiteSource.ObjectiveSiteFilter _filter =
         new(OpenBronze: true, OpenSilver: true, OpenGold: true,
             Banded: true, HuntMobs: true, ProbeRooms: true, Exit: true);
-    private ObjectiveTunables _tunables = new();
 
     // ---- knowledge-driven mode ----
     private DetailedMapRunSnapshot? _map;
@@ -55,7 +54,6 @@ internal sealed class ObjectiveSiteDriver : IDisposable
     private readonly List<int> _rooms = new();
     private readonly PalantirProvider _palantir = new();
     private NormalFloorGraphSnapshot? _normalGraph;
-    private Func<bool>? _passageOpen;
     private FloorActivity _activity;
     // Floor-level geometry: anchors, legal rooms, pairwise room paths and
     // the distance estimator are built ONCE per floor — never per rebuild.
@@ -84,36 +82,24 @@ internal sealed class ObjectiveSiteDriver : IDisposable
     /// plain travel.</summary>
     internal bool CommitProtected { get; set; }
     internal bool KnowledgeHoardAcquired => _knowledge?.Floor?.HoardAcquired == true;
+    internal string? BlockedWorkReason { get; private set; }
+    internal bool PassageSearchExhausted { get; private set; }
 
-    // Side-tables keyed by stable site Key — legacy path only.
-    private readonly Dictionary<string, float> _dwellSec = new();
-    private readonly Dictionary<string, int> _seen = new();
-    private readonly int[] _hops = new int[RoomGraph.MaxRooms];
-
-    private const int EvidenceDebounceRevisions = 2;
-
-    private bool EvidenceConfirmed(ObjectiveSite s) =>
-        s.Kind is not (ObjectiveSiteKind.Hoard
-            or ObjectiveSiteKind.ConfirmedChest
-            or ObjectiveSiteKind.HoardIndicator)
-        || _seen.GetValueOrDefault(SiteKey(s)) >= EvidenceDebounceRevisions;
-    private int _hopSource = -1;
-    private DateTime _lastTickUtc;
-
-    private int _lastFloor = -1;
-    private int _spawnRoom = -1;
-
-    private const float RetryableReviveM = 12f;
-    private const float DwellRadiusM = 4f;
-    private const float DwellTargetSec = 3f;
+    internal void SetNavigationMap(NavBitmap? map)
+    {
+        if (ReferenceEquals(_navigationMap, map)) return;
+        _navigationMap = map;
+        _observedPassageWork.Clear();
+        foreach (var key in _failedWorkKeys.Where(pair => pair.Value.Failure == FailureKind.Unreachable)
+                     .Select(pair => pair.Key).ToArray())
+            _failedWorkKeys.Remove(key);
+        _routeDirty = true;
+    }
 
     /// <summary>The most recently ticking driver — read by the world
     /// overlay. Self-registered in TickDecision, cleared on Dispose.</summary>
     internal static ObjectiveSiteDriver? Active { get; private set; }
 
-    private readonly Dictionary<string, float> _lastScores = new();
-    internal IReadOnlyDictionary<string, float> LastScores => _lastScores;
-    internal IReadOnlyDictionary<string, float> DwellSeconds => _dwellSec;
 
     internal ObjectiveSite? Head { get; private set; }
     internal SiteWorkToken HeadToken => _committedToken;
@@ -122,11 +108,8 @@ internal sealed class ObjectiveSiteDriver : IDisposable
     /// host; frozen at each rebuild.</summary>
     internal Func<Vector3?>? ChasePositionProvider;
     internal IReadOnlyList<ObjectiveSite> Sites => _sites;
-    internal IReadOnlyList<int> Tail => _tail;
     internal IReadOnlyList<RoomSitePlanner.RouteWorkItem> RouteWork => _routeWork;
     internal string Status { get; private set; } = "idle";
-    internal HeadGateResult LastGate { get; private set; } = HeadGateResult.Keep;
-    internal bool KnowledgeDriven => _knowledge != null;
 
     internal int OpenCount
     {
@@ -146,36 +129,34 @@ internal sealed class ObjectiveSiteDriver : IDisposable
     {
         _committedKey = "";
         _committedToken = default;
-        _intent.CommittedSiteId = -1;
         Head = null;
     }
 
     internal void Configure(
-        ObjectiveSiteSource.ObjectiveSiteFilter filter,
-        ObjectiveTunables tunables)
+        ObjectiveSiteSource.ObjectiveSiteFilter filter)
     {
         _filter = filter;
-        _tunables = tunables;
     }
 
     /// <summary>Bind the knowledge-driven normal path: the run-pinned map
     /// snapshot (never DetailedMapCatalogManager.Active), the shared run
     /// knowledge, the mode policy, the authoritative passage-open state
     /// (duty flag, not object-range actors), and decision telemetry.</summary>
+    private Func<ChestInteractionAttempt, bool>? _canClearChestOvercap;
+
     internal void ConfigureWork(
         DetailedMapRunSnapshot map,
         RunKnowledge knowledge,
         Func<FloorWorkPolicy> policy,
-        Func<bool> passageOpen,
-        Action<string, object> record)
+        Action<string, object> record,
+        Func<ChestInteractionAttempt, bool> canClearChestOvercap)
     {
         _map = map;
         _knowledge = knowledge;
         _policy = policy;
-        _passageOpen = passageOpen;
         _record = record;
-        _policySkippedChestKeys.Clear();   // per-floor scope
-        _failedWorkKeys.Clear();
+        _canClearChestOvercap = canClearChestOvercap;
+        BlockedWorkReason = null;
         _routeDirty = true;
     }
 
@@ -255,15 +236,8 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             Head = null;
             return;
         }
-        if (_knowledge != null)
-        {
-            TickKnowledgeDecision(dd, playerPos, evidence);
-            return;
-        }
-        TickLegacyDecision(dd, playerPos, evidence);
+        TickKnowledgeDecision(dd, playerPos, evidence);
     }
-
-    // ==================== knowledge-driven normal path ====================
 
     private unsafe void TickKnowledgeDecision(
         InstanceContentDeepDungeon* dd,
@@ -277,15 +251,34 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             Head = null;
             return;
         }
-        _lastTickUtc = DateTime.UtcNow;
 
         var nowMs = Environment.TickCount64;
+        int stoneCount = _chestCapacity.Count == 0 ? -1 : SiteSearchBoundary.ReadStoneCount(dd);
+        foreach (var (key, capacity) in _chestCapacity)
+        {
+            var (attempt, wasBlocked) = capacity;
+            bool blocked = !(attempt.PendingGoldOvercapSlotIndex is { } slot && _knowledge.GetPomanderStock(slot) < 3) &&
+                !(attempt.PendingSilverOvercapStoneRowId.HasValue && stoneCount is >= 0 and < 3) &&
+                _canClearChestOvercap?.Invoke(attempt) != true;
+            if (wasBlocked == blocked) continue;
+            _chestCapacity[key] = (attempt, blocked);
+            _routeDirty = true;
+        }
         var playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
         var dirty = _routeDirty
             || fk.Revision != _seenKnowledgeRevision
             || _knowledge.InventoryRevision != _seenInventoryRevision
             || evidence.Version != _seenEvidenceVersion
             || nowMs - _lastRebuildMs > 1500;
+        if (playerRoom >= 0 && playerRoom != _failureOriginRoom)
+        {
+            _failureOriginRoom = playerRoom;
+            foreach (var key in _failedWorkKeys.Where(item =>
+                         item.Value.Failure == FailureKind.Unreachable &&
+                         item.Value.Kind is ObjectiveSiteKind.Candidate or ObjectiveSiteKind.RoomProbe or ObjectiveSiteKind.PassageSearch)
+                         .Select(item => item.Key).ToArray())
+                dirty |= _failedWorkKeys.Remove(key);
+        }
         if (dirty)
         {
             _lastRebuildMs = nowMs;
@@ -298,10 +291,10 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             ObjectiveSite? lone = null;
             foreach (var s in _sites)
                 if (s.Status == ObjectiveSiteStatus.Open &&
-                    s.Kind is ObjectiveSiteKind.Quota or ObjectiveSiteKind.Passage)
+                    s.Kind is ObjectiveSiteKind.Quota or ObjectiveSiteKind.Passage or ObjectiveSiteKind.PassageSearch)
                 { lone = s; break; }
             CommitHead(lone);
-            Status = lone.HasValue ? $"head={lone.Value.Kind} route=empty" : "work-resolved";
+            Status = lone.HasValue ? $"head={lone.Value.Kind} route=empty" : BlockedWorkReason ?? "work-resolved";
             EmitRouteRecord(fk);
             return;
         }
@@ -332,13 +325,6 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         CommitHead(head);
         EmitRouteRecord(fk);
 
-        _tail.Clear();
-        for (var i = 0; i < _routeWork.Count && _tail.Count < 8; i++)
-        {
-            var s = _routeWork[i].Site;
-            if (SiteKey(s) != _committedKey)
-                _tail.Add(s.Id);
-        }
         Status = head.HasValue
             ? $"head={head.Value.Kind}@{head.Value.RoomIndex} route={_routeWork.Count} " +
               $"rate={(fk.ActiveHoardRate?.ToString("0.000") ?? fk.SelectionSource)}"
@@ -397,15 +383,12 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                 if (!_attempts.TryGetValue(key, out var attempt))
                     _attempts[key] = attempt = ++_nextAttempt;
                 _committedToken = new SiteWorkToken(generation, key, attempt);
-                _intent.CommittedSiteId = head.Value.Id;
-                _intent.CommittedAtUtc = DateTime.UtcNow;
             }
         }
         else
         {
             _committedKey = "";
             _committedToken = default;
-            _intent.CommittedSiteId = -1;
         }
     }
 
@@ -475,15 +458,17 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         DeepDungeonFloorsetTracker.TryGetCurrentFloorsetState(
             dd->Floor, out var floorsetState);
         var opportunity = FloorsetHoardDistributionPolicy.Decide(floorsetState, dd->Floor);
-        var state = PlanGenerator.ResolveHoardEvidenceState(new FloorPlanSnapshot
+        var state = HoardEvidencePolicy.Resolve(new HoardEvidenceSnapshot
         {
             BandedEnabled = policy.SearchHoard,
             HoardOpenedThisFloor = fk.HoardAcquired,
-            ChatSaysNoHoard = fk.ChatSaysNoHoard || fk.InheritedNoHoardInferred,
+            ChatSaysNoHoard = fk.ChatSaysNoHoard,
+            ExactHoardObserved = exact.HasValue || fk.ObservedBandedPositions.Count > 0,
             InheritedNoHoardInferred = fk.InheritedNoHoardInferred,
             CachedHoardIndicatorRoomIndex = exactRoom,
             ChatSaysHoard = fk.ChatSaysHoard,
-            UsedIntuitionThisFloor = fk.HasCurrentFloorIntuitionUse,
+            UsedIntuitionThisFloor = fk.UsedIntuitionThisFloor,
+            AwaitingIntuitionResult = fk.IntuitionUsePendingThisFloor,
             IntuitionActive = fk.NativeIntuitionActive,
             FloorsetHoardOpportunity = opportunity,
         });
@@ -628,14 +613,14 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                     Chest: kind, Key: $"chest:{c.EntityId}"));
             }
 
-        // Explicit policy-skipped chests (overcap) are legal but no longer
-        // admitted this floor — filtered AFTER live AND remembered chest
+        // A capacity block leaves a chest out while that inventory slot
+        // still has no space — filtered AFTER live AND remembered chest
         // generation, BEFORE admission/required counts; never recorded as
         // completed.
-        if (_policySkippedChestKeys.Count > 0)
+        if (_chestCapacity.Count > 0)
             produced.RemoveAll(s =>
                 s.Kind == ObjectiveSiteKind.ConfirmedChest &&
-                s.Key is { } ck && _policySkippedChestKeys.Contains(ck));
+                s.Key is { } ck && _chestCapacity.TryGetValue(ck, out var capacity) && capacity.Blocked);
 
         // Exact-known hoard: a destination requirement that bypasses
         // optional candidate selection entirely — until its coffer exists,
@@ -653,11 +638,14 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                 1f, 3f, ObjectiveSiteStatus.Open,
                 Key: $"hoard:{exact.Value.X:0.###}:{exact.Value.Y:0.###}:{exact.Value.Z:0.###}"));
 
-        // Failed work keys are legal but no longer admitted this floor —
+        // Work failures stay scoped to the observation that produced them —
         // excluded AFTER live/remembered/exact generation, BEFORE the
         // completion merge and admission/required counts; never recorded
         // as completed.
-        ExcludeFailedWork(produced);
+        bool blindCoverageGap = state == HoardEvidenceState.BlindSearch &&
+            candidates.Any(candidate => _failedWorkKeys.ContainsKey(candidate.Key) &&
+                !fk.IsProbeCompleted(candidate.Key));
+        ExcludeFailedWork(produced, playerPos);
 
         // Status merge: completion truth lives in knowledge, not in the
         // previous pool, so an omitted-then-reproduced site cannot revive
@@ -689,10 +677,10 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         var passageOpen = _activity.PassageOpen;
         _routePassageOpen = passageOpen;
         var inCombatNow = _activity.InCombat;
-        var passageRoom = RoomGraph.GetPassageRoomIndex(dd);
-        var passagePos = PassageLocator.TryGetPassageActorPosition(evidence, out var observedPassage)
-            ? observedPassage
-            : (MapPos.TryGetRoomCenter(dd, passageRoom, out var pc) ? pc : playerPos);
+        var passage = SelectPassageGoal(dd, evidence, playerPos, dist, out bool searchExhausted);
+        _selectedPassage = passage;
+        var passageRoom = passage?.Room ?? -1;
+        var passagePos = passage?.Position ?? playerPos;
 
         // ---- required goal work vs optional ordinary chests ----
         // Required: exact reveal work, purpose intel, and the chests the
@@ -961,27 +949,12 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             if (s.Kind == ObjectiveSiteKind.ConfirmedChest &&
                 ordinaryChestKeys.Contains(SiteKey(s)))
                 admittedChests++;
-        if (destRooms.Count == 0 && passageRoom >= 0)
+        if (passageRoom >= 0 && (destRooms.Count == 0 || passageOpen && visit.Count > 0))
         {
             var seen = new HashSet<int>(visit);
             var leg = new List<int>();
-            foreach (var r in roomRoute(playerRoom, passageRoom) ??
-                new List<int>())
-                if (seen.Add(r)) leg.Add(r);
-            if (seen.Add(passageRoom)) leg.Add(passageRoom);
-            foreach (var room in leg)
-            {
-                if (!chestByRoom.ContainsKey(room)) continue;
-                foreach (var c in InteriorFor(room))
-                    if (c.Kind == ObjectiveSiteKind.ConfirmedChest)
-                    { flatWork.Add(c); ++admittedChests; }
-            }
-        }
-        else if (passageOpen && passageRoom >= 0 && visit.Count > 0)
-        {
-            var seen = new HashSet<int>(visit);
-            var leg = new List<int>();
-            foreach (var r in roomRoute(visit[^1], passageRoom) ??
+            int legStart = destRooms.Count == 0 ? playerRoom : visit[^1];
+            foreach (var r in roomRoute(legStart, passageRoom) ??
                 new List<int>())
                 if (seen.Add(r)) leg.Add(r);
             if (seen.Add(passageRoom)) leg.Add(passageRoom);
@@ -1005,6 +978,18 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                 (s.Kind == ObjectiveSiteKind.RoomProbe &&
                  s.Key.EndsWith(":IntuitionPosition", StringComparison.Ordinal)))
                 hoardWorkRemaining++;
+        bool unobserved = evidence.Available &&
+            (state == HoardEvidenceState.BlindSearch && hoardWorkRemaining == 0 &&
+             !blindCoverageGap && fk.CompletedProbeCount > 0 ||
+             state == HoardEvidenceState.IntuitionActiveUnconfirmed && _anchors.Count != 0 &&
+             _anchors.All(anchor => anchor.Room == spawnRoom ||
+                 fk.IsIntelCompleted(anchor.Room, RoomIntelPurpose.IntuitionPosition)));
+        bool incompleteBlindSearch = blindCoverageGap && hoardWorkRemaining == 0;
+        string? observationResult = unobserved ? "unobserved" : incompleteBlindSearch ? "incomplete" : null;
+        if (observationResult != _hoardObservationResult && observationResult != null)
+            _record?.Invoke($"hoard-{observationResult}", new { floor = dd->Floor, state,
+                completedProbes = fk.CompletedProbeCount, evidence.RefreshSequence });
+        _hoardObservationResult = observationResult;
         var hoardResolved =
             fk.HoardAcquired ||
             (policy.DiscoveryOnly && fk.ObservedBandedPositions.Count > 0) ||
@@ -1012,6 +997,7 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                 or HoardEvidenceState.Disabled or HoardEvidenceState.AlreadyOpened
                 or HoardEvidenceState.FloorsetMaxed
                 or HoardEvidenceState.FloorsetDistributionExcluded ||
+            unobserved ||
             (state == HoardEvidenceState.BlindSearch && hoardWorkRemaining == 0);
         fk.SearchObligationsResolved = hoardResolved;
 
@@ -1021,7 +1007,7 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         // NO useful work remains.
         var useful = requiredSites.Count + selectedCandidates.Count + admittedChests;
         if (useful == 0 && (!passageOpen || inCombatNow) && _filter.HuntMobs &&
-            !_failedWorkKeys.Contains("quota"))
+            !_failedWorkKeys.ContainsKey("quota"))
             produced.Add(new ObjectiveSite(
                 -1, ObjectiveSiteKind.Quota, -1,
                 ChasePositionProvider?.Invoke() ?? playerPos,
@@ -1030,27 +1016,34 @@ internal sealed class ObjectiveSiteDriver : IDisposable
 
         // Passage: open, out of combat, hoard resolved, and no required
         // work left — admitted on-route chests may precede it.
-        var passId = -100;
-        var passageSites = new List<ObjectiveSite>();
-        if (passageOpen && !inCombatNow && hoardResolved &&
-            requiredSites.Count == 0 && selectedCandidates.Count == 0)
+        ObjectiveSite? passageSite = null;
+        bool readyForPassage = passageOpen && !inCombatNow && hoardResolved &&
+            requiredSites.Count == 0 && selectedCandidates.Count == 0;
+        PassageSearchExhausted = readyForPassage && useful == 0 && searchExhausted;
+        var blockedReason = readyForPassage && useful == 0 && passage == null
+            ? PassageSearchExhausted
+                ? "已完成地圖標記的出口探查，找不到尚可嘗試的燈籠。"
+                : DescribePassageBlock(evidence)
+            : !hoardResolved && useful == 0 &&
+                (state is HoardEvidenceState.IntuitionDirect or HoardEvidenceState.IntuitionWaitingForIndicator
+                    or HoardEvidenceState.IntuitionActiveUnconfirmed or HoardEvidenceState.IntuitionPending)
+                ? state == HoardEvidenceState.IntuitionPending ? "等待本層感知回報。" :
+                    "找寶工作未完成，等待新的寶藏觀測或可達探查點。"
+                : null;
+        if (blockedReason != BlockedWorkReason)
         {
-            if (evidence.PassageActors.Count > 0)
-                foreach (var actor in evidence.PassageActors)
-                {
-                    if (!AdmitPassage(actor)) continue;
-                    passageSites.Add(new ObjectiveSite(
-                        passId--, ObjectiveSiteKind.Passage, -1, actor.Position,
-                        ObjectiveSiteSource.RewardOf(ObjectiveSiteKind.Passage, 0), 4f,
-                        ObjectiveSiteStatus.Open, Key: $"pass:{actor.GameObjectId}", ActorId: actor.GameObjectId));
-                }
-            else if (passageRoom >= 0)
-                passageSites.Add(new ObjectiveSite(
-                    passId--, ObjectiveSiteKind.Passage, passageRoom, passagePos,
-                    ObjectiveSiteSource.RewardOf(ObjectiveSiteKind.Passage, 0), 4f,
-                    ObjectiveSiteStatus.Open, Key: $"pass:room:{passageRoom}"));
-            ExcludeFailedWork(passageSites);
-            produced.AddRange(passageSites);
+            BlockedWorkReason = blockedReason;
+            _record?.Invoke("floor-work-block", new { floor = dd->Floor, reason = blockedReason,
+                failed = _failedWorkKeys.Select(item => new { item.Key, reason = item.Value.Failure?.ToString() }).ToArray(),
+                observedPassagePoints = _observedPassageWork.ToArray() });
+        }
+        if (readyForPassage && passage is { } goal)
+        {
+            passageSite = new ObjectiveSite(
+                -100, goal.IsSearch ? ObjectiveSiteKind.PassageSearch : ObjectiveSiteKind.Passage,
+                goal.Room, goal.Position, ObjectiveSiteSource.RewardOf(ObjectiveSiteKind.Passage, 0), 4f,
+                ObjectiveSiteStatus.Open, Key: goal.Key, ActorId: goal.ActorId);
+            produced.Add(passageSite.Value);
         }
 
         _sites.Clear();
@@ -1058,7 +1051,6 @@ internal sealed class ObjectiveSiteDriver : IDisposable
 
         // ---- flattened route assembly ----
         _routeWork.Clear();
-        _lastScores.Clear();
         foreach (var s in flatWork)
         {
             var key = SiteKey(s);
@@ -1067,8 +1059,8 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         }
         // Admitted on-route chests order before actual passage traversal —
         // the passage site is the terminal item.
-        foreach (var s in passageSites)
-            _routeWork.Add(new RoomSitePlanner.RouteWorkItem(s, 0f, 0d));
+        if (passageSite is { } terminal)
+            _routeWork.Add(new RoomSitePlanner.RouteWorkItem(terminal, 0f, 0d));
 
         // Publish effective progress from the SELECTED work — quota and
         // passage are progression-only and never count as pending work.
@@ -1117,17 +1109,6 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         return string.Join(",", keys);
     }
 
-    private static void AddLegacyCandidate(
-        List<(int Room, string Key, Vector3 Pos, float P)> candidates,
-        int room, in RawWorldPosition pos)
-    {
-        var key = FloorKnowledge.ProbeKey(room, pos);
-        foreach (var c in candidates)
-            if (c.Key == key)
-                return;
-        candidates.Add((room, key, new Vector3(pos.X, pos.Y, pos.Z), 0f));
-    }
-
     private static bool TryIntelPurpose(string key, out RoomIntelPurpose purpose, out int room)
     {
         purpose = default;
@@ -1149,51 +1130,160 @@ internal sealed class ObjectiveSiteDriver : IDisposable
     /// <summary>Typed outcome for the captured work token — the only write
     /// path from execution back to work truth. A late result updates its
     /// original floor work, never a different head or floor.</summary>
-    // Per-floor set of chest keys the EXISTING overcap policy explicitly
-    // skipped — distinct from completion truth: the fact stays unopened in
-    // knowledge, but the scheduler stops re-admitting the key this floor.
-    // Cleared on new floor (ConfigureWork) and Dispose, never on rebuild.
-    private readonly HashSet<string> _policySkippedChestKeys = new();
-    // Per-floor set of work keys whose latest attempt FAILED — the fact
-    // stays incomplete in knowledge, but the scheduler stops re-admitting
-    // the key this floor. Same scope/clears as _policySkippedChestKeys.
-    private readonly HashSet<string> _failedWorkKeys = new(StringComparer.Ordinal);
+    private readonly record struct WorkFailure(ObjectiveSiteKind Kind, FailureKind? Failure,
+        FloorObjectEvidence? PassageObservation, NavigationRegionExhaustion? Exhaustion);
+    private readonly Dictionary<string, (ChestInteractionAttempt Attempt, bool Blocked)> _chestCapacity = new();
+    internal ChestInteractionAttempt? TakeChestOvercapObservation(string key) =>
+        _chestCapacity.TryGetValue(key, out var capacity) && !capacity.Blocked &&
+        _chestCapacity.Remove(key) ? capacity.Attempt : null;
+    private readonly Dictionary<string, WorkFailure> _failedWorkKeys = new(StringComparer.Ordinal);
+    private readonly HashSet<string> _observedPassageWork = new(StringComparer.Ordinal);
+    private NavBitmap? _navigationMap;
+    private int _failureOriginRoom = -1;
+    private string? _hoardObservationResult;
+    private PassageGoal? _selectedPassage;
 
-    private void ExcludeFailedWork(List<ObjectiveSite> sites)
+    internal (RunFloorRoutePointFact[] Route, string? Unavailable) BuildNonHoardRoute(
+        Vector3 origin, int originRoom)
     {
-        if (_failedWorkKeys.Count > 0)
-            sites.RemoveAll(s => _failedWorkKeys.Contains(SiteKey(s)));
+        if (_dist is not { } dist || _selectedPassage is not { } goal)
+            return ([], "no reachable passage objective is available");
+        if (originRoom < 0 || goal.Room < 0 ||
+            (originRoom != goal.Room && dist.RouteBetween(originRoom, goal.Room) == null))
+            return ([], "origin and passage objective have no room route");
+
+        var route = new List<RunFloorRoutePointFact>
+        {
+            new(originRoom, new(origin.X, origin.Y, origin.Z), RunFloorRoutePointKind.Origin)
+        };
+        var rooms = new List<int> { originRoom };
+        foreach (var room in dist.RouteBetween(originRoom, goal.Room) ?? [])
+            if (rooms[^1] != room) rooms.Add(room);
+        if (rooms[^1] != goal.Room) rooms.Add(goal.Room);
+        foreach (var room in rooms)
+        {
+            var anchor = _anchors.Find(a => a.Room == room).Pos;
+            var position = route.Count == 1 && room == originRoom ? origin : anchor;
+            var chests = _sites.Where(s => s.Kind == ObjectiveSiteKind.ConfirmedChest &&
+                s.Status == ObjectiveSiteStatus.Open && s.RoomIndex == room && s.Chest != FloorChestKind.Banded).ToList();
+            while (chests.Count > 0)
+            {
+                var next = chests.MinBy(c => dist.Meters(position, c.Position));
+                chests.Remove(next);
+                position = next.Position;
+                route.Add(new(room, new(position.X, position.Y, position.Z), RunFloorRoutePointKind.RetainedVisibleChest));
+            }
+        }
+        route.Add(new(goal.Room, new(goal.Position.X, goal.Position.Y, goal.Position.Z), RunFloorRoutePointKind.Passage));
+        return (route.ToArray(), null);
     }
 
-    private bool AdmitPassage(FloorObjectEvidence actor) =>
-        NativePassageAvailability.IsAvailable(actor.BaseId, actor.SharedTimelineState) ||
-        CommitProtected && Head is { Kind: ObjectiveSiteKind.Passage } head &&
-        head.ActorId == actor.GameObjectId &&
-        !NativePassageAvailability.IsRemoved(actor.BaseId, actor.SharedTimelineState);
-
-    private void RejectWorkKey(string key)
+    private unsafe PassageGoal? SelectPassageGoal(InstanceContentDeepDungeon* dd,
+        FloorObjectEvidenceSnapshot evidence, Vector3 player, RoomSitePlanner.RoomDistanceEstimator distance,
+        out bool exhausted)
     {
-        _failedWorkKeys.Add(key);
+        exhausted = false;
+        var beacons = new List<PassageBeacon>(evidence.PassageActors.Count);
+        foreach (var actor in evidence.PassageActors)
+        {
+            var key = $"pass:{actor.GameObjectId}";
+            if (_failedWorkKeys.TryGetValue(key, out var failure))
+            {
+                bool changed = failure.PassageObservation is not { } previous ||
+                    previous.Position != actor.Position || previous.SharedTimelineState != actor.SharedTimelineState;
+                if (changed && NativePassageAvailability.IsAvailable(actor.BaseId, actor.SharedTimelineState) ||
+                    failure.Failure == FailureKind.PassageUnobserved &&
+                    NativePassageAvailability.IsRemoved(actor.BaseId, actor.SharedTimelineState))
+                    _failedWorkKeys.Remove(key);
+            }
+            beacons.Add(new(actor.GameObjectId, actor.BaseId, actor.SharedTimelineState,
+                distance.RoomOf(actor.Position), actor.Position));
+        }
+
+        var points = new List<PassageSearchPoint>();
+        var flags = dd->MapData;
+        int mappedPassageRooms = 0;
+        foreach (var (room, center) in _anchors)
+            if ((flags[room] & InstanceContentDeepDungeon.RoomFlags.Passage) != 0)
+            {
+                mappedPassageRooms++;
+                points.Add(new(room, center));
+                if (_navigationMap != null)
+                    foreach (var point in _navigationMap.PassageObservationPoints)
+                        if (point.Room == room) points.Add(point);
+            }
+
+        ulong committed = CommitProtected && Head is { Kind: ObjectiveSiteKind.Passage } head ? head.ActorId : 0;
+        if (committed != 0 && _selectedPassage is { } prior && prior.ActorId == committed &&
+            !evidence.PassageActors.Any(a => a.GameObjectId == committed))
+            return prior;
+        var selected = PassageGoalPolicy.Select(beacons, points,
+            point => distance.Meters(player, point),
+            goal => !_failedWorkKeys.ContainsKey(goal.Key) && !_observedPassageWork.Contains(goal.Key),
+            committed);
+        if (selected != null || !_activity.PassageOpen || !evidence.Available ||
+            evidence.ScannedObjectCount == 0 || mappedPassageRooms == 0) return selected;
+
+        // A failed approach is not a completed scan. Verify coverage against the
+        // native flags so an omitted room or a transitional actor cannot stop the run.
+        int markedRooms = 0;
+        foreach (var roomFlags in flags)
+            if ((roomFlags & InstanceContentDeepDungeon.RoomFlags.Passage) != 0) markedRooms++;
+        exhausted = markedRooms == mappedPassageRooms &&
+            !_failedWorkKeys.Values.Any(failed => failed.Kind == ObjectiveSiteKind.Passage &&
+                failed.Failure == FailureKind.PassageUnobserved) &&
+            points.All(point => _observedPassageWork.Contains(new PassageGoal(point.Room, point.Position, SearchDoor: point.Door).Key)) &&
+            beacons.All(beacon => NativePassageAvailability.IsRemoved(beacon.BaseId, beacon.State) ||
+                NativePassageAvailability.IsAvailable(beacon.BaseId, beacon.State) &&
+                _failedWorkKeys.TryGetValue(new PassageGoal(beacon.Room, beacon.Position, beacon.ActorId).Key, out var failed) &&
+                failed.Failure is FailureKind.PassageNoTransfer or FailureKind.Unreachable);
+        return null;
+    }
+
+    private void ExcludeFailedWork(List<ObjectiveSite> sites, Vector3 player)
+    {
+        if (_failedWorkKeys.Count == 0) return;
+        float offset = CombatPositionNavigation.CurrentYOffset;
+        sites.RemoveAll(site =>
+        {
+            var key = SiteKey(site);
+            if (!_failedWorkKeys.TryGetValue(key, out var failure)) return false;
+            if (failure.Exhaustion is not { } exhausted ||
+                exhausted.AppliesTo(_navigationMap, player, site.Position, offset))
+                return true;
+            _failedWorkKeys.Remove(key);
+            return false;
+        });
+    }
+
+    private string DescribePassageBlock(FloorObjectEvidenceSnapshot evidence)
+    {
+        if (!evidence.Available) return "等待出口物件觀測。";
+        if (_failedWorkKeys.Any(entry => entry.Value.Kind == ObjectiveSiteKind.Passage && entry.Value.Failure == FailureKind.PassageNoTransfer))
+            return "已踩過出口，但未確認轉層。等待出口狀態更新。";
+        if (_failedWorkKeys.Any(entry => entry.Value.Kind is (ObjectiveSiteKind.Passage or ObjectiveSiteKind.PassageSearch) &&
+                entry.Value.Failure == FailureKind.Unreachable))
+            return "出口或探查點不可達。等待新的可達位置或地形。";
+        return _observedPassageWork.Count > 0
+            ? "已觀測指定出口區域，等待可用燈籠出現。"
+            : "尚未觀測到可用燈籠或出口探查位置。";
+    }
+
+    private void RejectWorkKey(string key, WorkFailure failure)
+    {
+        _failedWorkKeys[key] = failure;
         _sites.RemoveAll(s => SiteKey(s) == key);
         _routeWork.RemoveAll(w => SiteKey(w.Site) == key);
-        _tail.Clear();
     }
 
-    internal void ReportWorkOutcome(SiteWorkToken token, SiteWorkOutcome outcome, string? reason)
+    internal void ReportWorkOutcome(SiteWorkToken token, ObjectiveSite site, SiteWorkOutcome outcome, FailureKind? failure,
+        FloorObjectEvidenceSnapshot? evidence, ChestInteractionAttempt? chest, NavigationRegionExhaustion? exhaustion)
     {
         var fk = _knowledge?.Floor;
         if (fk == null || fk.Generation != token.FloorGeneration)
             return;
-        if (KnowledgeDriven)
-        {
-            // Only the LATEST registered attempt for this key may write
-            // outcome — a superseded attempt's late result cannot touch
-            // newer work of the same key. A late result CAN still update
-            // its original valid key while another key is head.
-            if (!_attempts.TryGetValue(token.Key, out var latest) ||
-                latest != token.Attempt)
-                return;
-        }
+        if (!_attempts.TryGetValue(token.Key, out var latest) || latest != token.Attempt)
+            return;
         for (var i = 0; i < _sites.Count; i++)
             if (SiteKey(_sites[i]) == token.Key)
             {
@@ -1202,16 +1292,25 @@ internal sealed class ObjectiveSiteDriver : IDisposable
                 {
                     SiteWorkOutcome.Completed => ObjectiveSiteStatus.Done,
                     // Non-completion outcomes never establish completion;
-                    // Failed keys are removed and excluded below — the next
-                    // rebuild must NOT reselect them this floor.
+                    // Failed work stays excluded until its blocking
+                    // observation changes.
                     _ => ObjectiveSiteStatus.Open,
                 };
-                _sites[i] = s with { Status = status, Reason = reason };
+                _sites[i] = s with { Status = status, Reason = failure?.ToString() };
                 break;
             }
         if (outcome == SiteWorkOutcome.Completed)
         {
-            if (token.Key.StartsWith("cand:", StringComparison.Ordinal))
+            if (site.Kind == ObjectiveSiteKind.PassageSearch)
+            {
+                if (evidence?.PlayerPosition is { } position)
+                {
+                    _observedPassageWork.Add(token.Key);
+                    _record?.Invoke("passage-area-observed", new { floor = fk.Floor, token.Key,
+                        sequence = evidence.RefreshSequence, position });
+                }
+            }
+            else if (site.Kind == ObjectiveSiteKind.Candidate)
                 fk.MarkProbeCompleted(token.Key);
             else if (TryIntelPurpose(token.Key, out var purpose, out var room))
                 fk.MarkIntelCompleted(room, purpose);
@@ -1220,20 +1319,21 @@ internal sealed class ObjectiveSiteDriver : IDisposable
             // Hoard acquisition itself is the native count delta —
             // standing on the point is never "acquired".
         }
-        // Explicit policy skip (existing overcap decision only): consume
-        // the attempt AND stop re-admitting the chest this floor — without
-        // recording factual completion. Ordinary cancellations and Failed
-        // never add a key.
-        if (outcome == SiteWorkOutcome.PolicySkipped &&
-            reason == "chest-overcap-policy" &&
-            token.Key.StartsWith("chest:", StringComparison.Ordinal))
-            _policySkippedChestKeys.Add(token.Key);
-        // PolicySkipped consumes the attempt without completion truth;
-        // Failed also consumes it — the key is excluded for the rest of
-        // this floor so the same work is never re-admitted or re-committed
-        // by a route rebuild.
+        // Keep the observed full item so the next decision can check capacity
+        // and current item eligibility without interacting again.
+        if (outcome == SiteWorkOutcome.PolicySkipped && site.Kind == ObjectiveSiteKind.ConfirmedChest &&
+            chest is { PendingGoldOvercapSlotIndex: not null } or { PendingSilverOvercapStoneRowId: not null })
+            _chestCapacity[token.Key] = (chest, true);
+        // A failed attempt establishes that this observation did not
+        // produce a route or result. It does not establish completion.
         if (outcome == SiteWorkOutcome.Failed)
-            RejectWorkKey(token.Key);
+        {
+            FloorObjectEvidence? observation = null;
+            if (site.Kind == ObjectiveSiteKind.Passage && evidence?.Available == true)
+                foreach (var actor in evidence.PassageActors)
+                    if (actor.GameObjectId == site.ActorId) { observation = actor; break; }
+            RejectWorkKey(token.Key, new(site.Kind, failure, observation, exhaustion));
+        }
         _routeDirty = true;
         if (Head is { } h && SiteKey(h) == token.Key)
         {
@@ -1242,365 +1342,17 @@ internal sealed class ObjectiveSiteDriver : IDisposable
         }
     }
 
-    /// <summary>Legacy-path policy skip: the boundary's identity guard
-    /// already proved this caller owns the head — consume the head
-    /// without completion truth and skip the chest for this floor.</summary>
-    internal void ReportHeadPolicySkipped(string reason)
-    {
-        if (Head is { Kind: ObjectiveSiteKind.ConfirmedChest } h &&
-            h.Key is { Length: > 0 } key)
-        {
-            _policySkippedChestKeys.Add(key);
-            // Legacy head selection runs off the CURRENT _sites until the
-            // next rebuild — remove the skipped site so it cannot be
-            // reselected before then.
-            _sites.RemoveAll(s => SiteKey(s) == key);
-        }
-        ClearCommit();
-        _routeDirty = true;
-    }
-
-    // ==================== legacy path (controlled survey / debug) ====================
-
-    private unsafe void TickLegacyDecision(
-        InstanceContentDeepDungeon* dd,
-        Vector3 playerPos,
-        FloorObjectEvidenceSnapshot evidence)
-    {
-        var now = DateTime.UtcNow;
-        var dt = (float)Math.Clamp((now - _lastTickUtc).TotalSeconds, 0, 1);
-        _lastTickUtc = now;
-
-        var nowMs = Environment.TickCount64;
-        if (nowMs - _lastRebuildMs > 1500)
-        {
-            _lastRebuildMs = nowMs;
-            RebuildSitesLegacy(dd, evidence);
-        }
-        if (_sites.Count == 0)
-        {
-            Status = "pool-empty";
-            Head = null;
-            return;
-        }
-
-        var playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-        EnsureHops(dd, playerRoom);
-        ProcessTaskStates(playerPos, dt);
-
-        ObjectiveSite? head = null;
-        foreach (var s in _sites)
-            if (SiteKey(s) == _committedKey && s.Status == ObjectiveSiteStatus.Open)
-            {
-                head = s;
-                break;
-            }
-
-        float Detour(in ObjectiveSite s) => Vector3.Distance(playerPos, s.Position) / 6f;
-        var headScore = head.HasValue
-            ? ObjectiveScoring.Score(head.Value, Detour(head.Value))
-            : 0f;
-
-        ObjectiveSite? best = null;
-        var bestScore = 0f;
-        _lastScores.Clear();
-        foreach (var s in _sites)
-        {
-            if (s.Status != ObjectiveSiteStatus.Open || !EvidenceConfirmed(s))
-                continue;
-            var sc = ObjectiveScoring.Score(s, Detour(s));
-            _lastScores[SiteKey(s)] = sc;
-            if (best == null || sc > bestScore
-                || (sc == bestScore && s.Id < best.Value.Id))
-            {
-                best = s;
-                bestScore = sc;
-            }
-        }
-        if (best == null)
-        {
-            Status = "no-open-sites";
-            Head = null;
-            return;
-        }
-
-        var invested = head.HasValue
-            ? DateTime.UtcNow - _intent.CommittedAtUtc
-            : TimeSpan.Zero;
-        var distToHead = head.HasValue
-            ? Vector3.Distance(playerPos, head.Value.Position)
-            : float.MaxValue;
-        var headOnSite = head.HasValue
-            && _dwellSec.TryGetValue(SiteKey(head.Value), out var dw) && dw > 0f;
-        var gate = ObjectiveScoring.Gate(
-            _intent, best.Value, bestScore, head, headScore,
-            invested,
-            (DateTime.UtcNow - _intent.CommittedAtUtc).TotalSeconds,
-            distToHead, _tunables, headOnSite);
-        LastGate = gate;
-
-        if (gate != HeadGateResult.Keep && SiteKey(best.Value) != _committedKey)
-        {
-            _committedKey = SiteKey(best.Value);
-            _intent.CommittedSiteId = best.Value.Id;
-            _intent.CommittedAtUtc = DateTime.UtcNow;
-            head = best;
-        }
-        Head = head;
-        _committedToken = head.HasValue
-            ? new SiteWorkToken(0, _committedKey, 0)
-            : default;
-
-        ObjectiveSiteLedger.BuildTail(
-            _sites, playerPos, (a, b) => Vector3.Distance(a, b) / 6f, _tail, _tunables);
-        var open = 0;
-        foreach (var s in _sites)
-            if (s.Status == ObjectiveSiteStatus.Open)
-                open++;
-        Status = head.HasValue
-            ? $"head={head.Value.Kind}@{head.Value.RoomIndex} gate={gate} " +
-              $"open={open}/{_sites.Count} tail={_tail.Count}"
-            : "gate-keep-no-head";
-    }
-
-    /// <summary>Legacy head-outcome shim: knowledge mode forwards to the
-    /// typed token path.</summary>
-    internal void ReportHeadOutcome(bool arrived, string? failureReason)
-    {
-        if (_knowledge != null)
-        {
-            if (!string.IsNullOrEmpty(_committedToken.Key))
-                ReportWorkOutcome(_committedToken,
-                    arrived ? SiteWorkOutcome.Completed : SiteWorkOutcome.Failed,
-                    failureReason);
-            return;
-        }
-        if (_committedKey.Length == 0)
-            return;
-        if (arrived
-            && Head is { Kind: ObjectiveSiteKind.Quota or ObjectiveSiteKind.Candidate })
-            return;
-        MarkSite(_committedKey,
-            arrived ? ObjectiveSiteStatus.Done : ObjectiveSiteStatus.Retryable,
-            failureReason);
-        _committedKey = "";
-        _intent.CommittedSiteId = -1;
-        Head = null;
-    }
-
-    /// <summary>Retire a site by key (e.g. evidence says it is done).</summary>
-    internal void MarkSite(string key, ObjectiveSiteStatus status, string? reason = null)
-    {
-        for (var i = 0; i < _sites.Count; i++)
-            if (SiteKey(_sites[i]) == key)
-                _sites[i] = _sites[i] with { Status = status, Reason = reason };
-    }
-
-    private unsafe void RebuildSitesLegacy(
-        InstanceContentDeepDungeon* dd, FloorObjectEvidenceSnapshot evidence)
-    {
-        var playerRoom = RoomGraph.GetLocalPlayerRoomIndex(dd);
-        if (dd->Floor != _lastFloor)
-        {
-            _lastFloor = dd->Floor;
-            _spawnRoom = playerRoom;
-            _dwellSec.Clear();
-            _seen.Clear();
-            _policySkippedChestKeys.Clear();   // skipped chests are per-floor
-            _failedWorkKeys.Clear();
-        }
-        var anchors = new List<(int, Vector3)>();
-        for (var r = 0; r < RoomGraph.MaxRooms; r++)
-            if (MapPos.TryGetRoomCenter(dd, r, out var c))
-                anchors.Add((r, c));
-        // Palantir per-room candidates; catalog candidates share the
-        // run-pinned snapshot when bound, else the live manager (debug).
-        var catalog = _map?.Catalog ?? DetailedMapCatalogManager.Active?.CurrentCatalog;
-        var observedTraps = new List<RawWorldPosition>();
-        foreach (var ind in evidence.SightTrapIndicators)
-            observedTraps.Add(new RawWorldPosition(
-                ind.Position.X, ind.Position.Y, ind.Position.Z));
-        var candidates = new List<(int Room, string Key, Vector3 Pos, float P)>();
-        foreach (var (room, _) in anchors)
-        {
-            var usedCatalog = false;
-            if (catalog != null
-                && catalog.TryGetRoom(dd->ActiveLayoutIndex, room, out var catRoom))
-            {
-                var plan = DetailedMapRoomCandidatePlanner.BuildPriorityOrder(
-                    catalog, catRoom, dd->Floor, observedTraps);
-                if (!plan.UsePalantirFallback)
-                {
-                    usedCatalog = true;
-                    foreach (var c in plan.DirectCandidates)
-                        AddLegacyCandidate(candidates, room, c.Position);
-                    foreach (var c in plan.OrdinaryCandidates)
-                        AddLegacyCandidate(candidates, room, c.Position);
-                }
-            }
-            if (!usedCatalog)
-                foreach (var p in _palantir.GetCandidatePositionsForRoom(dd, room))
-                    candidates.Add((room,
-                        FloorKnowledge.ProbeKey(room, new RawWorldPosition(p.X, p.Y, p.Z)),
-                        p, 0.35f));
-        }
-        var passageOpen = evidence.PassageActors.Count > 0
-            && ScanForTargetablePassage(evidence);
-        var produced = ObjectiveSiteSource.Produce(
-            evidence, _filter, playerRoom, _spawnRoom, anchors,
-            candidates, Array.Empty<(int, Vector3, string)>());
-        // Explicit policy-skipped chests never count as productive work —
-        // filtered before quota/passage accounting, same as the normal path.
-        if (_policySkippedChestKeys.Count > 0)
-            produced.RemoveAll(s =>
-                s.Kind == ObjectiveSiteKind.ConfirmedChest &&
-                s.Key is { } ck && _policySkippedChestKeys.Contains(ck));
-
-        var productive = 0;
-        foreach (var s in produced)
-            if (s.Kind is not ObjectiveSiteKind.Quota
-                and not ObjectiveSiteKind.Passage
-                and not ObjectiveSiteKind.Roam)
-                productive++;
-        var inCombatNow = Service.Condition[ConditionFlag.InCombat];
-        var quotaNeeded = (!passageOpen && productive == 0)
-            || (passageOpen && inCombatNow);
-        if (quotaNeeded && _filter.HuntMobs)
-            produced.Add(new ObjectiveSite(
-                -1, ObjectiveSiteKind.Quota, -1,
-                ChasePositionProvider?.Invoke()
-                    ?? (anchors.Count > 0 ? anchors[0].Item2 : Vector3.Zero),
-                ObjectiveSiteSource.RewardOf(ObjectiveSiteKind.Quota, 0), 10f,
-                ObjectiveSiteStatus.Open, Key: "quota"));
-
-        var passId = -100;
-        if (_filter.Exit && passageOpen && !inCombatNow && productive == 0)
-            foreach (var actor in evidence.PassageActors)
-            {
-                if (!AdmitPassage(actor)) continue;
-                produced.Add(new ObjectiveSite(
-                    passId--, ObjectiveSiteKind.Passage, -1, actor.Position,
-                    ObjectiveSiteSource.RewardOf(ObjectiveSiteKind.Passage, 0), 4f,
-                    ObjectiveSiteStatus.Open, Key: $"pass:{actor.GameObjectId}", ActorId: actor.GameObjectId));
-            }
-
-        // Failed work keys are excluded before the legacy merge — the
-        // fact stays incomplete but the key is not re-admitted this floor.
-        ExcludeFailedWork(produced);
-
-        var producedKeys = new HashSet<string>();
-        foreach (var s in produced) producedKeys.Add(SiteKey(s));
-        foreach (var k in new List<string>(_seen.Keys))
-            if (!producedKeys.Contains(k)) _seen.Remove(k);
-        foreach (var k in producedKeys)
-            _seen[k] = _seen.TryGetValue(k, out var n) ? n + 1 : 1;
-
-        var old = new Dictionary<string, ObjectiveSite>();
-        foreach (var s in _sites)
-            old[SiteKey(s)] = s;
-        _sites.Clear();
-        foreach (var s in produced)
-            _sites.Add(
-                old.TryGetValue(SiteKey(s), out var prev)
-                    ? s with { Status = prev.Status, Reason = prev.Reason }
-                    : s);
-        PruneSideTables();
-    }
-
-    private static bool ScanForTargetablePassage(FloorObjectEvidenceSnapshot evidence)
-    {
-        foreach (var a in evidence.PassageActors)
-            if (a.IsTargetable && NativePassageAvailability.IsAvailable(a.BaseId, a.SharedTimelineState))
-                return true;
-        return false;
-    }
-
-    /// <summary>Task-state pass (legacy path only): candidate dwell at the
-    /// driver's radius, retryable revive on proximity.</summary>
-    private void ProcessTaskStates(Vector3 playerPos, float dt)
-    {
-        for (var i = 0; i < _sites.Count; i++)
-        {
-            var s = _sites[i];
-            if (s.Status != ObjectiveSiteStatus.Open
-                && s.Status != ObjectiveSiteStatus.Retryable)
-                continue;
-            var key = SiteKey(s);
-            var dist = Vector3.Distance(playerPos, s.Position);
-            switch (s.Kind)
-            {
-                case ObjectiveSiteKind.Candidate:
-                    if (dist <= DwellRadiusM && s.Status == ObjectiveSiteStatus.Open)
-                    {
-                        var d = _dwellSec.TryGetValue(key, out var acc) ? acc + dt : dt;
-                        if (d >= DwellTargetSec)
-                            _sites[i] = s with
-                            {
-                                Status = ObjectiveSiteStatus.Done,
-                                Reason = "probed",
-                            };
-                        else
-                            _dwellSec[key] = d;
-                    }
-                    break;
-            }
-            if (_sites[i].Status == ObjectiveSiteStatus.Retryable
-                && dist <= RetryableReviveM)
-                _sites[i] = s with
-                {
-                    Status = ObjectiveSiteStatus.Open,
-                    Reason = null,
-                };
-        }
-    }
-
-    private unsafe void EnsureHops(InstanceContentDeepDungeon* dd, int playerRoom)
-    {
-        if (playerRoom == _hopSource)
-            return;
-        _hopSource = playerRoom;
-        Array.Fill(_hops, -1);
-        if (playerRoom < 0)
-            return;
-        Span<int> nb = stackalloc int[4];
-        var queue = new Queue<int>();
-        _hops[playerRoom] = 0;
-        queue.Enqueue(playerRoom);
-        while (queue.Count > 0)
-        {
-            var r = queue.Dequeue();
-            RoomGraph.EnumerateNeighbors(dd, r, nb, out var n);
-            for (var i = 0; i < n; i++)
-                if (_hops[nb[i]] < 0)
-                {
-                    _hops[nb[i]] = _hops[r] + 1;
-                    queue.Enqueue(nb[i]);
-                }
-        }
-    }
-
-    private void PruneSideTables()
-    {
-        var live = new HashSet<string>();
-        foreach (var s in _sites)
-            live.Add(SiteKey(s));
-        foreach (var k in new List<string>(_dwellSec.Keys))
-            if (!live.Contains(k)) _dwellSec.Remove(k);
-    }
-
     public void Dispose()
     {
         if (Active == this)
             Active = null;
         _sites.Clear();
-        _dwellSec.Clear();
         _routeWork.Clear();
-        _policySkippedChestKeys.Clear();
+        _chestCapacity.Clear();
         _failedWorkKeys.Clear();
         Head = null;
         _committedKey = "";
         _committedToken = default;
-        _intent.CommittedSiteId = -1;
         Status = "disposed";
     }
 }

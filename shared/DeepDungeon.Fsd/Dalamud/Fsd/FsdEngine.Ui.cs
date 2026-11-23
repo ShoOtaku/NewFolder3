@@ -195,7 +195,7 @@ namespace DeepDungeon.Fsd.Dalamud
                         var dbg = _ddHost?.FloorController.GetDebugSnapshot();
                         if (dbg != null)
                         {
-                            if (ImGui.CollapsingHeader("自動導航調試（順序模式）", ImGuiTreeNodeFlags.None))
+                            if (ImGui.CollapsingHeader("樓層規劃調試", ImGuiTreeNodeFlags.None))
                             {
                                 var player = Service.LocalPlayer;
                                 var pos = player?.Position ?? default;
@@ -252,6 +252,8 @@ namespace DeepDungeon.Fsd.Dalamud
             }
         }
 
+        private static readonly string[] FloorMapSources = ["即時構建", "內建地圖"];
+
 		// Formal panel (top): map with Banded controls/status
 		public unsafe void DrawDeepDungeonFormalPanel()
 		{
@@ -291,11 +293,21 @@ namespace DeepDungeon.Fsd.Dalamud
 				UiHelpers.DrawGrayTipText("Full Self-Delving (Supervised) in Deep Dungeons");
 				ImGui.Indent();
                 bool hostAssistActive = _ddHost?.AssistModeActive == true;
-                ImGui.Text($"本次會話拾取寶藏：{_hoardStatistics.SessionPickups}");
-                ImGui.Text(_hoardStatistics.LifetimePickups is { } total
-                    ? $"累計拾取寶藏：{total}"
-                    : "累計拾取寶藏：正在讀取歷史紀錄");
-                DrawFarmingSelection(hostAssistActive, inDD);
+                DrawFarmingSelection(hostAssistActive || ProgressionPauseLocked);
+                var liveMaps = Map.FloorMapSource.Live;
+                if (liveMaps != null)
+                {
+                    int mapSource = _configuration.UseBuiltInFloorMaps ? 1 : 0;
+                    ImGui.BeginDisabled(hostAssistActive || ProgressionPauseLocked);
+                    ImGui.SetNextItemWidth(260);
+                    if (ImGui.Combo("底圖來源##fsdFloorMapSource", ref mapSource, FloorMapSources, FloorMapSources.Length))
+                    {
+                        _configuration.UseBuiltInFloorMaps = mapSource == 1;
+                        _configuration.Save();
+                        Map.FloorMapSource.Select(_configuration.UseBuiltInFloorMaps);
+                    }
+                    ImGui.EndDisabled();
+                }
 
 				DrawDetailedMapSettings(hostAssistActive);
 
@@ -305,39 +317,15 @@ namespace DeepDungeon.Fsd.Dalamud
 
 					ImGui.Spacing();
 					ImGui.Indent();
-					bool attachmentReady = true;
-					if (inDD && !fsdRunning)
-					{
-						attachmentReady = TryGetCurrentDutyForAttachment(out var dungeon, out var duty,
-							out int entryFloor, out string attachmentError);
-						if (attachmentReady)
-						{
-							var mode = FarmingEntryPolicy.ResolveAttachmentMode(dungeon.DungeonId, entryFloor,
-								_configuration.Farming.Mode);
-							ImGui.TextDisabled($"{dungeon.Name} 第 {duty.Floor} 層 · {FarmingModeLabels[(int)mode]}");
-							ImGui.TextDisabled(mode switch
-							{
-								FarmingMode.DeepProgression => "接管並接續指定存檔；僅敗北後重置該槽，登頂保留存檔。",
-								FarmingMode.FreeExploration => "接管並繼續探索至100層；敗北或登頂後停止，保留原存檔。",
-								_ => "接管目前層段，保留存檔。"
-							});
-						}
-						else
-							ImGui.TextDisabled(attachmentError);
-					}
-					ImGui.BeginDisabled(fsdRunning || !attachmentReady || _bridgeLeaveDutyContext != null ||
-						_bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
-					if (ImGui.Button(inDD ? "接管目前副本##fsf_start_top" : "啟動 FSD##fsf_start_top"))
+					ImGui.BeginDisabled(fsdRunning || inDD || _bridgeLeaveDutyContext != null || _bridgeDeleteSaveContext != null || _bridgeDeleteSaveFlow != null);
+					if (ImGui.Button(ProgressionPauseLocked ? "繼續##fsf_start_top" : "啟動 FSD##fsf_start_top"))
 					{
 						try
 						{
-	                            var request = new FsdStartRequest(Scenario: _fsfScenarioIndex == 2
-                                ? FsdStartScenario.ControlledSurvey
-                                : FsdStartScenario.Farming);
-	                            var result = inDD ? StartCurrentDutyFarming() : StartSelectedFarming(request);
+                            var result = ProgressionPauseLocked ? ResumeProgression() : StartSelectedFarming(new FsdStartRequest());
+                            _farmingError = result.Ok ? null : result.Error;
                             if (!result.Ok)
                             {
-                                _farmingError = result.Error;
                                 Service.Log.Warning($"[Necromancer] FSD start rejected: {result.Error}");
                             }
 						}
@@ -354,6 +342,11 @@ namespace DeepDungeon.Fsd.Dalamud
 						StopFullSelfDelving();
 					}
 					ImGui.EndDisabled();
+                    if (CanRequestProgressionPause)
+                    {
+                        ImGui.SameLine();
+                        if (ImGui.Button("本組出本後暫停")) RequestProgressionPause();
+                    }
 					ImGui.SameLine();
 					if (ImGui.Button("導出日誌##fsf_export_logs_top"))
 					{
@@ -372,16 +365,19 @@ namespace DeepDungeon.Fsd.Dalamud
 							Service.Log.Error($"[FsdEngine] Run-log export failed: {ex}");
 						}
 					}
-					ImGui.SameLine();
-                    Map.LiveTerrainCapture.UpdateExportStatus();
-                    ImGui.BeginDisabled(Map.LiveTerrainCapture.Exporting);
-                    if (ImGui.Button("導出地圖##fsf_export_maps_top")) Map.LiveTerrainCapture.Export();
-                    ImGui.EndDisabled();
+                    if (liveMaps != null)
+                    {
+                        ImGui.SameLine();
+                        liveMaps.UpdateExportStatus();
+                        ImGui.BeginDisabled(liveMaps.Exporting);
+                        if (ImGui.Button("導出地圖##fsf_export_maps_top")) liveMaps.Export();
+                        ImGui.EndDisabled();
+                    }
 					ImGui.Unindent();
 				}
 
-                if (Map.LiveTerrainCapture.ExportStatus.Length > 0)
-                    ImGui.TextWrapped(Map.LiveTerrainCapture.ExportStatus);
+                if (liveMaps is { ExportStatus.Length: > 0 })
+                    ImGui.TextWrapped(liveMaps.ExportStatus);
 
 				if (!string.IsNullOrEmpty(_runLogExportNotice))
 				{
@@ -398,6 +394,16 @@ namespace DeepDungeon.Fsd.Dalamud
 						ImGui.TextColored(new Vector4(1f, 0.55f, 0.55f, 1f), startDenialNotice);
 				}
 
+                if (_checkpoint is { } checkpoint)
+                {
+                    var dungeonName = checkpoint.Plan.DungeonId switch { 1 => "死者宮殿", 2 => "天之御柱", _ => "朝聖交錯路" };
+                    ImGui.TextWrapped($"死靈術士暫停紀錄 · {dungeonName} · 存檔 {checkpoint.Slot.Index + 1} · 第 {checkpoint.Slot.StartFloor} 層");
+                }
+                else if (_ddHost?.ActiveFarming?.Session.PersistPause != null)
+                    ImGui.TextWrapped("本組通關並回到入口後暫停。");
+                if (_checkpointIssue is { } issue)
+                    ImGui.TextWrapped(issue.Message);
+
                 DrawFarmingOptions();
 
                     ImGui.Separator();
@@ -411,12 +417,12 @@ namespace DeepDungeon.Fsd.Dalamud
 				try
 				{
 					bool assistActive = _ddHost?.AssistModeActive == true;
-					if (assistActive && deepDungeon != null)
+					if (liveMaps != null && assistActive && deepDungeon != null)
 					{
 						var dbg = _ddHost?.FloorController?.GetDebugSnapshot();
-						if (dbg?.RoomContext != null && dbg.RoomContext.Waypoints.Count > 0)
+						if (dbg?.Work.Count > 0)
 						{
-							DrawRoomWaypointDebugOverlay(deepDungeon, dbg.RoomContext);
+							DrawFloorWorkOverlay(dbg.Work);
 						}
 					}
 				}
@@ -451,7 +457,7 @@ namespace DeepDungeon.Fsd.Dalamud
 					: null;
 
 			ImGui.Spacing();
-			ImGui.BeginDisabled(!supported || !serviceConfigured);
+			ImGui.BeginDisabled(!supported || !serviceConfigured || ProgressionPauseLocked);
 			if (ImGui.Checkbox("使用詳細地圖##fsdDetailedMap", ref enabled))
 			{
 				_configuration.UseDetailedMap = enabled;
@@ -466,15 +472,11 @@ namespace DeepDungeon.Fsd.Dalamud
 			ImGui.TextDisabled("(?)");
 			if (ImGui.IsItemHovered())
 			{
-				string detailedMapTooltip;
-				if (!serviceConfigured)
-					detailedMapTooltip = DetailedMapHostOptions.NoOnlineCatalogServiceMessage;
-				else if (!_detailedMapHostOptions.HasOnlineCatalogService)
-					detailedMapTooltip = "使用插件內置的詳細地圖與寶藏統計，無需下載。數據隨插件更新。";
-				else if (_detailedMapHostOptions.ContributesAnonymousEvidence)
-					detailedMapTooltip = "深宮寶藏存在某些規律，使用這些經驗以加速探索。啟用該項目會下載該層級的詳細地圖，並上傳深宮信息以共建。上傳內容不含個人標識。";
-				else
-					detailedMapTooltip = "深宮寶藏存在某些規律，使用這些經驗以加速探索。";
+				string detailedMapTooltip = !serviceConfigured
+					? DetailedMapHostOptions.NoOnlineCatalogServiceMessage
+					: _detailedMapHostOptions.ContributesAnonymousEvidence
+					? "深宮寶藏存在某些規律，使用這些經驗以加速探索。啟用該項目會下載該層級的詳細地圖，並上傳深宮信息以共建。上傳內容不含個人標識。"
+					: "深宮寶藏存在某些規律，使用這些經驗以加速探索。";
 				ImGui.BeginTooltip();
 				ImGui.PushTextWrapPos(
 					ImGui.GetFontSize() * 32f);
@@ -510,8 +512,6 @@ namespace DeepDungeon.Fsd.Dalamud
 				return;
 
 			DetailedMapCatalogStatusSnapshot detailedMapStatus = status!.Value;
-			if (_detailedMapCatalogManager.IsUsingEmbeddedCatalog)
-				ImGui.TextDisabled("資料來源：插件內置（離線）");
 			ImGui.TextDisabled(
 				detailedMapStatus.ReleaseId == null
 					? "資料版本: 不可用"
@@ -536,6 +536,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		public void DrawGeneralAssistantSettings()
 		{
+            ImGui.BeginDisabled(ProgressionPauseLocked);
 			ImGui.Text("恢復藥劑設定");
 			var autoRecoveryPotion = _configuration.AutoUseRecoveryPotion;
 			if (ImGui.Checkbox("自動使用恢復藥劑", ref autoRecoveryPotion))
@@ -552,6 +553,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			ImGui.TextDisabled($"當血量低於 {hpThreshold}% 時自動使用目前迷宮的恢復藥劑");
+            ImGui.EndDisabled();
 		}
 		
 		private void DrawDeepDungeonOverlayToggles()
@@ -591,11 +593,13 @@ namespace DeepDungeon.Fsd.Dalamud
 		private void DrawOverlayToggleCheckbox(string label, bool currentValue, Action<bool> setter, string hint)
 		{
 			var value = currentValue;
+            ImGui.BeginDisabled(ProgressionPauseLocked);
 			if (ImGui.Checkbox(label, ref value))
 			{
 				setter(value);
 				_configuration.Save();
 			}
+            ImGui.EndDisabled();
 
 			if (!string.IsNullOrEmpty(hint))
 			{
@@ -653,7 +657,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			bool assistModeActive = _ddHost?.AssistModeActive == true;
 			HashSet<int>? assistCompletedRooms = null;
-			List<int>? assistPlannedRooms = null;
+			IReadOnlyList<int>? assistPlannedRooms = null;
 			if (assistModeActive)
 			{
 				try
@@ -887,7 +891,7 @@ namespace DeepDungeon.Fsd.Dalamud
                         }
 						else if (passage)
 						{
-							if (TryGetPassageDestination(deepDungeon, out var passageDest, out bool usedActor, out var passageRoomIndex))
+							if (PassageLocator.TryResolveRequestedRoom(deepDungeon, i, out var passageDest, out bool usedActor))
 							{
 								if (TryManualNavigation(passageDest, false))
 								{
@@ -897,7 +901,7 @@ namespace DeepDungeon.Fsd.Dalamud
 									}
 									else
 									{
-										BeginPassageFollowup(deepDungeon, passageRoomIndex >= 0 ? passageRoomIndex : i);
+										BeginPassageFollowup(deepDungeon, i);
 									}
 								}
 								else
@@ -1097,56 +1101,24 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
         }
 
-		private unsafe void DrawRoomWaypointDebugOverlay(
-			InstanceContentDeepDungeon* deepDungeon,
-			RoomContextSnapshot snapshot)
-		{
-			if (deepDungeon == null || snapshot == null)
-				return;
-			var waypoints = snapshot.Waypoints;
-			if (waypoints == null || waypoints.Count == 0)
-				return;
-
-			int total = waypoints.Count;
-			int currentIdx = Math.Clamp(snapshot.CurrentWaypointIndex, 0, total);
-
-			uint colSegmentCompleted = ImGui.GetColorU32(new Vector4(0.35f, 0.75f, 0.35f, 0.85f));
-			uint colSegmentActive = ImGui.GetColorU32(new Vector4(0.2f, 0.85f, 1.0f, 0.95f));
-			uint colSegmentPending = ImGui.GetColorU32(new Vector4(1.0f, 0.78f, 0.35f, 0.75f));
-
-			Vector3? prev = null;
-
-			for (int i = 0; i < total; i++)
-			{
-				var wp = waypoints[i];
-				var pos = wp.Position;
-				if (float.IsNaN(pos.X) || float.IsNaN(pos.Y) || float.IsNaN(pos.Z) ||
-				    float.IsInfinity(pos.X) || float.IsInfinity(pos.Y) || float.IsInfinity(pos.Z))
-				{
-					continue;
-				}
-
-			
-
-				if (prev.HasValue)
-				{
-					uint segCol = i < currentIdx
-						? colSegmentCompleted
-						: (i == currentIdx ? colSegmentActive : colSegmentPending);
-					WorldDrawHelper.DrawWorldLine(prev.Value, pos, segCol);
-				}
-
-				bool isCompleted = i < currentIdx;
-				bool isCurrent = i == currentIdx;
-
-				uint labelColor = ImGui.GetColorU32(isCompleted
-					? new Vector4(0.85f, 0.9f, 0.85f, 0.55f)
-					: (isCurrent ? new Vector4(1.0f, 1.0f, 1.0f, 1.0f) : new Vector4(1.0f, 1.0f, 1.0f, 0.8f)));
-				WorldDrawHelper.DrawWorldText(pos + new Vector3(0f, 0.35f, 0f), labelColor, $"{i + 1}");
-
-				prev = pos;
-			}
-		}
+        private static void DrawFloorWorkOverlay(IReadOnlyList<DeepDungeon.Fsd.Dalamud.Coord.ObjectiveSite> work)
+        {
+            Vector3? previous = null;
+            for (int index = 0; index < work.Count; index++)
+            {
+                var site = work[index];
+                var position = site.Position;
+                if (!float.IsFinite(position.X) || !float.IsFinite(position.Y) || !float.IsFinite(position.Z))
+                    continue;
+                uint color = ImGui.GetColorU32(index == 0
+                    ? new Vector4(0.2f, 0.85f, 1f, 0.95f)
+                    : new Vector4(1f, 0.78f, 0.35f, 0.75f));
+                if (previous is { } from)
+                    WorldDrawHelper.DrawWorldLine(from, position, color);
+                WorldDrawHelper.DrawWorldText(position + new Vector3(0f, 0.35f, 0f), color, $"{index + 1} {site.Kind}");
+                previous = position;
+            }
+        }
 
 		private unsafe bool TryNavigateWithRoomFallback(InstanceContentDeepDungeon* dd, int playerRoom, int targetRoom, Vector3 finalDest)
 		{
@@ -1588,84 +1560,10 @@ namespace DeepDungeon.Fsd.Dalamud
             return DeepDungeon.Fsd.Dalamud.GameState.RoomGraph.GetLocalPlayerRoomIndex(deepDungeon);
         }
 
-        private static unsafe int GetPassageRoomIndex(InstanceContentDeepDungeon* deepDungeon)
-        {
-            return DeepDungeon.Fsd.Dalamud.GameState.RoomGraph.GetPassageRoomIndex(deepDungeon);
-        }
-
         private static unsafe bool IsRoomReachable(InstanceContentDeepDungeon* deepDungeon, int fromRoom, int toRoom)
         {
             return DeepDungeon.Fsd.Dalamud.GameState.RoomGraph.IsRoomReachable(deepDungeon, fromRoom, toRoom);
         }
-        private unsafe bool TryGetPassageActorPosition(InstanceContentDeepDungeon* deepDungeon, out Vector3 dest)
-        {
-            dest = default;
-            try
-            {
-                ReadOnlySpan<uint> passageBaseIds = stackalloc uint[]
-                {
-                    0x1EA094, // CairnPalace (POTD)
-                    0x1EA9A3, // BeaconHoH   (HOH)
-                    0x1EB867, // PylonEO     (EO)
-                    0x1EBE24, // PylonPT     (PT)
-                };
-
-                IGameObject? best = null;
-                float bestDistSq = float.MaxValue;
-                var player = Service.LocalPlayer;
-
-                foreach (var obj in Service.GameObjects)
-                {
-                    if (obj == null) continue;
-                    uint id = obj.BaseId;
-                    bool isPassage = false;
-                    for (int i = 0; i < passageBaseIds.Length; i++)
-                    {
-                        if (id == passageBaseIds[i])
-                        {
-                            isPassage = true;
-                            break;
-                        }
-                    }
-                    if (!isPassage) continue;
-
-                    float d2;
-                    if (player != null)
-                    {
-                        var dx = obj.Position.X - player.Position.X;
-                        var dz = obj.Position.Z - player.Position.Z;
-                        d2 = dx * dx + dz * dz;
-                    }
-                    else
-                    {
-                        d2 = 0f;
-                    }
-
-                    if (best == null || d2 < bestDistSq)
-                    {
-                        best = obj;
-                        bestDistSq = d2;
-                    }
-                }
-
-                if (best != null)
-                {
-                    dest = best.Position;
-                    return true;
-                }
-            }
-            catch (Exception ex)
-            {
-                Service.Log.Error($"[Necromancer] TryGetPassageActorPosition 失敗：{ex}");
-            }
-            return false;
-        }
-
-        private unsafe bool TryGetPassageDestination(InstanceContentDeepDungeon* deepDungeon, out Vector3 dest, out bool usedActorPosition, out int passageRoomIndex)
-        {
-            return PassageLocator.TryResolvePassageDestination(deepDungeon, out dest, out usedActorPosition, out passageRoomIndex);
-        }
-
 		private unsafe void BeginPassageFollowup(InstanceContentDeepDungeon* deepDungeon, int passageRoomIndex)
 		{
 			if (deepDungeon == null)
@@ -1689,11 +1587,6 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		private unsafe void ProcessPendingPassageFollowup()
 		{
-			if (IsRunActive || !Runtime.Navigation.MovementCoordinator.Shared.CanStartManual)
-			{
-				ClearPendingPassageFollowup();
-				return;
-			}
 			if (!_pendingPassageFollowup)
 				return;
 
@@ -1723,7 +1616,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			_pendingPassageRetryAt = now.AddSeconds(0.75);
 
-			if (!TryGetPassageDestination(dd, out var dest, out bool usedActor, out _))
+			if (!PassageLocator.TryResolveRequestedRoom(dd, _pendingPassageRoomIndex, out var dest, out bool usedActor))
 				return;
 
 			if (!usedActor)
@@ -1782,29 +1675,6 @@ namespace DeepDungeon.Fsd.Dalamud
             {
                 Service.Log.Error($"[Necromancer] StartFullSelfDelvingPTChest failed: {ex}");
             }
-        }
-
-        public FsdControlResult StartControlledPilgrimsTraverseCapture(
-            int targetLoops,
-            bool infinite,
-            string? confirmation)
-        {
-            if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-                return new FsdControlResult(false, "Controlled reusable-save survey capture is unavailable for this FSD host.");
-
-            if (!string.Equals(confirmation, "start-controlled-pt-capture", StringComparison.Ordinal))
-                return new FsdControlResult(false, "Controlled PT capture requires confirmation=start-controlled-pt-capture.");
-
-            var session = new ControlledPtSurveySession();
-            bool started = TryStartFsd(
-                () => new ControlledPt21To30Scenario(session),
-                Math.Max(1, targetLoops),
-                infinite,
-                DetailedMapEvidenceContract.PilgrimsTraverse21To30ScenarioKey,
-                out string error);
-            return started
-                ? new FsdControlResult(true, Scenario: "PT 21-30 controlled capture")
-                : new FsdControlResult(false, error);
         }
 
         public void StopFullSelfDelving()

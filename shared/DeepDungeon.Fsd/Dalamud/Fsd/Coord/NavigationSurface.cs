@@ -1,5 +1,4 @@
 using System.Numerics;
-using System.Threading;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 using DeepDungeon.Fsd.Dalamud.Utilities;
 using MasterPlayer.MechanicRuntime;
@@ -17,14 +16,16 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
     private readonly Func<float> _movementSpeed;
     private readonly Action<string, object> _record;
     private readonly DirectMovementController _direct = new("navigation");
-    private readonly NavigationPlanner _planner = new();
+    private readonly NavigationPlanner _regionPlanner = new();
     private readonly NavigationFollower _follower = new();
     private readonly NativeNavigationObservation _observation = new();
     private readonly List<Vector3> _displayPath = new();
+    private float[] _remainingAtPoint = [];
     private NavigationObservation _observed;
     private EncounterPlanningSnapshot? _snapshot;
     private EncounterPlanningSnapshot? _completedTerrain;
     private EncounterRoute? _route;
+    private EncounterPlanningSnapshot? _routeSnapshot;
     private NavigationPath? _preparedPath;
     private DateTime _nextReplan;
     private int _generation, _routeIndex;
@@ -32,48 +33,73 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
     private DateTime _lastDiag;
     private string _lastDiagState = "";
     private string? _failure;
-    private bool _disposed, _movementHeld;
-    private Vector3 _goal, _commandedTarget;
-    private float _arrivalRadius;
+    private bool _disposed, _displacementHeld, _inputLocked;
+    private NavigationGoal _goal;
+    private Vector3 _commandedTarget;
 
-    internal NavigationSurface(Func<NavBitmap?> mapProvider, Action<string, object>? record = null,
-        Func<EncounterPlanningSnapshot?>? snapshotProvider = null,
+    internal NavigationSurface(Func<NavBitmap?> mapProvider, Action<string, object>? record,
+        Func<EncounterPlanningSnapshot?> snapshotProvider,
         Func<ulong>? playerId = null, Func<float>? movementSpeed = null)
     {
         _mapProvider = mapProvider;
         _record = record ?? ((_, _) => { });
-        _snapshotProvider = snapshotProvider ?? EncounterPlanningSnapshotRegistry.Read;
+        _snapshotProvider = snapshotProvider ?? throw new ArgumentNullException(nameof(snapshotProvider));
         _playerId = playerId ?? (() => (ulong)(Service.LocalPlayer?.GameObjectId ?? 0));
         _direct.ObserveUserInput = true;
         _movementSpeed = movementSpeed ?? (() => DirectMovementController.TryReadNativeMotion(out var m)
             ? m.TargetSpeed > 0 ? m.TargetSpeed : m.BaseSpeed > 0 ? m.BaseSpeed : 6 : 6);
         _direct.ClampFinalStep = false;
         _direct.AfterWalkInput = OnNativeWrite;
-        _direct.CanWriteWalkInput = () => !CastMovementGuard.ShouldWait();
+        _direct.CanWriteWalkInput = () => !Runtime.Navigation.CastMovementGuard.ShouldWait();
     }
     internal bool NeedsSafetyPlan => MechanicExecutionState.MovementBlocked
-        || _snapshotProvider() is { Hazards.Length: > 0, BossDead: false } snap
+        || _snapshotProvider() is { RequiresTimedPlanning: true, BossDead: false } snap
         && snap.Territory == (ushort)Service.ClientState.TerritoryType;
 
     internal string? Failure => _failure;
     internal string Status => _lastDiagState;
-    internal string Solver => _planner.Solver;
+    internal string Solver => _planDiagnostics.Solver ?? "none";
     internal NavBitmap? CurrentBitmap => _mapProvider();
-    internal INavigationGrid? CurrentTerrain => _planner.CurrentTerrain;
-    internal IReadOnlyList<Vector3> RawPath => _planner.RawPath;
+    internal INavigationGrid? CurrentTerrain => _currentTerrain;
+    internal IReadOnlyList<Vector3> RawPath => _rawPath;
     internal IReadOnlyList<Vector3> SmoothedPath => _displayPath;
     internal int LegIndex => Math.Max(0, _follower.Index - 1);
     internal Vector3 CommandedTarget => _commandedTarget;
-    internal Vector3 FinalDestination => _goal;
-    internal float ArrivalRadius => _arrivalRadius;
+    internal Vector3 FinalDestination => _goal.Position;
+    internal float ArrivalRadius => _goal.Radius;
     internal bool InputEnabled => _direct.Enabled;
+    internal bool PlanningPending => _pendingPlan != null;
+
+    internal float? RemainingDistance(Vector3 destination, float arrivalRadius, Vector3 player)
+    {
+        if (_activeRegion != null || destination != _goal.Position || arrivalRadius != _goal.Radius ||
+            _route is not { Points.Length: > 0 } route) return null;
+        int index = Math.Min(_follower.Index + 1, route.Points.Length - 1);
+        var from = new Vector2(player.X, player.Z);
+        var next = route.Points[index].Position;
+        if (index == 0) return Vector2.Distance(from, next) + _remainingAtPoint[index];
+        var leg = route.Points[index - 1].Position - next;
+        var length = leg.Length();
+        var left = length > 0 ? Math.Clamp(Vector2.Dot(from - next, leg) / length, 0, length) : 0;
+        return left + _remainingAtPoint[index];
+    }
 
     internal Action? AttackSuspended { get; init; }
     private NavigationRegionGoal? _attackRegion;
     internal NavigationRegionGoal AttackRegion => _attackRegion ??= AttackRegionGoal.Create(
-        (map, seed) => CombatPositionNavigation.BitmapGroundPoint(map, seed),
-        (stand, target, range, clearance) => CombatPositionNavigation.CheckAttack(
-            stand, target, range, clearance, clearance).AvailableResult);
+        (map, seed) => CombatPositionNavigation.BitmapGroundPoint(map, seed), CheckAttackStand);
+
+    private long _attackOutOfRange, _attackSightBlocked, _attackSightUnknown, _attackStandClear;
+
+    private bool? CheckAttackStand(Vector3 stand, Vector3 target, float range, float clearance)
+    {
+        var check = CombatPositionNavigation.CheckAttack(stand, target, range, margin: clearance);
+        if (!check.InRange) ++_attackOutOfRange;
+        else if (check.SightBlocked) ++_attackSightBlocked;
+        else if (check.Allowed) ++_attackStandClear;
+        else ++_attackSightUnknown;
+        return check.AvailableResult;
+    }
 
     private NavigationRegionGoal? _activeRegion;
     private NavigationRegionGoal? _chestRegion;
@@ -84,13 +110,17 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
         return NavigateRegion(AttackRegion, id, target, player, ranges.Approach, ranges.Hold);
     }
 
-    internal NavigationState NavigateToChest(ChestTargetVerb chest, Vector3 player)
+    internal NavigationState NavigateToChest(ChestTargetVerb chest, Vector3 player,
+        out NavigationRegionExhaustion? exhaustion)
     {
         _chestRegion ??= new((map, seed) => CombatPositionNavigation.BitmapGroundPoint(map, seed),
             CanInteractFrom);
         var result = NavigateRegion(_chestRegion, chest.TargetId, chest.Position, player,
             chest.Range.Radius, chest.Range.Radius);
-        return _chestRegion.Unreachable ? NavigationState.Failed : result;
+        exhaustion = _chestRegion.Exhaustion is { } exhausted &&
+            exhausted.AppliesTo(_mapProvider(), player, chest.Position, CombatPositionNavigation.CurrentYOffset)
+            ? exhausted : null;
+        return result;
     }
 
     private static bool? CanInteractFrom(Vector3 stand, Vector3 target, float radius, float clearance)
@@ -111,25 +141,27 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
     {
         if (_activeRegion != region || region.TargetId != id) Cancel();
         _activeRegion = region;
-        region.Observe(id, target, approach, hold);
-        return NavigateCore(target, player, approach, null, region);
+        region.Observe(id, target, approach, hold, CombatPositionNavigation.CurrentYOffset);
+        return NavigateCore(new(target, approach), player, null, region);
     }
 
     public NavigationState Navigate(Vector3 dest, Vector3 playerPos, float arrivalRadius, NavigationPath? path = null)
     {
         if (_activeRegion != null) Cancel();
-        return NavigateCore(dest, playerPos, arrivalRadius, path, null);
+        return NavigateCore(new(dest, arrivalRadius), playerPos, path, null);
     }
 
-    private NavigationState NavigateCore(Vector3 dest, Vector3 playerPos, float arrivalRadius,
+    internal NavigationState PositionForEncounter(ulong encounterId, Vector3 position, Vector3 playerPos, float attackRange)
+    {
+        if (_activeRegion != null) Cancel();
+        return NavigateCore(new(position, attackRange, encounterId), playerPos, null, null);
+    }
+
+    private NavigationState NavigateCore(NavigationGoal goal, Vector3 playerPos,
         NavigationPath? path, NavigationRegionGoal? region)
     {
         if (_disposed) return NavigationState.Failed;
-        if (PromeRadarMovementGate.IsBlocked)
-        {
-            Cancel();
-            return NavigationState.Moving;
-        }
+        var (dest, arrivalRadius, _) = goal;
         var now = DateTime.UtcNow;
         var speed = _movementSpeed();
         CaptureDiagnosticContext(now, dest, playerPos, arrivalRadius, speed);
@@ -143,91 +175,100 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
             {
                 if (_completedTerrain?.EncounterId != snap.EncounterId)
                     _completedTerrain = snap with { Hazards = [], MovingObstacles = [], Chasers = [],
-                        ChasingHazards = [], Knockbacks = [], TemporaryObstacles = [], Residence = null, Hints = null };
+                        ChasingHazards = [], Knockbacks = [], Displacement = null, TemporaryObstacles = [],
+                        Residence = null, Hints = null };
                 snap = _completedTerrain;
             }
         }
         else if (snap != null) _completedTerrain = null;
         _diagnosticSnapshot = snap;
-        if (CastMovementGuard.ShouldWait())
-        {
-            ReleaseDirect();
-            DropRoute();
-            _nextReplan = now;
-            Diag(now, "waiting-cast");
-            return NavigationState.Moving;
-        }
         if (snap is { BossDead: false } && now - snap.CapturedAt > MaxSnapshotAge)
-        { ReleaseDirect(); Diag(now, "waiting-snapshot"); return NavigationState.StuckRepathing; }
-        if (snap?.EncounterId != _snapshot?.EncounterId || snap?.Territory != _snapshot?.Territory)
+        { InvalidatePlanning(now); ReleaseDirect(); Diag(now, "waiting-snapshot"); return NavigationState.StuckRepathing; }
+        if (snap?.EncounterId != _snapshot?.EncounterId || snap?.Territory != _snapshot?.Territory
+            || !ReferenceEquals(snap?.Arena, _snapshot?.Arena))
         {
-            ++_generation;
+            InvalidatePlanning(now);
             // On the first hazard frame the timed solver can assess the remaining
             // spatial route against the new hazards before searching for a detour.
             if (!(snap is { UsesDutyTerrain: true } && _snapshot == null && _route is { Reason: "astar" }))
                 DropRoute();
-            _planner.Reset();
-            _nextReplan = now;
         }
-        // Recheck each new ordinary-floor hint frame immediately, even when
-        // the objective, zone count and destination all stayed the same.
-        if (snap is { UsesDutyTerrain: true } && !ReferenceEquals(snap, _snapshot))
-            _nextReplan = now;
+        var constraintsChanged = snap != null && !snap.HasSameMovementConstraints(_snapshot);
         _snapshot = snap;
         var held = MechanicExecutionState.MovementBlocked || snap?.Hints?.HoldMovement(now) == true;
         _observed = _observation.Capture(playerPos, now, held, snap?.Hints?.PendingKnockback == true);
-        if (_observed.MovementLocked != _movementHeld) _nextReplan = now;
-        _movementHeld = _observed.MovementLocked;
-        var targetChanged = Vector3.DistanceSquared(dest, _goal) > .01f || arrivalRadius != _arrivalRadius;
-        _goal = dest; _arrivalRadius = arrivalRadius;
-        if ((targetChanged && region == null) || !ReferenceEquals(path, _preparedPath)) _nextReplan = now;
+        var heldForDisplacement = _observed.PendingDisplacement || _observed.ForcedMovement;
+        if (heldForDisplacement != _displacementHeld)
+        {
+            InvalidatePlanning(now);
+            DropRoute();
+        }
+        _displacementHeld = heldForDisplacement;
+        var inputLocked = _observed.MovementLocked && !heldForDisplacement;
+        var inputResumed = _inputLocked && !inputLocked;
+        _inputLocked = inputLocked;
+        var targetChanged = goal.Replaces(_goal);
+        _goal = goal;
+        if ((targetChanged && region == null) || !ReferenceEquals(path, _preparedPath))
+        {
+            InvalidatePlanning(now);
+            if (region == null) DropRoute();
+        }
         _preparedPath = path;
-        if (now >= _nextReplan || (region is { Searching: true } && snap == null))
+        var map = _mapProvider();
+        // Do not use a bitmap belonging to another region of this territory.
+        if (map != null && !map.ContainsWorld(playerPos)) map = null;
+        if (!ReferenceEquals(map, _observedMap))
+        {
+            _observedMap = map;
+            InvalidatePlanning(now);
+            DropRoute();
+        }
+        if (Runtime.Navigation.PromeRadarMovementGate.ShouldYield() || Runtime.Navigation.CastMovementGuard.ShouldWait())
+        {
+            InvalidatePlanning(now);
+            DropRoute();
+            ReleaseDirect();
+            Diag(now, "external-movement-wait");
+            return NavigationState.Moving;
+        }
+        if (inputLocked)
+        {
+            ReleaseDirect();
+            Diag(now, "movement-locked");
+            return NavigationState.Moving;
+        }
+        if (constraintsChanged || inputResumed)
+        {
+            _nextReplan = now;
+            if (_route is { } route && !NavigationPlanner.CanStart(route, _observed,
+                _follower.CopyForPrediction().Step(_observed), snap, _currentTerrain, speed, ReplanInterval.TotalSeconds, _routeSnapshot))
+                DropRoute();
+        }
+        bool canApproach = region != null && ReferenceEquals(region, _attackRegion) && map != null
+            && snap == null && !heldForDisplacement
+            && !new DeepDungeon.Fsd.Core.NavigationRange(arrivalRadius).Contains(playerPos, dest);
+        if (_route is { Reason: "attack-approach" } approach && (!canApproach ||
+            !AttackApproachMakesProgress(approach, new(dest.X, dest.Z))))
+            DropRoute();
+        CompleteBackgroundPlan(now, speed, snap, canApproach);
+        if ((region != null || _pendingPlan == null)
+            && (now >= _nextReplan || (region is { Searching: true } && snap == null)))
         {
             _nextReplan = now + ReplanInterval;
-            var map = _mapProvider();
-            // Do not use a bitmap belonging to another region of this territory.
-            if (map != null && !map.ContainsWorld(playerPos)) map = null;
             var request = new NavigationRequest(now, new(playerPos.X, playerPos.Z), new(dest.X, dest.Z),
                 arrivalRadius, speed, map, snap)
             { Region = region, PlayerHeight = playerPos.Y, PlayerId = _playerId(), Observation = _observed, Continuation = _route, ContinuationIndex = _follower.Index, Follower = _follower, PreparedPath = path };
-            var planId = ++_planSequence;
-            try
+            if (region == null) StartBackgroundPlan(request);
+            else
             {
-                var completion = MeasurePlan(request, CancellationToken.None);
-                var next = completion.Route;
-                var decision = next.Kind == EncounterRouteKind.NoRoute ? "no-route" : "adopted";
-                if (snap != null)
+                PlanRegion(request);
+                if (canApproach && _pendingPlan == null && _route == null && region.Searching &&
+                    (_lastAttackApproachGoal is not { } previous || Vector2.DistanceSquared(request.Goal, previous) > .01f))
                 {
-                    var timed = new EncounterRouteRequest(snap, now, request.PlayerId, request.Position,
-                        request.Goal, arrivalRadius, speed, _lastDirection) { Observation = _observed };
-                    _record("coord-encounter-plan", BuildPlanRecord(planId, _generation, _generation,
-                        timed, completion, decision, DateTime.UtcNow, null));
+                    _lastAttackApproachGoal = request.Goal;
+                    StartBackgroundPlan(request with { Region = null, AttackApproachTarget = region.TargetId });
                 }
-                if (next.Kind == EncounterRouteKind.Ready)
-                {
-                    _failure = null;
-                    if (!ReferenceEquals(_route, next))
-                    {
-                        _route = next; _follower.Adopt(next); _routeIndex = 0;
-                        _displayPath.Clear();
-                        foreach (var point in next.Points) _displayPath.Add(new(point.Position.X, playerPos.Y, point.Position.Y));
-                    }
-                    _adoptedPlanId = planId;
-                }
-                else
-                {
-                    // A region path must still lead to an accepted stand. Local hazard
-                    // paths also need a fresh safety check before further movement.
-                    _failure = next.Reason;
-                    if (region != null || snap is { UsesDutyTerrain: true }) DropRoute();
-                }
-            }
-            catch (Exception ex)
-            {
-                _failure = ex.Message;
-                if (region != null || snap is { UsesDutyTerrain: true }) DropRoute();
-                _record("navigation-plan-fault", new { planId, error = ex.ToString() });
             }
         }
         if (_route == null)
@@ -237,7 +278,14 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
         _commandedTarget = new(command.Target.X, playerPos.Y, command.Target.Y);
         try
         {
-            NativeNavigationOutput.Apply(_direct, command, playerPos);
+            if (!NativeNavigationOutput.Apply(_direct, command, playerPos))
+            {
+                InvalidatePlanning(now);
+                DropRoute();
+                ReleaseDirect();
+                Diag(now, "movement-output-held");
+                return NavigationState.Moving;
+            }
             _issuedPlanId = _adoptedPlanId;
         }
         catch (Exception ex)
@@ -259,19 +307,24 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
             if (direction.LengthSquared() > 1e-6f) _lastDirection = Vector2.Normalize(direction);
             Diag(now, "moving"); return NavigationState.Moving;
         }
-        if (_observed.MovementLocked)
-        { Diag(now, "movement-locked"); return NavigationState.Moving; }
+        if (_observed.MovementLocked || _observed.PendingDisplacement || _observed.ForcedMovement)
+        { Diag(now, _observed.ForcedMovement ? "native-displacement" : _observed.MovementLocked ? "movement-locked" : "displacement-pending"); return NavigationState.Moving; }
         var inside = snap == null || snap.Arena.Contains(new BossMod.WPos(playerPos.X, playerPos.Z) - snap.ArenaCenter);
         var arrived = region?.Holding ?? (inside && new DeepDungeon.Fsd.Core.NavigationRange(arrivalRadius).HasArrived(playerPos, dest));
         Diag(now, arrived ? "holding-in-range" : command.Kind == NavigationCommandKind.Complete ? "replanning" : "waiting-seg");
         if (command.Kind == NavigationCommandKind.Complete && !arrived)
-        { _nextReplan = now; return NavigationState.StuckRepathing; }
+        {
+            if (_route is { Reason: "attack-approach" }) DropRoute();
+            _nextReplan = now;
+            return NavigationState.StuckRepathing;
+        }
         return arrived ? NavigationState.Arrived : NavigationState.Moving;
     }
 
     private void DropRoute()
     {
         _route = null;
+        _routeSnapshot = null;
         _follower.Reset();
         _routeIndex = 0;
         _displayPath.Clear();
@@ -279,6 +332,11 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
 
     private void ReleaseDirect() { if (_direct.Enabled) _direct.Release(); }
     private void Diag(DateTime now, string state) => RecordDiagnosticState(now, state);
+    internal void CancelAttack(ulong targetId)
+    {
+        if (_attackRegion is { } attack && _activeRegion == attack && attack.TargetId == targetId) Cancel();
+    }
+
     public void Cancel()
     {
         if (_activeRegion is { } active)
@@ -288,26 +346,16 @@ internal sealed partial class NavigationSurface : INavSurface, IDisposable
             _activeRegion = null;
         }
         if (_route != null || _direct.Enabled) Diag(DateTime.UtcNow, "cancel-requested");
-        ++_generation; _route = null; _preparedPath = null; _routeIndex = 0; _failure = null;
-        _follower.Reset(); _planner.Reset(); _displayPath.Clear(); _nextReplan = default;
+        InvalidatePlanning(default);
+        _preparedPath = null; _failure = null; _observedMap = null;
+        DropRoute();
         // Keep observation history through claim changes and pending-effect gaps.
         ReleaseDirect();
-        // Hold/no-claim also owns a stationary objective. Keep local cleanup
-        // complete on IPC failure; the coordinator retains the denied grant.
-        if (MovementCoordinator.Shared.DirectRequired && !PromeRadarMovementGate.IsBlocked)
-        {
-            try { MovementCoordinator.Shared.QuiesceVNav(); }
-            catch (Exception error)
-            {
-                _failure = error.Message;
-                Diag(DateTime.UtcNow, "waiting-vnav-stop");
-            }
-        }
     }
     public void Dispose()
     {
         if (_disposed) return;
-        Cancel(); _observation.Reset(); _disposed = true;
-        _direct.AfterWalkInput = null; _direct.CanWriteWalkInput = null; _direct.Dispose();
+        Cancel(); DrainOnDispose(); _observation.Reset(); _disposed = true;
+        _direct.AfterWalkInput = null; _direct.Dispose();
     }
 }

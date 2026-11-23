@@ -12,7 +12,17 @@ namespace DeepDungeon.Fsd.Dalamud.Coord;
 internal sealed partial class NavigationSurface
 {
     private sealed record PlanCompletion(EncounterRoute Route, DateTime StartedUtc,
-        DateTime CompletedUtc, double ComputeMilliseconds);
+        DateTime CompletedUtc, double ComputeMilliseconds, INavigationGrid? Terrain,
+        IReadOnlyList<Vector3> RawPath, PlannerDiagnostics Diagnostics);
+
+    private readonly record struct PlannerDiagnostics(string Solver, string Work, int SearchEvaluations,
+        int SearchExtensions, string? SearchExit, double FirstWaveSeconds, double SecondWaveSeconds,
+        int IntervalExpanded, bool IntervalBudgetReached, int CandidateCount)
+    {
+        public PlannerDiagnostics(NavigationPlanner planner) : this(planner.Solver, planner.Work,
+            planner.SearchEvaluations, planner.SearchExtensions, planner.SearchExit, planner.FirstWaveSeconds,
+            planner.SecondWaveSeconds, planner.IntervalExpanded, planner.IntervalBudgetReached, planner.CandidateCount) { }
+    }
 
     private static readonly Guid PlannerBuild = typeof(NavigationPlanner).Module.ModuleVersionId;
     private static readonly TimeSpan DiagnosticInterval = TimeSpan.FromMilliseconds(200);
@@ -49,13 +59,38 @@ internal sealed partial class NavigationSurface
         _nativeWriteDestination = _direct.DesiredPosition;
     }
 
-    private PlanCompletion MeasurePlan(NavigationRequest request, CancellationToken token)
+    private static PlanCompletion MeasurePlan(NavigationPlanner planner, NavigationRequest request, CancellationToken token)
     {
         var started = DateTime.UtcNow;
         var stamp = Stopwatch.GetTimestamp();
-        var route = _planner.Plan(in request, token);
+        var route = planner.Plan(in request, token);
         var elapsed = Stopwatch.GetElapsedTime(stamp).TotalMilliseconds;
-        return new(route, started, DateTime.UtcNow, elapsed);
+        return new(route, started, DateTime.UtcNow, elapsed, planner.CurrentTerrain,
+            request.Region != null ? planner.RawPath : planner.RawPath.Count == 0 ? [] : planner.RawPath.ToArray(),
+            new(planner));
+    }
+
+    private void RecordPlan(long id, int generation, in NavigationRequest request, Vector2 previousDirection,
+        PlanCompletion? completion, string decision, DateTime observedAt)
+    {
+        if (request.Encounter is { } snapshot)
+        {
+            var timed = new EncounterRouteRequest(snapshot, request.Now, request.PlayerId, request.Position,
+                request.Goal, request.GoalRadius, request.Speed, previousDirection) { Observation = request.Observation };
+            _record("coord-encounter-plan", BuildPlanRecord(id, generation, _generation,
+                timed, completion, decision, observedAt, null));
+        }
+        else if (request.Region == null && (decision != "adopted" || completion?.Diagnostics.Work != "reuse"))
+        {
+            _record("coord-spatial-plan", new
+            {
+                planId = id, generation, decision, observedAtUtc = observedAt, requestedAtUtc = request.Now,
+                startedUtc = completion?.StartedUtc, completedUtc = completion?.CompletedUtc,
+                computeMs = completion?.ComputeMilliseconds, reason = completion?.Route.Reason,
+                attackApproachTarget = request.AttackApproachTarget == 0 ? (ulong?)null : request.AttackApproachTarget,
+                start = Position(request.Position), goal = Position(request.Goal),
+            });
+        }
     }
 
     // Explicit coordinates are intentional: the run recorder does not enable
@@ -67,6 +102,27 @@ internal sealed partial class NavigationSurface
     // Null denotes a non-finite diagnostic number, never a substituted zero.
     private static float? Number(float value) => float.IsFinite(value) ? value : null;
     private static double? Number(double value) => double.IsFinite(value) ? value : null;
+
+    private static object? RegionSearch(NavigationRegionGoal region, DateTime now)
+    {
+        var s = region.SearchProgress;
+        if (s.Id == 0) return null;
+        return new
+        {
+            searchId = s.Id, startedUtc = s.StartedUtc, searchTarget = Position(s.Target),
+            elapsedMs = region.Searching ? (double?)(now - s.StartedUtc).TotalMilliseconds : null,
+            slices = s.Slices, computeMs = s.ComputeMs, expanded = s.Expanded,
+            projections = s.Projections, missingGround = s.MissingGround, status = s.Status.ToString(), s.Failure,
+        };
+    }
+
+    private static object? Displacement(NativeDisplacementObservation? value) => value is { } motion ? new
+    {
+        target = Position(motion.Target), motion.ObservedAt, motion.ReceivedAt,
+        motion.MovementStart, end = motion.End, duration = Number(motion.Duration),
+        progress = Number(motion.Progress), remainingDistance = Number(motion.RemainingDistance),
+        motion.Native, motion.ActionId, motion.GlobalSequence,
+    } : null;
 
     private static object? Geometry(EncounterHazardGeometry? geometry) => geometry is { } g ? new
     {
@@ -87,6 +143,7 @@ internal sealed partial class NavigationSurface
         DateTime observedAtUtc, string? error)
     {
         var s = request.Snapshot;
+        var diagnostics = completion?.Diagnostics ?? default;
         var player = new WPos(request.Position.X, request.Position.Y);
         var route = completion?.Route;
         object? firstMove = null;
@@ -109,16 +166,16 @@ internal sealed partial class NavigationSurface
         return new
         {
             schema = 2, planner = "ai-hints-auto", scoreKind = "hint-constraint-violations",
-            solver = _planner.Solver, work = _planner.Work,
-            searchEvaluations = _planner.SearchEvaluations, searchExtensions = _planner.SearchExtensions,
-            searchExit = _planner.SearchExit, windComparison = route?.WindComparison,
+            solver = diagnostics.Solver, work = diagnostics.Work,
+            searchEvaluations = diagnostics.SearchEvaluations, searchExtensions = diagnostics.SearchExtensions,
+            searchExit = diagnostics.SearchExit, completionSlack = route?.CompletionSlack,
             planId, decision, observedAtUtc, requestGeneration, observedGeneration,
             plannerBuild = PlannerBuild, error,
-            firstWaveSeconds = Number(_planner.FirstWaveSeconds),
-            secondWaveSeconds = Number(_planner.SecondWaveSeconds),
-            intervalExpanded = _planner.IntervalExpanded,
-            intervalBudgetReached = _planner.IntervalBudgetReached,
-            intervalCandidates = _planner.CandidateCount,
+            firstWaveSeconds = Number(diagnostics.FirstWaveSeconds),
+            secondWaveSeconds = Number(diagnostics.SecondWaveSeconds),
+            intervalExpanded = diagnostics.IntervalExpanded,
+            intervalBudgetReached = diagnostics.IntervalBudgetReached,
+            intervalCandidates = diagnostics.CandidateCount,
             request = new
             {
                 nowUtc = request.Now, playerId = request.PlayerId,
@@ -137,10 +194,15 @@ internal sealed partial class NavigationSurface
                     hintModule = s.Hints?.ModuleName,
                     keepMoving = s.Hints?.KeepMoving,
                     pendingKnockback = s.Hints?.PendingKnockback,
+                    displacement = Displacement(request.Displacement),
+                    receiptDisplacement = Displacement(s.Displacement),
                     knockbacks = s.Knockbacks.Select(k => new {
                         activationUtc = k.Source.Activation, origin = Position(k.Source.Origin),
                         distance = Number(k.Source.Distance), kind = k.Source.Kind.ToString(),
                         immunityStatusId = k.PathDependentImmunityStatus,
+                        actionId = k.Timing.ActionId, effectRowId = k.Timing.EffectRowId,
+                        applicationDelaySeconds = Number(k.Timing.ApplicationDelay),
+                        movementDurationSeconds = Number(k.Timing.Duration), durationEstimated = k.Timing.DurationEstimated,
                     }).ToArray(),
                     specialMode = s.Hints?.Mode.ToString(),
                     arena = new
@@ -186,7 +248,8 @@ internal sealed partial class NavigationSurface
                     residence = s.Residence is not { } residence ? null : new
                     {
                         statusId = residence.StatusId, initialDeadlineUtc = residence.InitialDeadline,
-                        reentrySeconds = residence.ReentrySeconds,
+                        reentrySeconds = residence.ReentrySeconds, safetyMarginSeconds = residence.SafetyMarginSeconds,
+                        maximumPlanningSpeed = Number(residence.MaximumPlanningSpeed),
                         statusPresent = residence.StatusPresent, windImmune = residence.WindImmune,
                         requiresImmunityAtUtc = residence.RequiresImmunityAt,
                         safeContactSeconds = Number(residence.InitialSafeContact),
@@ -243,9 +306,9 @@ internal sealed partial class NavigationSurface
         _record("coord-encounter", new
         {
             schema = 2, planner = "ai-hints-auto", scoreKind = "hint-constraint-violations", observedAtUtc = now,
-            solver = _planner.Solver, work = _planner.Work,
+            solver = Solver, work = _planDiagnostics.Work,
             encounter = s?.EncounterId ?? _snapshot?.EncounterId ?? 0, status = state,
-            planId = _adoptedPlanId, pendingPlanId = (long?)null,
+            planId = _adoptedPlanId, pendingPlanId = _pendingPlan?.Id,
             snapshotPresent = s != null, snapshotCapturedAtUtc = s?.CapturedAt,
             snapshotAgeMs = s == null ? (double?)null : (now - s.CapturedAt).TotalMilliseconds,
             hazards = s?.Hazards.Length ?? 0, moving = s?.MovingObstacles.Length ?? 0,
@@ -265,6 +328,9 @@ internal sealed partial class NavigationSurface
             {
                 targetId = attack.TargetId, target = Position(attack.Target), holding = attack.Holding,
                 searching = attack.Searching, stand = attack.Path is { } path ? Position(path.Points[^1]) : null,
+                search = RegionSearch(attack, now),
+                probes = new { outOfRange = _attackOutOfRange, blocked = _attackSightBlocked,
+                    unknown = _attackSightUnknown, clear = _attackStandClear },
             } : null,
             leg, failure = _failure,
             position = Position(_diagnosticPosition), positionObservedAtUtc = _diagnosticAtUtc,
@@ -277,6 +343,8 @@ internal sealed partial class NavigationSurface
             movementModel = new { acceleration = Number(_observed.Motion.Acceleration) },
             displacementVelocity = Position(_observed.DisplacementVelocity),
             forcedMovement = _observed.ForcedMovement, movementLocked = _observed.MovementLocked,
+            pendingDisplacement = _observed.PendingDisplacement,
+            displacement = Displacement(_observed.Displacement ?? s?.Displacement),
             control = new
             {
                 directEnabled = _direct.Enabled, activeOwner = DirectMovementController.ActiveOwner,

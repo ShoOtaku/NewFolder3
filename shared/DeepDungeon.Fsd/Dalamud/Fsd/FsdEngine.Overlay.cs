@@ -1,5 +1,7 @@
 using System.Numerics;
 using DeepDungeon.Fsd.Dalamud.Coord;
+using DeepDungeon.Fsd.Dalamud.Map;
+using FFXIVClientStructs.FFXIV.Client.Game.Event;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
@@ -12,6 +14,45 @@ namespace DeepDungeon.Fsd.Dalamud
 		private const uint ColDead = 0xFF5050F0;     // red-ish
 		private const uint ColArrow = 0xFF00E0FF;
 
+		private FloorMap? _overlayTemplate;
+		private FloorMapKey? _overlayMapKey;
+		private NavBitmap? _overlayMap;
+		private int _overlayMapFloor;
+		private DateTime _nextOverlayMapRefresh;
+
+		private unsafe NavBitmap? GetBoundaryOverlayMap()
+		{
+			var framework = EventFramework.Instance();
+			var dd = framework == null ? null : framework->GetInstanceContentDeepDungeon();
+			if (!_currentInDeepDungeon || _currentDeepDungeonState.IsTransitioning || dd == null
+				|| FloorMapKey.For(dd) is not { } key)
+			{
+				_overlayTemplate = null;
+				_overlayMapKey = null;
+				_overlayMap = null;
+				_nextOverlayMapRefresh = default;
+				return null;
+			}
+			if (NavDiag.Map is { } active && active.Matches(key, dd)) return active;
+
+			var now = DateTime.UtcNow;
+			if (_overlayMapKey != key || now >= _nextOverlayMapRefresh)
+			{
+				var template = FloorMap.Get(key);
+				if (!ReferenceEquals(template, _overlayTemplate)) _overlayMap = null;
+				_overlayTemplate = template;
+				_overlayMapKey = key;
+				_nextOverlayMapRefresh = now.AddSeconds(1);
+			}
+			if (_overlayTemplate == null) return null;
+			if (_overlayMapFloor != dd->Floor || _overlayMap?.Matches(key, dd) != true)
+			{
+				_overlayMap = NavBitmap.Create(_overlayTemplate, dd);
+				_overlayMapFloor = dd->Floor;
+			}
+			return _overlayMap;
+		}
+
 		/// <summary>
 		/// World-space overlay for the live site pool: every site gets a
 		/// kind + value + score label at its world position; the committed
@@ -21,7 +62,22 @@ namespace DeepDungeon.Fsd.Dalamud
 		{
 			var driver = ObjectiveSiteDriver.Active;
 			var player = Service.LocalPlayer;
-			if (driver == null || player == null)
+			if (player == null)
+				return;
+			var map = GetBoundaryOverlayMap();
+			if (map != null)
+			{
+				const uint ColBlockedEdge = 0xCCFF4060;
+				var pos = player.Position;
+				foreach (var (a, b) in map.BoundarySegments)
+				{
+					var mx = (a.X + b.X) * 0.5f - pos.X;
+					var mz = (a.Z + b.Z) * 0.5f - pos.Z;
+					if (mx * mx + mz * mz <= 32f * 32f)
+						WorldDrawHelper.DrawWorldLine(a, b, ColBlockedEdge, 1f);
+				}
+			}
+			if (driver == null)
 				return;
 
 			foreach (var s in driver.Sites)
@@ -36,15 +92,7 @@ namespace DeepDungeon.Fsd.Dalamud
 						or ObjectiveSiteStatus.Falsified => ColDone,
 					_ => ColDead,
 				};
-				var scLabel = driver.LastScores.TryGetValue(
-					ObjectiveSiteDriver.SiteKey(s), out var sc)
-					? $" sc={sc:0.00}" : "";   // no fabricated zero score
-				driver.DwellSeconds.TryGetValue(
-					ObjectiveSiteDriver.SiteKey(s), out var dw);
-				var dwLabel = s.Kind == ObjectiveSiteKind.Candidate
-					? $" dw={dw:0.0}/3" : "";
-				var label = $"{(isHead ? "» " : "")}{s.Kind} " +
-					$"v={s.Value:0.0}{scLabel}{dwLabel} {s.Status}";
+                var label = $"{(isHead ? "» " : "")}{s.Kind} {s.Status}";
 				WorldDrawHelper.DrawWorldText(
 					s.Position + new Vector3(0, 1.2f, 0), color, label);
 				WorldDrawHelper.DrawWorldCircle(
@@ -60,24 +108,14 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			// Bitmap navigation diagnostics — published only while the
-			// runtime owner exists. Nearby boundary edges (≤32m), the raw
+			// runtime owner exists. The raw
 			// A* cell path, the smoothed path, the current leg/next corner,
 			// the commanded target and the arrival circle.
 			var nav = NavDiag.Navigation;
-			var map = NavDiag.Map;
 			if (nav != null && map != null)
 			{
-				var pos = player.Position;
-				const uint ColBlockedEdge = 0xCCFF4060;
 				const uint ColRawPath = 0xCCFF40FF;
 				const uint ColSmoothPath = 0xCC40C0FF;
-				foreach (var (a, b) in map.BoundarySegments)
-				{
-					var mx = (a.X + b.X) * 0.5f - pos.X;
-					var mz = (a.Z + b.Z) * 0.5f - pos.Z;
-					if (mx * mx + mz * mz <= 32f * 32f)
-						WorldDrawHelper.DrawWorldLine(a, b, ColBlockedEdge, 1f);
-				}
 				var raw = nav.RawPath;
 				for (var i = 1; i < raw.Count; i++)
 					WorldDrawHelper.DrawWorldLine(raw[i - 1], raw[i], ColRawPath, 1f);

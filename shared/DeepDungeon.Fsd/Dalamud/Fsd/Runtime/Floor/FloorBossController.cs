@@ -8,12 +8,14 @@ using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.SubKinds;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using MasterPlayer.MechanicRuntime;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
 /// <summary>Owns one floor's boss navigation, combat buffs and diagnostic cadence.</summary>
 internal sealed class FloorBossController : IDisposable
 {
+    private const float BossNavigationArrivalTolerance = 3f;
     private const uint SteelStatusId = 1100;
     private const uint StrengthStatusId = 687;
     private const uint PtHasteStatusId = 4718;
@@ -31,14 +33,19 @@ internal sealed class FloorBossController : IDisposable
     private readonly Action<byte, IPlayerCharacter> _recordBossSnapshot;
     private DateTime _nextBossDiagnosticAtUtc = DateTime.MinValue;
     private readonly Func<bool>? _coordEscapeActive;
-    private readonly IBossMovementStrategy _movementStrategy;
+    private readonly IBossMovementStrategy? _movementStrategy;
+    private string? _movementFailure;
+    internal string? MovementFailure => _movementFailure;
+    private EncounterReadiness? _lastMechanicReadiness;
     private bool _movementStarted;
     internal bool UsesSpinStrategy { get; }
-    internal string MovementStrategyName => _movementStrategy.Name;
+    internal bool UsesPromeRadar => _movementStrategy is PromeRadarBossMovementStrategy;
+    internal string MovementStrategyName => _movementStrategy?.Name ?? "spin";
     internal bool MovementStarted => _movementStarted;
-    internal bool RequestsNorthCamera => _movementStarted && _movementStrategy.RequestsNorthCamera;
+    internal bool AllowsCombatAssist => _movementFailure == null &&
+        (UsesSpinStrategy || UsesPromeRadar || _lastMechanicReadiness?.Kind == EncounterReadinessKind.Ready);
+    internal bool RequestsNorthCamera => _movementStarted && _movementStrategy?.RequestsNorthCamera == true;
     private bool BossNavigationResolved { get; set; }
-    public bool BossSerenityAwaitingBuff { get; private set; }
     private string Status { set => _setStatus(value); }
     private FarmingItemPolicy ItemPolicy => FarmingItemPolicy.For(_ctx.FarmingPlan?.Mode);
 
@@ -61,15 +68,22 @@ internal sealed class FloorBossController : IDisposable
         _recordReplayEvent = recordReplayEvent;
         _recordBossSnapshot = recordBossSnapshot;
         UsesSpinStrategy = floorRuntime.Kind == FloorRuntimeKind.Boss &&
-            DeepDungeonBossPolicy.UsesSpin(floorRuntime.DungeonId, floor) && spinBossMovementFactory != null;
-        _movementStrategy = UsesSpinStrategy
-            ? spinBossMovementFactory!()
-            : new NormalBossMovementStrategy(floorRuntime);
+            DeepDungeonBossPolicy.UsesSpin(floorRuntime.DungeonId, floor);
         if (floorRuntime.DungeonId == 4 && floor == 30)
             _movementStrategy = new PromeRadarBossMovementStrategy(floorRuntime, context, recordReplayEvent);
+        else if (!UsesSpinStrategy)
+            _movementStrategy = new NormalBossMovementStrategy(floorRuntime);
+        else
+        {
+            try
+            {
+                _movementStrategy = spinBossMovementFactory?.Invoke();
+                if (_movementStrategy == null) _movementFailure = "Required spin movement factory is unavailable.";
+            }
+            catch (Exception ex) { _movementFailure = $"Spin initialization failed: {ex.Message}"; }
+            if (_movementFailure != null) Service.Log.Error($"[FloorPhase] {_movementFailure}");
+        }
     }
-
-    public void OnSerenityConfirmed() => BossSerenityAwaitingBuff = true;
 
     public void Dispose()
     {
@@ -79,15 +93,11 @@ internal sealed class FloorBossController : IDisposable
 
     private void StopMovement()
     {
-        if (!_movementStarted)
-        {
-            _navHelper.Cancel();
-            return;
-        }
+        if (!_movementStarted) return;
         _movementStarted = false;
-        try { _movementStrategy.Stop(); }
+        try { _movementStrategy?.Stop(); }
         finally { _navHelper.Cancel(); }
-        _recordReplayEvent("boss-movement-stopped", new { floor = _floor, strategy = _movementStrategy.Name });
+        _recordReplayEvent("boss-movement-stopped", new { floor = _floor, strategy = MovementStrategyName });
     }
 
     internal void SuspendMovement()
@@ -102,6 +112,13 @@ internal sealed class FloorBossController : IDisposable
 
     public unsafe void Update(InstanceContentDeepDungeon* dd)
     {
+        if (_movementFailure != null || _movementStrategy == null)
+        {
+            SuspendMovement();
+            _navHelper.Cancel();
+            Status = $"Boss floor - fault ({MovementStrategyName}): {_movementFailure}";
+            return;
+        }
         if (Service.LocalPlayer is not { IsDead: false } || _ctx.Duty.IsTransitioning ||
             Service.Condition[ConditionFlag.BetweenAreas] || Service.Condition[ConditionFlag.BetweenAreas51])
         {
@@ -125,17 +142,37 @@ internal sealed class FloorBossController : IDisposable
             StopMovement();
             return;
         }
-        if (!_movementStarted)
+        try
         {
-            _navHelper.Cancel();
-            _movementStarted = true;
-            _movementStrategy.Start();
-            _recordReplayEvent("boss-movement-started", new { floor = _floor, strategy = _movementStrategy.Name });
+            if (!_movementStarted)
+            {
+                _navHelper.Cancel();
+                _movementStarted = true;
+                _movementStrategy.Start();
+                _recordReplayEvent("boss-movement-started", new { floor = _floor, strategy = _movementStrategy.Name });
+            }
+            var status = _movementStrategy.Update(dd);
+            if (status != null) Status = status;
+            if (UsesSpinStrategy || UsesPromeRadar)
+                UpdateManagedEncounter(dd, status, liveEncounter: true);
         }
-        var status = _movementStrategy.Update(dd);
-        if (status != null) Status = status;
-        if (UsesSpinStrategy || _movementStrategy is PromeRadarBossMovementStrategy)
-            UpdateManagedEncounter(dd, status, liveEncounter: true);
+        catch (Exception ex)
+        {
+            _movementFailure = $"{MovementStrategyName} execution failed: {ex.Message}";
+            Service.Log.Error(ex, $"[FloorPhase] {_movementFailure}");
+            try { SuspendMovement(); }
+            catch (Exception cleanup) { Service.Log.Error(cleanup, "[FloorPhase] failed boss movement cleanup"); }
+            Status = $"Boss floor - fault: {_movementFailure}";
+        }
+    }
+
+    internal void ReportMechanicReadiness(EncounterReadiness readiness)
+    {
+        if (_lastMechanicReadiness is { } previous && previous.Kind == readiness.Kind && previous.Detail == readiness.Detail) return;
+        _lastMechanicReadiness = readiness;
+        _recordReplayEvent("boss-mechanic-readiness", new { floor = _floor, state = readiness.Kind.ToString(), readiness.Detail, readiness.ObservedAt });
+        if (readiness.Failed) Service.Log.Error($"[FloorPhase] Boss mechanics {readiness.Kind}: {readiness.Detail}");
+        else Service.Log.Info($"[FloorPhase] Boss mechanics {readiness.Kind}: {readiness.Detail}");
     }
 
     // Finish items before approaching: a cast/animation lock after spin has
@@ -148,10 +185,7 @@ internal sealed class FloorBossController : IDisposable
         bool needed = beforeCombat && (_items.Session.Pending != null ||
             Service.LocalPlayer?.IsCasting == true || Service.Condition[ConditionFlag.Casting] ||
             actions != null && actions->AnimationLock > 0 ||
-            CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex) &&
-                FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(SteelStatusId)) ||
-            CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex) &&
-                FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(StrengthStatusId)));
+            TryMaintainBossBuffs(dd));
         if (_preparing != needed)
         {
             _preparing = needed;
@@ -159,7 +193,6 @@ internal sealed class FloorBossController : IDisposable
             _recordReplayEvent("boss-preparation", new { floor = _floor, waiting = needed });
         }
         if (!needed) return false;
-        TryMaintainBossBuffs(dd);
         Status = "Boss floor - preparing items before approach";
         return true;
     }
@@ -185,7 +218,7 @@ internal sealed class FloorBossController : IDisposable
         if (liveEncounter)
         {
             RecordBossCombatSnapshot();
-            TryMaintainBossBuffs(dd);
+            if (Service.Condition[ConditionFlag.InCombat]) TryMaintainBossBuffs(dd);
         }
     }
 
@@ -374,28 +407,25 @@ internal sealed class FloorBossController : IDisposable
         return 0;
     }
 
-    private unsafe void TryMaintainBossBuffs(InstanceContentDeepDungeon* dd)
+    private unsafe bool TryMaintainBossBuffs(InstanceContentDeepDungeon* dd)
     {
-        if (_movementStrategy.SuppressCombatItems && Service.Condition[ConditionFlag.InCombat]) return;
-        if (_ctx?.ControlledPtSurvey != null || !_items.CanAttemptPomanderUse(allowCombat: true)) return;
+        if (_movementStrategy?.SuppressCombatItems == true && Service.Condition[ConditionFlag.InCombat]) return false;
+        if (!_items.CanAttemptPomanderUse()) return false;
         // Defence first. Refresh shortly before expiry rather than repeatedly overwriting active buffs.
         if (CombatBuffUsable(FloorInitPlanner.SteelPomanderSlotIndex) &&
             FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(SteelStatusId)) &&
-            _items.TryUsePomander(FloorInitPlanner.SteelPomanderSlotIndex, dd, "boss steel refresh")) return;
+            _items.TryUsePomander(FloorInitPlanner.SteelPomanderSlotIndex, dd, "boss steel refresh")) return true;
         if (CombatBuffUsable(FloorInitPlanner.StrengthPomanderSlotIndex) &&
-            FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(StrengthStatusId)))
-            if (_items.TryUsePomander(FloorInitPlanner.StrengthPomanderSlotIndex, dd, "boss strength refresh")) return;
+            FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(StrengthStatusId)) &&
+            _items.TryUsePomander(FloorInitPlanner.StrengthPomanderSlotIndex, dd, "boss strength refresh")) return true;
         if (dd->DeepDungeonId == 4 && CombatBuffUsable(FloorInitPlanner.HastePomanderSlotIndex) &&
-            FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(PtHasteStatusId)))
-            if (_items.TryUsePomander(FloorInitPlanner.HastePomanderSlotIndex, dd, "boss haste refresh")) return;
-        if (dd->DeepDungeonId == 4)
-        {
-            // Demiclone row 5/native stone 3, not the floor-effect removal pomander.
-            float remaining = LocalStatusRemaining(4584, zeroMeansPermanent: true); // Tranquil Moonlight: maximum HP.
-            if (!FarmingItemPolicy.NeedsBossRefresh(remaining)) BossSerenityAwaitingBuff = false;
-            if (ItemPolicy.AllowsBossSerenity(_items.GetStoneCountAvailableForFloorUse(3), _ctx?.Duty.IsBossFloor == true,
-                remaining, BossSerenityAwaitingBuff))
-                _items.TryDispatchFloorStone(3, dd, "boss serenity incense", FloorItemUsePurpose.BossSerenity);
-        }
+            FarmingItemPolicy.NeedsBossRefresh(LocalStatusRemaining(PtHasteStatusId)) &&
+            _items.TryUsePomander(FloorInitPlanner.HastePomanderSlotIndex, dd, "boss haste refresh")) return true;
+        // The PT incense grants Tranquil Moonlight for this floor.
+        return dd->DeepDungeonId == 4 &&
+            ItemPolicy.AllowsBossSerenity(_items.GetStoneCountAvailableForFloorUse(3), _ctx.Duty.IsBossFloor,
+                LocalStatusRemaining(4584, zeroMeansPermanent: true),
+                _ctx.Knowledge.Floor?.WasStoneUseConfirmed(3) == true) &&
+            _items.TryDispatchFloorStone(3, dd, "boss serenity incense", FloorItemUsePurpose.BossSerenity);
     }
 }

@@ -15,7 +15,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 internal sealed record EntryUiObservation(
     EntryUiKind Kind, string Addon, nint Address, ushort AddonId, string Revision,
     int Choice = -1, IReadOnlyList<SaveSlotSnapshot>? Slots = null, string Detail = "",
-    bool QueuePending = false, bool QueueMatches = false);
+    bool QueuePending = false, bool QueueMatches = false, bool ConfirmDisabled = false, ContentsFinderQueueState? QueueState = null);
 
 internal static unsafe class EntryUiReader
 {
@@ -30,6 +30,7 @@ internal static unsafe class EntryUiReader
     public static EntryUiObservation Read(PtEntryText text, int floor)
     {
         var finder = ContentsFinder.Instance();
+        ContentsFinderQueueState? queueState = finder == null ? null : finder->QueueInfo.QueueState;
         bool pending = QueuePending(finder), queueMatches = false;
         if (finder != null)
         {
@@ -48,6 +49,7 @@ internal static unsafe class EntryUiReader
             var strings = ReadStrings(addon);
             string fingerprint = string.Join("|", strings);
             var kind = EntryUiKind.Unknown;
+            bool confirmDisabled = false;
             int choice = -1;
             IReadOnlyList<SaveSlotSnapshot>? slots = null;
             string detail = fingerprint;
@@ -60,7 +62,8 @@ internal static unsafe class EntryUiReader
                         kind = fingerprint == text["ENTER_FIXED_Q"] ? EntryUiKind.FixedPartyConfirmation
                             : fingerprint == text["ENTER_SOLO"] ? EntryUiKind.SoloConfirmation : EntryUiKind.Unknown;
                         var yes = ((AddonSelectYesno*)addon)->YesButton;
-                        if (yes == null || !yes->IsEnabled) kind = EntryUiKind.Incomplete;
+                        confirmDisabled = yes != null && !yes->IsEnabled && kind != EntryUiKind.Unknown;
+                        if (yes == null) kind = EntryUiKind.Incomplete;
                     }
                     break;
                 case "SelectString":
@@ -92,8 +95,12 @@ internal static unsafe class EntryUiReader
                     var title = confirm->AtkTextNode230 == null ? "" : confirm->AtkTextNode230->NodeText.ExtractText();
                     fingerprint += "|" + PtEntryText.Normalize(title);
                     if (text.MatchesDutyTitle(title, floor) && queueMatches)
-                        kind = confirm->CommenceButton != null && confirm->CommenceButton->IsEnabled
-                            ? EntryUiKind.DutyConfirmation : EntryUiKind.Incomplete;
+                    {
+                        kind = confirm->CommenceButton == null ? EntryUiKind.Incomplete : EntryUiKind.DutyConfirmation;
+                        confirmDisabled = confirm->CommenceButton != null && !confirm->CommenceButton->IsEnabled;
+                        if (!confirmDisabled && queueState != ContentsFinderQueueState.Ready)
+                            kind = EntryUiKind.Incomplete;
+                    }
                     break;
                 case "DeepDungeonSaveData":
                     if (IsReadList(addon, text))
@@ -116,14 +123,14 @@ internal static unsafe class EntryUiReader
                     }
                     break;
             }
-            return Result(kind, fingerprint, choice, slots, detail);
+            return Result(kind, fingerprint, choice, slots, detail, confirmDisabled);
 
             EntryUiObservation Result(EntryUiKind k, string key, int index = -1,
-                IReadOnlyList<SaveSlotSnapshot>? rows = null, string why = "") =>
-                new(k, name, (nint)addon, addon->Id, $"{name}:{(nint)addon:X}:{addon->Id}:{k}:{key}",
-                    index, rows, why, pending, queueMatches);
+                IReadOnlyList<SaveSlotSnapshot>? rows = null, string why = "", bool disabled = false) =>
+                new(disabled ? EntryUiKind.Incomplete : k, name, (nint)addon, addon->Id, $"{name}:{(nint)addon:X}:{addon->Id}:{k}:{key}",
+                    index, rows, why, pending, queueMatches, disabled, queueState);
         }
-        return new(EntryUiKind.None, "", 0, 0, "none", QueuePending: pending, QueueMatches: queueMatches);
+        return new(EntryUiKind.None, "", 0, 0, "none", QueuePending: pending, QueueMatches: queueMatches, QueueState: queueState);
     }
 
     public static bool IsReadList(AtkUnitBase* addon, PtEntryText text) =>

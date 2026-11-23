@@ -18,7 +18,7 @@ public sealed class NavigationFollower
     private Vector2? _lastCorrection;
     public int Index => _index;
     public EncounterRoute? Plan => _plan;
-    internal NavigationFollower CopyForPrediction() => (NavigationFollower)MemberwiseClone();
+    public NavigationFollower CopyForPrediction() => (NavigationFollower)MemberwiseClone();
     internal bool WalkingToStop => _plan is { } route && _index + 1 < route.Points.Length
         && (_index + 2 == route.Points.Length || route.Points[_index + 2].Position == route.Points[_index + 1].Position);
     public void Reset() { _plan = null; _index = 0; _correctedEnd = -1; _lastCorrection = null; }
@@ -29,7 +29,7 @@ public sealed class NavigationFollower
     }
     public NavigationCommand Step(in NavigationObservation observation)
     {
-        if (observation.MovementLocked)
+        if (observation.MovementLocked || observation.PendingDisplacement || observation.ForcedMovement)
             return new(NavigationCommandKind.Wait, observation.Position);
         if (_plan is not { Points.Length: > 1 } route)
             return new(NavigationCommandKind.Complete, observation.Position);
@@ -63,6 +63,10 @@ public sealed class NavigationFollower
             var onTime = !route.Timed || elapsed >= b.Seconds;
             if (stopping && distance <= Arrival)
             {
+                // A timed moving leg may reach waypoint tolerance before its
+                // deadline. Finish the walking command without correcting or pausing.
+                if (!onTime && b.KeepMovingToEnd && b.CommandVelocity is { } velocity)
+                    return new(NavigationCommandKind.Move, observation.Position + Vector2.Normalize(velocity) * Arrival);
                 if (_correctedEnd != end && _lastCorrection == null && observation.CanCorrect && route.AllowCorrection
                     && distance <= CorrectionLimit)
                 { correction = b.Position; _correctedEnd = end; _lastCorrection = b.Position; }

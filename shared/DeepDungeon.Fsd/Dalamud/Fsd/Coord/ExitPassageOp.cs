@@ -17,26 +17,29 @@ internal sealed class ExitPassageOp : FloorOperation
 
     private readonly NavigateOp _nav;
     private readonly int _floor;
+    private readonly ulong _actorId;
     private readonly int _passageRoom;
     private readonly Func<Vector3?> _walkingTarget;
-    private readonly Func<Vector3?>? _actorTarget;
+    private readonly Func<Vector3?> _actorTarget;
     private Stage _stage = Stage.Approach;
     private float _transitionWaitSeconds;
     private bool _pushCompleted;
+    private float _unobservedSeconds;
+    private long? _evidenceWhenUnobserved;
     private Vector3 _pushTarget;
     private const int OpPriority = 10;
     private const int MaxNavAttempts = 8;
     private static readonly NavigationRange TriggerRange = new(1.5f);
 
     internal override string Describe() =>
-        $"room={_passageRoom} ph={_stage} nav={_nav.Attempts}/{_nav.MaxAttempts} dest={_nav.Destination} wait={_transitionWaitSeconds:0.0} pushed={_pushCompleted}";
+        $"room={_passageRoom} ph={_stage} nav={_nav.Attempts}/{_nav.MaxAttempts} dest={_nav.Destination} wait={_transitionWaitSeconds:0.0} unobserved={_unobservedSeconds:0.0} pushed={_pushCompleted}";
 
     internal override bool ProtectsCommit => _stage != Stage.Approach;
 
     internal ExitPassageOp(
         Vector3 passageDestination, int floor, int passageRoom,
         Func<Vector3?> repositionAnchor, Func<Vector3?> passageTarget,
-        Func<Vector3?>? passageActorTarget = null)
+        Func<Vector3?> passageActorTarget, ulong actorId)
         : base(FloorObjectiveKind.EnterPassage, OpPriority, MaxNavAttempts)
     {
         _nav = new NavigateOp(passageDestination, OpPriority, MaxNavAttempts, NavigationRange.MovementTolerance, repositionAnchor);
@@ -44,16 +47,10 @@ internal sealed class ExitPassageOp : FloorOperation
         _passageRoom = passageRoom;
         _walkingTarget = passageTarget;
         _actorTarget = passageActorTarget;
+        _actorId = actorId;
     }
 
     internal Vector3 Destination => _nav.Destination;
-
-    /// <summary>Null here means an actor provider was supplied but the
-    /// actor is genuinely unobserved — NOT a projected walking point. An
-    /// omitted provider (legacy 5-arg callers) falls back to the walking
-    /// target instead.</summary>
-    private Vector3? ActorPosition() =>
-        _actorTarget == null ? _walkingTarget() : _actorTarget();
 
     internal override OpStatus Tick(in FloorFacts facts, INativeBoundary native, DateTime now,
         in OpAuthority authority)
@@ -62,7 +59,22 @@ internal sealed class ExitPassageOp : FloorOperation
             return OpStatus.Succeeded;
 
         var walking = _walkingTarget() ?? _nav.Destination;
-        var actor = ActorPosition();
+        var actor = _actorTarget();
+        if (_actorId != 0 && facts.Evidence is { Available: true } evidence)
+        {
+            foreach (var observed in evidence.PassageActors)
+            {
+                if (observed.GameObjectId != _actorId) continue;
+                if (NativePassageAvailability.IsRemoved(observed.BaseId, observed.SharedTimelineState))
+                {
+                    Failure = FailureKind.PassageRemoved;
+                    return OpStatus.Failed;
+                }
+                if (!NativePassageAvailability.IsAvailable(observed.BaseId, observed.SharedTimelineState))
+                    actor = null;
+                break;
+            }
+        }
 
         // Native room indices can lag physical entry. They annotate the goal;
         // the planner routes to its coordinates on the current floor bitmap.
@@ -100,14 +112,22 @@ internal sealed class ExitPassageOp : FloorOperation
                     goto case Stage.Approach;
                 }
                 Claim = MoveClaim.Hold(Priority);
-                // No observed actor yet — keep holding at the projected
-                // point but never start (or preserve) the push timer on
-                // an absent target.
+                // An absent or inactive beacon cannot spend contact time.
+                // A sustained valid observation at the trigger can release
+                // this attempt while keeping the observed contact duration.
                 if (!actor.HasValue)
                 {
-                    _transitionWaitSeconds = 0;
-                    return OpStatus.Running;
+                    if (facts.Evidence is not { Available: true } current)
+                        return OpStatus.Running;
+                    _evidenceWhenUnobserved ??= current.RefreshSequence;
+                    if (!facts.InCombat && !facts.PlayerDead) _unobservedSeconds += authority.HeldDt;
+                    if (_unobservedSeconds <= 8f || current.RefreshSequence <= _evidenceWhenUnobserved.Value)
+                        return OpStatus.Running;
+                    Failure = FailureKind.PassageUnobserved;
+                    return OpStatus.Failed;
                 }
+                _unobservedSeconds = 0;
+                _evidenceWhenUnobserved = null;
                 // Only our held wait spends the transition budget. Suspension,
                 // combat and a competing movement owner cannot falsify a beacon.
                 if (!facts.InCombat && !facts.PlayerDead)
@@ -119,7 +139,7 @@ internal sealed class ExitPassageOp : FloorOperation
                         // Arrival and one push did not transfer this attempt.
                         // The existing floor-scoped work ledger can try another
                         // actor; this is not a permanent "fake beacon" label.
-                        Failure = FailureKind.Blocked;
+                        Failure = FailureKind.PassageNoTransfer;
                         return OpStatus.Failed;
                     }
                     // Push-through target fixed ONCE on entering the stage:

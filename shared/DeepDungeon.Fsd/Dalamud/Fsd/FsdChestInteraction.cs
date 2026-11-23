@@ -12,14 +12,16 @@ using DeepDungeon.Fsd.Runtime;
 
 namespace DeepDungeon.Fsd.Dalamud
 {
+	internal readonly record struct ChestInteractionTarget(Vector3 Position, FloorChestKind Kind);
+
 	internal sealed class ChestInteractionAttempt
 	{
-		internal ChestInteractionAttempt(RoomWaypoint waypoint)
+		internal ChestInteractionAttempt(ChestInteractionTarget waypoint)
 		{
 			Waypoint = waypoint;
 		}
 
-		internal RoomWaypoint Waypoint { get; }
+		internal ChestInteractionTarget Waypoint { get; }
 		internal uint EntityId;
 		internal DateTime InteractionStartedAtUtc;
 		internal long EvidenceSequenceAtStart;
@@ -132,11 +134,11 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		internal static bool HasInteraction(ChestInteractionAttempt? attempt) => attempt?.EntityId != 0;
 
-		internal bool CanStart(ChestInteractionAttempt? attempt, RoomWaypoint waypoint)
+		internal bool CanStart(ChestInteractionAttempt? attempt, ChestInteractionTarget waypoint)
 		{
 			if (attempt?.Waypoint != waypoint)
 				return false;
-			if (waypoint.Type != RoomObjectiveType.ChestSilver)
+			if (waypoint.Kind != FloorChestKind.Silver)
 				return true;
 
 			var player = _env.PlayerState();
@@ -151,7 +153,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		internal bool IsAccepted(
 			ChestInteractionAttempt? attempt,
-			RoomWaypoint waypoint,
+			ChestInteractionTarget waypoint,
 			FloorObjectEvidenceSnapshot? evidence,
 			out ChestLifecycleSnapshot snapshot,
 			out bool newlyAccepted)
@@ -357,7 +359,7 @@ namespace DeepDungeon.Fsd.Dalamud
             var position = chest?.Object.Position ?? attempt.Waypoint.Position;
             var delta = !player.present ? Vector3.Zero : position - player.pos;
             var options = _runOptionsProvider.Current;
-            _env.Log($"[NecromancerChest] interaction-rejected reason={reason}; type={attempt.Waypoint.Type}; " +
+            _env.Log($"[NecromancerChest] interaction-rejected reason={reason}; type={attempt.Waypoint.Kind}; " +
                 $"attemptEntity={attempt.EntityId}; targetEntity={chest?.Object.EntityId}; targetKind={chest?.Kind}; " +
                 $"targetGameObjectId={chest?.Object.GameObjectId}; distanceXZ={MathF.Sqrt(delta.X * delta.X + delta.Z * delta.Z):F2}; " +
                 $"deltaY={delta.Y:F2}; maxDistance={GetInteractionDistance():F2}; " +
@@ -399,7 +401,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				: (now - attempt.InteractionStartedAtUtc).TotalSeconds.ToString("0.0");
 			var wp = attempt.Waypoint.Position;
 			_env.Log($"[NecromancerChest] interaction-wait reason={reason}; " +
-				$"waypoint={attempt.Waypoint.Type}@({wp.X:F1},{wp.Y:F1},{wp.Z:F1}); " +
+				$"waypoint={attempt.Waypoint.Kind}@({wp.X:F1},{wp.Y:F1},{wp.Z:F1}); " +
 				$"entity={attempt.EntityId}; " +
 				$"calls={attempt.InteractionCallCount}; dispatches={attempt.NativeDispatchCount}; " +
 				(hasSnapshot
@@ -415,7 +417,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 		private static bool TryFindWaypointChestEvidence(
 			FloorObjectEvidenceSnapshot evidence,
-			RoomWaypoint waypoint,
+			ChestInteractionTarget waypoint,
 			uint expectedEntityId,
 			out FloorChestEvidence chest)
 		{
@@ -425,15 +427,7 @@ namespace DeepDungeon.Fsd.Dalamud
 				if (Vector3.Distance(chest.Object.Position, waypoint.Position) >= 0.5f)
 					continue;
 
-				bool typeMatches = waypoint.Type switch
-				{
-					RoomObjectiveType.ChestBanded => chest.Kind == FloorChestKind.Banded,
-					RoomObjectiveType.ChestGold => chest.Kind == FloorChestKind.Gold,
-					RoomObjectiveType.ChestSilver => chest.Kind == FloorChestKind.Silver,
-					RoomObjectiveType.ChestBronze => chest.Kind == FloorChestKind.Bronze,
-					_ => false
-				};
-				if (!typeMatches)
+				if (chest.Kind != waypoint.Kind)
 					continue;
 				if (expectedEntityId == 0 || chest.Object.EntityId == expectedEntityId)
 					return true;
@@ -469,9 +463,9 @@ namespace DeepDungeon.Fsd.Dalamud
 			attempt.NextInteractAt = DateTime.MinValue;
 		}
 
-		internal float GetOpenTimeoutSeconds(RoomWaypoint waypoint)
+		internal float GetOpenTimeoutSeconds(ChestInteractionTarget waypoint)
 		{
-			if (waypoint.Type == RoomObjectiveType.ChestBanded)
+			if (waypoint.Kind == FloorChestKind.Banded)
 				return BandedChestOpenTimeoutSeconds;
 
 			return _configuration.AggressiveChestInteraction

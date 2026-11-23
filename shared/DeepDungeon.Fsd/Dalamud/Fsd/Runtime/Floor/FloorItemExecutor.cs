@@ -41,12 +41,11 @@ internal sealed class FloorItemExecutor : IDisposable
         _disposed = true;
         Session.Cancel();
     }
-    public bool CanAttemptPomanderUse(bool allowCombat = false) => CanAttemptPomanderUse(this, allowCombat);
+    public bool CanAttemptPomanderUse() => CanAttemptPomanderUse(this);
 
-    public static bool CanAttemptPomanderUse(FloorItemExecutor? executor, bool allowCombat = false)
+    public static bool CanAttemptPomanderUse(FloorItemExecutor? executor)
     {
         if (executor?.Session.Pending != null ||
-            (!allowCombat && Service.Condition[ConditionFlag.InCombat]) ||
             Service.Condition[ConditionFlag.Casting] ||
                     Service.LocalPlayer?.IsCasting == true ||
                     !PomanderManager.CanDispatchItemRequest() ||
@@ -83,6 +82,11 @@ internal sealed class FloorItemExecutor : IDisposable
             : _pomanderManager.GetStoneCount(stoneId);
     }
 
+    internal static unsafe bool CanUsePomanderOnFloor(uint slot, InstanceContentDeepDungeon* dd) =>
+        DeepDungeonFloorItemUsePolicy.CanUsePomanders(dd->DeepDungeonBanId) &&
+        DeepDungeonFloorItemUsePolicy.AllowsNextFloorEffect(slot,
+            !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId, (byte)(dd->Floor + 1)));
+
     public unsafe bool TryUsePomander(
         uint slotIndex,
         InstanceContentDeepDungeon* dd,
@@ -90,14 +94,8 @@ internal sealed class FloorItemExecutor : IDisposable
         FloorItemUsePurpose purpose = FloorItemUsePurpose.Automatic)
     {
         if (_disposed ||
-            !CanAttemptPomanderUse(allowCombat: _ctx?.Duty.IsBossFloor == true &&
-                        slotIndex is FloorInitPlanner.StrengthPomanderSlotIndex or FloorInitPlanner.SteelPomanderSlotIndex or FloorInitPlanner.HastePomanderSlotIndex) ||
-            !DeepDungeonFloorItemUsePolicy.CanUsePomanders(
-                dd->DeepDungeonBanId) ||
-            !DeepDungeonFloorItemUsePolicy.AllowsNextFloorEffect(
-                slotIndex,
-                !DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId,
-                    (byte)(dd->Floor + 1))) ||
+            !CanAttemptPomanderUse() ||
+            !CanUsePomanderOnFloor(slotIndex, dd) ||
             !IsPomanderAvailableForFloorUse(slotIndex))
             return false;
 
@@ -110,11 +108,9 @@ internal sealed class FloorItemExecutor : IDisposable
             RecordNativeIntuitionState($"before-intuition-use:{reason}", force: true);
 
         long intuitionAttemptId = 0;
-        long intuitionExpectedAtMilliseconds = 0;
         DateTime intuitionExpectedAtUtc = DateTime.MinValue;
         if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
         {
-            intuitionExpectedAtMilliseconds = Environment.TickCount64;
             intuitionExpectedAtUtc = DateTime.UtcNow;
             intuitionAttemptId = _chatWatchers?.ExpectIntuitionResult(dd->Floor) ?? 0;
             PendingIntuition.MarkUsed(dd->Floor, intuitionExpectedAtUtc, intuitionAttemptId);
@@ -136,10 +132,7 @@ internal sealed class FloorItemExecutor : IDisposable
                 blocksFloorSetup,
                 sightLogSequenceBeforeDispatch,
                 mazerootLogSequenceBeforeDispatch,
-                intuitionAttemptId,
-                intuitionExpectedAtMilliseconds);
-            if (slotIndex == FloorInitPlanner.IntuitionPomanderSlotIndex)
-                _chatWatchers?.MarkIntuitionUsePendingThisFloor();
+                intuitionAttemptId);
             Service.Log.Info(
                 $"[FloorPhase] Dispatched pomander slot {slotIndex} request ({reason}) on floor {dd->Floor}; awaiting confirmation");
             RecordReplayEvent("floor-item-use-dispatched", new
@@ -175,9 +168,7 @@ internal sealed class FloorItemExecutor : IDisposable
         FloorItemUsePurpose purpose)
     {
         if (_disposed ||
-            !CanAttemptPomanderUse(allowCombat:
-                purpose == FloorItemUsePurpose.BossSerenity && _ctx.Duty.IsBossFloor ||
-                dd->DeepDungeonId == 2 && _ctx.Duty.CurrentFloorKind == DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Mob) ||
+            !CanAttemptPomanderUse() ||
             !DeepDungeonFloorItemUsePolicy.CanUseStones(dd->DeepDungeonId, dd->DeepDungeonBanId) ||
             GetStoneCountAvailableForFloorUse(stoneId) <= 0)
         {
@@ -203,7 +194,6 @@ internal sealed class FloorItemExecutor : IDisposable
             purpose == FloorItemUsePurpose.NaturalReveal,
             sightLogSequenceBeforeDispatch,
             mazerootLogSequenceBeforeDispatch,
-            0,
             0);
         Service.Log.Info(
             $"[FloorPhase] Dispatched stone {stoneId} request ({reason}) in dungeon {dd->DeepDungeonId} floor {dd->Floor}; awaiting confirmation");
@@ -284,7 +274,6 @@ internal sealed class FloorItemExecutor : IDisposable
 
         PendingIntuition.CancelAttempt(pending.IntuitionAttemptId);
         _chatWatchers?.CancelExpectedIntuitionResult(pending.IntuitionAttemptId);
-        _chatWatchers?.CancelPendingIntuitionUseThisFloor();
     }
 
     private unsafe void RecordUnconfirmedFloorItemUse(

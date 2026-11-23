@@ -2,6 +2,7 @@ using System;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Runtime;
 using DeepDungeon.Fsd.Dalamud.Runtime.Search;
+using MasterPlayer.MechanicRuntime;
 
 namespace DeepDungeon.Fsd.Dalamud.Coord;
 
@@ -10,49 +11,66 @@ namespace DeepDungeon.Fsd.Dalamud.Coord;
 internal sealed class OpenChestOp : FloorOperation
 {
     private const int OpPriority = 10;
-    private readonly RoomWaypoint _waypoint;
+    private readonly ChestInteractionTarget _waypoint;
     private readonly ChestInteractionAttempt _attempt;
     private readonly NavigateOp _waypointNav;
     private ChestTargetVerb? _arrived;
-    private DateTime _preWaitSince, _openWaitSince, _awaySince, _lastFailure, _overcapWaitSince;
+    private DateTime _preWaitSince, _openWaitSince, _awaySince, _lastFailure;
     private float _approachSeconds;
-    private DateTime suspendedAt;
 
-    internal OpenChestOp(RoomWaypoint waypoint, SiteWorkToken token = default, int maxAttempts = 6)
+    internal OpenChestOp(ChestInteractionTarget waypoint, SiteWorkToken token = default, int maxAttempts = 6,
+        ChestInteractionAttempt? overcap = null)
         : base(FloorObjectiveKind.OpenVisibleBandedChest, OpPriority, maxAttempts)
     {
         _waypoint = waypoint;
         Token = token;
-        _attempt = new ChestInteractionAttempt(waypoint);
+        _attempt = new ChestInteractionAttempt(waypoint)
+        {
+            PendingGoldOvercapSlotIndex = overcap?.PendingGoldOvercapSlotIndex,
+            PendingSilverOvercapStoneRowId = overcap?.PendingSilverOvercapStoneRowId,
+        };
         _waypointNav = new NavigateOp(waypoint.Position, OpPriority, maxAttempts);
     }
 
     internal SiteWorkToken Token { get; }
-    internal RoomWaypoint Waypoint => _waypoint;
+    internal ChestInteractionTarget Waypoint => _waypoint;
     internal override ChestInteractionAttempt? ActiveChestAttempt => _attempt;
+    internal NavigationRegionExhaustion? Exhaustion { get; private set; }
     internal override bool ProtectsCommit => Failure == null &&
         (_attempt.InteractionStartedAtUtc != default || _preWaitSince != default || _openWaitSince != default);
 
-    internal override void OnNavArrived() => _arrived = Claim.Verb as ChestTargetVerb?;
-    internal override void OnPreempted() => _arrived = null;
+    private DateTime? suspendedAt;
     internal override void OnSuspended() => OnSuspended(DateTime.UtcNow);
     internal override void OnSuspended(DateTime now)
     {
-        base.OnSuspended();
+        suspendedAt ??= now;
+        _arrived = null;
         Claim = MoveClaim.None;
-        if (suspendedAt == default) suspendedAt = now;
     }
-
     internal override void OnResumed(DateTime now)
     {
-        if (suspendedAt == default) return;
-        var paused = now > suspendedAt ? now - suspendedAt : TimeSpan.Zero;
-        if (_preWaitSince != default) _preWaitSince += paused;
-        if (_openWaitSince != default) _openWaitSince += paused;
-        if (_awaySince != default) _awaySince += paused;
-        if (_overcapWaitSince != default) _overcapWaitSince += paused;
-        suspendedAt = default;
+        if (suspendedAt is not { } start) return;
+        var elapsed = now > start ? now - start : TimeSpan.Zero;
+        static DateTime Shift(DateTime value, TimeSpan elapsed) => value == default ? value : value + elapsed;
+        _preWaitSince = Shift(_preWaitSince, elapsed);
+        _openWaitSince = Shift(_openWaitSince, elapsed);
+        _awaySince = Shift(_awaySince, elapsed);
+        _lastFailure = Shift(_lastFailure, elapsed);
+        _attempt.InteractionStartedAtUtc = Shift(_attempt.InteractionStartedAtUtc, elapsed);
+        _attempt.NextInteractAt = Shift(_attempt.NextInteractAt, elapsed);
+        _attempt.NextRejectionDiagnosticAt = Shift(_attempt.NextRejectionDiagnosticAt, elapsed);
+        _attempt.NextNativeAttemptDiagnosticAt = Shift(_attempt.NextNativeAttemptDiagnosticAt, elapsed);
+        _attempt.NextWaitDiagnosticAt = Shift(_attempt.NextWaitDiagnosticAt, elapsed);
+        suspendedAt = null;
     }
+    internal override void OnNavArrived() => _arrived = Claim.Verb as ChestTargetVerb?;
+    internal override void OnPreempted() => _arrived = null;
+    internal void OnNavUnreachable(NavigationRegionExhaustion exhaustion)
+    {
+        Exhaustion = exhaustion;
+        Failure = FailureKind.Unreachable;
+    }
+
     internal override void OnNavFailed(DateTime now)
     {
         if (Claim.Verb is GoToVerb)
@@ -81,21 +99,13 @@ internal sealed class OpenChestOp : FloorOperation
             Failure = null;
             return OpStatus.Succeeded;
         }
-        if (suspendedAt != default) return OpStatus.Running;
-        // Item-channel waiting is not time spent waiting for the chest's
-        // native reply. Keep that distinct from ordinary chest interaction.
-        if (_overcapWaitSince != default)
-        {
-            if (_openWaitSince != default) _openWaitSince += now - _overcapWaitSince;
-            _overcapWaitSince = now;
-        }
         if (Failure.HasValue) return OpStatus.Failed;
+        if (suspendedAt.HasValue) return OpStatus.Running;
         if (facts.PlayerDead || authority.MaskedDt > 0) return OpStatus.Running;
 
         var obs = native.ObserveChestPosition(_attempt, facts.Evidence);
         if (!obs.Available)
         {
-            _overcapWaitSince = default;
             // An unloaded waypoint has no object identity or sight observation yet.
             var status = _waypointNav.Tick(facts, native, now, authority);
             if ((_openWaitSince != default || status == OpStatus.Succeeded) &&
@@ -116,7 +126,6 @@ internal sealed class OpenChestOp : FloorOperation
         // choose another safe interaction point, even while we wait for a reply.
         if (arrived != goal || !obs.InRange || obs.SightBlocked)
         {
-            _overcapWaitSince = default;
             if (obs.WaitingForReply && OpenTimedOut(native, now)) return OpStatus.Failed;
             if (!obs.WaitingForReply && _openWaitSince != default && _awaySince == default) _awaySince = now;
             _approachSeconds += authority.HeldDt;
@@ -151,7 +160,6 @@ internal sealed class OpenChestOp : FloorOperation
             _openWaitSince = now;
         }
         var overcap = native.ResolveChestOvercap(_attempt);
-        _overcapWaitSince = overcap == ChestOvercapProgress.Waiting ? now : default;
         if (overcap == ChestOvercapProgress.PolicySkipped) return OpStatus.PolicySkipped;
         if (overcap == ChestOvercapProgress.Ready && facts.Evidence != null)
             native.TryChestInteract(_attempt, facts.Evidence, out _, out _);

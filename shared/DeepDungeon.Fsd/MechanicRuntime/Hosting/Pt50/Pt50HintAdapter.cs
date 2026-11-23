@@ -9,6 +9,8 @@ namespace MasterPlayer.MechanicRuntime;
 /// currently observed expiry. Upstream still owns geometry and wind timing.</summary>
 internal sealed class Pt50HintAdapter
 {
+    private const double ResidenceSeconds = 4;
+    private const double ResidenceSafetyMargin = 1;
     private ShapeDistance? _shape;
     private AOEShape? _sourceShape;
     private bool _wasSafe, _wasCertainSand;
@@ -39,7 +41,8 @@ internal sealed class Pt50HintAdapter
             // interior clearance too, supplied by the upstream inverse shape.
             // Cache both fields once per sand layout, including the wind hint switch.
             _shape = region is SDPolygonWithHoles
-                ? new QuicksandDistance(region, aoe.Shape.InvertedDistance(aoe.Origin, aoe.Rotation))
+                && aoe.Shape is AOEShapeCustom { Polygon: { } polygon }
+                ? new QuicksandDistance(region, aoe.Shape.InvertedDistance(aoe.Origin, aoe.Rotation), polygon, aoe.Origin)
                 : region;
         }
         // Both residence and wind immunity use the branch state below.
@@ -63,30 +66,72 @@ internal sealed class Pt50HintAdapter
         _immunityContact = distance < -EncounterHintPlanner.HintMargin && _wasCertainSand && continuous ? _immunityContact + dt : 0;
         // Status receipts establish the current episode. Geometry alone never
         // clears an observed deadline; contact timers predict candidate futures.
-        if (expiry != default) _entryDeadline = expiry.AddSeconds(-1);
+        if (expiry != default) _entryDeadline = expiry;
         else if (safe) _entryDeadline = DateTime.MaxValue;
         else if (_entryDeadline == default || _entryDeadline == DateTime.MaxValue || _wasSafe)
-            _entryDeadline = now.AddSeconds(3);
+            _entryDeadline = now.AddSeconds(ResidenceSeconds);
         _lastAt = now; _lastPosition = player.Position; _wasSafe = safe;
         _wasCertainSand = distance < -EncounterHintPlanner.HintMargin;
         DateTime? windAt = aoe.Color == Colors.SafeFromAOE ? aoe.Activation : null;
         foreach (var actor in module.WorldState.Actors)
             if (actor.CastInfo is { } cast && cast.Action.ID == (uint)AID.BitingWind)
                 windAt = module.CastFinishAt(cast);
-        return new(_shape, _entryDeadline, 3, 567)
+        return new(_shape, _entryDeadline, ResidenceSeconds, 567)
         {
             // Existing bounded-causal research profile, separate from actual receipts.
             ResetDwellSeconds = .3, ImmunityGrantSeconds = .62, ImmunityLossSeconds = 0,
+            SafetyMarginSeconds = ResidenceSafetyMargin,
+            // ARR records approximately 5 m/s while sinking. Plan both sides
+            // of the boundary at that speed until walking supports zone speeds.
+            MaximumPlanningSpeed = 5,
+            ResetBoundary = _shape as IResidenceBoundary,
             InitialSafeContact = _safeContact, InitialImmunityContact = _immunityContact,
             StatusPresent = expiry != default, InitialActive = _entryDeadline != DateTime.MaxValue,
             WindImmune = immune, ImmunityStatusId = (uint)SID.BreakerOfWind, RequiresImmunityAt = windAt,
         };
     }
 
-    private sealed class QuicksandDistance(ShapeDistance normal, ShapeDistance inverted) : ShapeDistance
+    private sealed class QuicksandDistance(ShapeDistance normal, ShapeDistance inverted,
+        RelSimplifiedComplexPolygon polygon, WPos origin) : ShapeDistance, IResidenceBoundary
     {
+        private readonly (Vector2 A, Vector2 Delta, float InverseLengthSquared)[] _edges = BuildEdges(polygon, origin);
+
         public override float Distance(in WPos p) => normal.Contains(p)
             ? -inverted.Distance(p) : normal.Distance(p);
         public override bool Contains(in WPos p) => normal.Contains(p);
+
+        public float DistanceLowerBound(Vector2 position)
+        {
+            if (!Contains(new(position.X, position.Y))) return 0;
+            var lengthSquared = float.PositiveInfinity;
+            foreach (var (a, delta, inverse) in _edges)
+            {
+                var offset = position - a;
+                var along = Math.Clamp(Vector2.Dot(offset, delta) * inverse, 0, 1);
+                lengthSquared = Math.Min(lengthSquared, Vector2.DistanceSquared(offset, delta * along));
+            }
+            return float.IsFinite(lengthSquared) ? MathF.Sqrt(lengthSquared) : 0;
+        }
+
+        private static (Vector2, Vector2, float)[] BuildEdges(RelSimplifiedComplexPolygon polygon, WPos origin)
+        {
+            var edges = new List<(Vector2, Vector2, float)>();
+            foreach (var part in polygon.Parts)
+            {
+                Add(part.Exterior);
+                for (var h = 0; h < part.HoleStarts.Count; ++h) Add(part.Interior(h));
+            }
+            return edges.ToArray();
+
+            void Add(ReadOnlySpan<WDir> vertices)
+            {
+                for (var i = 0; i < vertices.Length; ++i)
+                {
+                    var a = origin + vertices[i];
+                    var delta = (vertices[(i + 1) % vertices.Length] - vertices[i]).ToVec2();
+                    if (delta.LengthSquared() > 0) edges.Add((a.ToVec2(), delta, 1 / delta.LengthSquared()));
+                }
+            }
+        }
     }
 }

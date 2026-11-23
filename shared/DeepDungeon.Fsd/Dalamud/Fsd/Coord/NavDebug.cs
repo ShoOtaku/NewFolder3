@@ -34,78 +34,13 @@ internal static class NavDebug
     private static string _gotoStatus = "";
     private static int _gotoFloor = -1;
 
-    // ---- site-pool auto driver (session-free) ----
-    private static bool _autoOn;
-    private static ObjectiveSiteDriver? _autoDriver;
-    // Standalone observation owner: the debug session scans evidence
-    // itself — production never carries a hidden second scan.
-    private static FloorObjectEvidenceTracker? _autoTracker;
-    private static string _autoStatus = "";
-
-    internal static unsafe string StartAuto()
-    {
-        if (!MovementCoordinator.Shared.CanStartManual) return "FSD or MP owns movement";
-        StopAuto("");
-        var dd = EventFramework.Instance()->GetInstanceContentDeepDungeon();
-        if (dd == null)
-            return "not inside a deep dungeon";
-        if (!PrepareNavigation(dd)) return FloorMap.Error;
-        _autoDriver = new ObjectiveSiteDriver();
-        _autoTracker = new FloorObjectEvidenceTracker();
-        _autoOn = true;
-        _autoStatus = "armed";
-        return _autoStatus;
-    }
-
-    internal static void StopAuto(string status)
-    {
-        _autoOn = false;
-        _autoDriver?.Dispose();
-        _autoDriver = null;
-        _autoTracker?.Dispose();
-        _autoTracker = null;
-        if (_gotoNav != null)
-            StopGoto(status);
-        _autoStatus = status;
-    }
-
-    private static unsafe void TickAuto()
-    {
-        var nav = _gotoNav;
-        var driver = _autoDriver;
-        var dd = EventFramework.Instance()->GetInstanceContentDeepDungeon();
-        var player = Service.LocalPlayer;
-        if (!_autoOn || nav == null || driver == null || dd == null || player == null)
-        {
-            if (_autoOn) StopAuto("lost context");
-            return;
-        }
-
-        _autoTracker?.RefreshIfDue(dd->DeepDungeonId);
-        driver.TickDecision(dd, player.Position, _autoTracker?.Current);
-        var head = driver.Head;
-        if (head == null)
-        {
-            _autoStatus = driver.Status;
-            return;
-        }
-
-        var st = nav.Navigate(head.Value.Position, player.Position, 0.6f);
-        _autoStatus = $"{driver.Status} nav={st}" +
-            (string.IsNullOrEmpty(nav.Failure) ? "" : $"({nav.Failure})");
-        if (st == NavigationState.Arrived)
-            driver.ReportHeadOutcome(true, null);
-        else if (st == NavigationState.Failed)
-            driver.ReportHeadOutcome(false, nav.Failure);
-    }
-
     /// <summary>Arm a manual navigation request against a freshly built
     /// floor bitmap — the same construction the coord pipeline uses, so a
     /// goto exercises real wall knowledge. Rebuilds whenever the floor
     /// changes so a stale layout can never drive movement.</summary>
     internal static unsafe string StartGoto(Vector3 dest)
     {
-        if (!MovementCoordinator.Shared.CanStartManual) return "FSD or MP owns movement";
+        if (!MovementCoordinator.Shared.CanStartManual) return "FSD or PromeRadar owns movement";
         StopGoto("");
         var dd = EventFramework.Instance()->GetInstanceContentDeepDungeon();
         if (dd == null)
@@ -126,7 +61,7 @@ internal static class NavDebug
             if (template == null) return false;
             _gotoMap = NavBitmap.Create(template, dd);
         }
-        _gotoNav = new NavigationSurface(() => _gotoMap);
+        _gotoNav = new NavigationSurface(() => _gotoMap, null, static () => null);
         _gotoFloor = dd->Floor;
         return true;
     }
@@ -145,13 +80,7 @@ internal static class NavDebug
     {
         if (!MovementCoordinator.Shared.CanStartManual)
         {
-            StopAuto("FSD or MP owns movement");
-            StopGoto("FSD or MP owns movement");
-            return;
-        }
-        if (_autoOn)
-        {
-            TickAuto();
+            StopGoto("FSD or PromeRadar owns movement");
             return;
         }
         var nav = _gotoNav;
@@ -167,7 +96,7 @@ internal static class NavDebug
         _gotoStatus = string.IsNullOrEmpty(nav.Failure)
             ? st.ToString()
             : $"{st} ({nav.Failure})";
-        if (st != NavigationState.Moving)
+        if (st != NavigationState.Moving && !nav.PlanningPending)
             StopGoto(_gotoStatus);
     }
 
@@ -296,7 +225,6 @@ internal static class NavDebug
             movement,
             census,
             navgoto = _gotoStatus,
-            navauto = _autoStatus,
         };
 
         static object Point(Vector3 p) => new { x = p.X, y = p.Y, z = p.Z };

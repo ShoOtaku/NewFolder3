@@ -1,8 +1,6 @@
 using System;
 using System.Numerics;
-using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.Runtime.Floor;
-using DeepDungeon.Fsd.Dalamud.Runtime.Search;
 using DeepDungeon.Fsd.Runtime;
 
 namespace DeepDungeon.Fsd.Dalamud.Coord;
@@ -20,9 +18,7 @@ internal readonly record struct FloorFacts(
     bool InCombat,
     bool PlayerDead,
     bool PassageOpen,
-    ObjectiveArbiterSnapshot ArbiterSnapshot,
     FloorObjectEvidenceSnapshot? Evidence,
-    RoomWaypoint? ChestWaypoint,
     Vector3? PassageDestination = null,
     Vector3? PassageRoomCenter = null,
     int PassageRoomIndex = -1,
@@ -54,9 +50,7 @@ internal sealed class FloorObservation
         bool inCombat,
         bool playerDead,
         bool passageOpen,
-        ObjectiveArbiterSnapshot arbiterSnapshot,
         FloorObjectEvidenceSnapshot? evidence,
-        RoomWaypoint? chestWaypoint,
         Vector3? passageDestination = null,
         Vector3? passageRoomCenter = null,
         int passageRoomIndex = -1,
@@ -72,9 +66,7 @@ internal sealed class FloorObservation
             inCombat,
             playerDead,
             passageOpen,
-            arbiterSnapshot,
             evidence,
-            chestWaypoint,
             passageDestination,
             passageRoomCenter,
             passageRoomIndex,

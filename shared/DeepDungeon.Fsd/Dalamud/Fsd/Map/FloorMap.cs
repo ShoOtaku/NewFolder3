@@ -32,7 +32,11 @@ internal sealed class FloorMap
 
     private static FloorMapKey? cachedKey;
     private static FloorMap? cached;
-    private static bool cachedClientMap;
+    private static FloorMapKey? failedKey;
+    private static long nextReadAt;
+    private static (FloorMapKey Key, byte Floor, string Error)? terminalReadError;
+    private static string? failedReadError;
+    internal static bool Failed { get; private set; }
     internal static string Error { get; private set; } = "";
     internal readonly Vector3?[] Centers = new Vector3?[25];
     internal FloorMapKey Key { get; }
@@ -46,54 +50,86 @@ internal sealed class FloorMap
     internal string Source { get; }
     internal float SourcePixelSize { get; }
 
-    internal static FloorMap? Get(FloorMapKey key)
+    internal static FloorMap? Get(FloorMapKey key, byte floor = 0)
     {
-        bool clientMap = LiveTerrainCapture.Ensure(key);
-        if (key == cachedKey && clientMap == cachedClientMap) return cached;
-        cachedKey = key;
-        cachedClientMap = clientMap;
-        cached = null;
+        Failed = false;
+        if (key == cachedKey)
+        {
+            Error = "";
+            return cached;
+        }
+        if (terminalReadError is { } terminal && key == terminal.Key && (floor == 0 || floor == terminal.Floor))
+        {
+            Error = terminal.Error;
+            Failed = true;
+            return null;
+        }
+        var live = FloorMapSource.ActiveLive;
+        if (live != null && !live.Ensure(key, floor))
+        {
+            Error = live.Status;
+            Failed = live.Failed;
+            return null;
+        }
+        long now = Environment.TickCount64;
+        if (key == failedKey && now < nextReadAt)
+        {
+            Error = failedReadError ?? "";
+            return null;
+        }
         Error = "";
         try
         {
-            using var source = clientMap ? File.OpenRead(LiveTerrainCapture.MapPath(key)) :
-                typeof(FloorMap).Assembly.GetManifestResourceStream($"Fsd.FloorMaps.{key}.map.gz");
-            if (source == null)
-            {
-                // A missing embedded map is expected while its first client bake runs.
-                cachedKey = null;
-                Error = LiveTerrainCapture.Status;
-                return null;
-            }
+            using var source = live == null ? FloorMapSource.OpenBuiltIn(key) : File.OpenRead(live.MapPath(key));
             using var stream = new GZipStream(source, CompressionMode.Decompress);
             using var reader = new BinaryReader(stream);
-            cached = new FloorMap(key, reader, clientMap);
+            cached = new FloorMap(key, reader, live == null ? "built-in" : "client-layout:vnav");
+            cachedKey = key;
+            failedKey = null;
+            return cached;
         }
-        catch (IOException ex)
+        catch (Exception ex) when (ex is InvalidDataException or EndOfStreamException)
         {
             ReportError(key, ex.Message);
+            if (live?.RejectMap(key) != true)
+            {
+                terminalReadError = (key, floor, Error);
+                Failed = true;
+            }
         }
-        catch (InvalidDataException ex)
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
             ReportError(key, ex.Message);
+            bool transient = ex is FileNotFoundException || ex is IOException && (ex.HResult & 0xffff) is 32 or 33;
+            if (!transient)
+            {
+                terminalReadError = (key, floor, Error);
+                Failed = true;
+            }
         }
-        return cached;
+        failedKey = key;
+        failedReadError = Error;
+        nextReadAt = now + 1000;
+        return null;
     }
 
     internal static void Reset()
     {
         cachedKey = null;
+        failedKey = null;
+        terminalReadError = null;
         cached = null;
         Error = "";
     }
 
     private static void ReportError(FloorMapKey key, string detail)
     {
-        Error = $"地宮 {key.Dungeon}、第 {key.Set} 組、區域 {key.Territory}、版型 {key.Layout}：{detail}";
-        Service.Log.Error(Error);
+        var status = $"地宮 {key.Dungeon}、第 {key.Set} 組、區域 {key.Territory}、版型 {key.Layout}：{detail}";
+        if (key != failedKey || status != failedReadError) Service.Log.Error(status);
+        Error = status;
     }
 
-    private FloorMap(FloorMapKey key, BinaryReader reader, bool clientMap)
+    private FloorMap(FloorMapKey key, BinaryReader reader, string source)
     {
         Key = key;
         Width = reader.ReadInt32();
@@ -101,24 +137,43 @@ internal sealed class FloorMap
         Origin = new(reader.ReadSingle(), 0, reader.ReadSingle());
         PixelSize = reader.ReadSingle();
         var count = reader.ReadInt32();
+        if (Width <= 0 || Height <= 0 || !float.IsFinite(Origin.X) || !float.IsFinite(Origin.Z) ||
+            !float.IsFinite(PixelSize) || PixelSize <= 0 || count < 0 || count > Centers.Length)
+            throw new InvalidDataException("底圖的尺寸或房間資料無效。");
         for (int i = 0; i < count; i++)
-            Centers[reader.ReadInt32()] = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
-        Doors = new Door[reader.ReadInt32()];
-        for (int i = 0; i < Doors.Length; i++)
+        {
+            int cell = reader.ReadInt32();
+            if ((uint)cell >= Centers.Length || Centers[cell].HasValue)
+                throw new InvalidDataException("底圖的房間索引無效。");
+            var center = new Vector3(reader.ReadSingle(), reader.ReadSingle(), reader.ReadSingle());
+            if (!float.IsFinite(center.X) || !float.IsFinite(center.Y) || !float.IsFinite(center.Z))
+                throw new InvalidDataException("底圖的房間座標無效。");
+            Centers[cell] = center;
+        }
+        int doorCount = reader.ReadInt32();
+        if (doorCount < 0) throw new InvalidDataException("底圖的門數量無效。");
+        var doors = new List<Door>(Math.Min(doorCount, Centers.Length * 4));
+        for (int i = 0; i < doorCount; i++)
         {
             int cell = reader.ReadInt32(), connection = reader.ReadInt32();
+            if ((uint)cell >= Centers.Length || connection is not (1 or 2 or 4 or 8))
+                throw new InvalidDataException("底圖的門索引或方向無效。");
             var m = Matrix4x4.Identity;
             m.M11 = reader.ReadSingle(); m.M13 = reader.ReadSingle();
             m.M21 = reader.ReadSingle(); m.M23 = reader.ReadSingle();
             m.M31 = reader.ReadSingle(); m.M33 = reader.ReadSingle();
             m.M41 = reader.ReadSingle(); m.M43 = reader.ReadSingle();
-            Doors[i] = new(cell, connection, m);
+            doors.Add(new(cell, connection, m));
         }
-        RowBytes = ((Width + 31) / 32) * 4;
-        var centers = new byte[checked(RowBytes * Height)];
+        Doors = doors.ToArray();
+        RowBytes = (int)(((Width + 31L) / 32) * 4);
+        long byteCount = (long)RowBytes * Height;
+        if (byteCount > Array.MaxLength) throw new InvalidDataException("底圖點陣尺寸超出可讀範圍。");
+        var centers = new byte[(int)byteCount];
         reader.BaseStream.ReadExactly(centers);
+        if (reader.BaseStream.ReadByte() != -1) throw new InvalidDataException("底圖含有未預期的資料。");
         Bits = centers;
-        Source = clientMap ? "client-layout:vnav" : "embedded:client-layout:vnav";
+        Source = source;
         SourcePixelSize = PixelSize;
         float bakedRadius = FloorTerrainProfile.BakedBodyRadius;
         int border = Clearance.WholeCellBorder(PixelSize, bakedRadius);

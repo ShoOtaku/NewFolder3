@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Numerics;
@@ -12,8 +13,10 @@ public enum GridSearchStatus { Running, Found, Exhausted, Cancelled, Unavailable
 public static class GridAStar
 {
     public static bool TryFindPath(INavigationGrid map, Vector3 start,
-        Vector3 end, List<Vector3> path, List<Vector3>? rawPath = null, Search? search = null)
+        Vector3 end, List<Vector3> path, List<Vector3>? rawPath = null, Search? search = null,
+        CancellationToken token = default)
     {
+        token.ThrowIfCancellationRequested();
         path.Clear(); rawPath?.Clear();
         var (ex, ey) = map.WorldToGrid(end);
         (ex, ey) = NearestFree(map, ex, ey);
@@ -27,7 +30,8 @@ public static class GridAStar
                 return Math.Max(dx, dz) + .4142136f * Math.Min(dx, dz);
             });
         while (search.Status == GridSearchStatus.Running)
-            search.Step(int.MaxValue, double.PositiveInfinity, default);
+            search.Step(int.MaxValue, double.PositiveInfinity, token);
+        token.ThrowIfCancellationRequested();
         if (search.Status != GridSearchStatus.Found) return false;
         search.CopyPath(path, rawPath);
         // Keep the reachable grid endpoint if the exact destination is obstructed.
@@ -64,6 +68,14 @@ public static class GridAStar
         public string? Failure { get; private set; }
         public bool UsedFallback { get; private set; }
 
+        internal BitArray CaptureExhaustedCells()
+        {
+            var cells = new BitArray(_state.Length);
+            for (int i = 0; i < _state.Length; ++i)
+                cells[i] = _state[i] == 2;
+            return cells;
+        }
+
         public void Begin(INavigationGrid map, Vector3 start, Func<Vector3, bool?> goal,
             Func<Vector3, float>? estimate = null, Func<Vector3, Vector3?>? ground = null,
             Func<Vector3, bool>? goalBounds = null, Func<Vector3, bool?>? fallbackGoal = null)
@@ -97,7 +109,8 @@ public static class GridAStar
         {
             if (Status != GridSearchStatus.Running) return Status;
             if (token.IsCancellationRequested) return End(GridSearchStatus.Cancelled, "cancelled");
-            var stamp = Stopwatch.GetTimestamp();
+            var timeSliced = milliseconds != double.PositiveInfinity;
+            var stamp = timeSliced ? Stopwatch.GetTimestamp() : 0;
             var map = _map!;
             if (!_startChecked)
             {
@@ -114,7 +127,7 @@ public static class GridAStar
             }
             for (int n = 0; n < maximumExpanded && _open.Count != 0; ++n)
             {
-                if (Stopwatch.GetElapsedTime(stamp).TotalMilliseconds >= milliseconds) return Status;
+                if (timeSliced && Stopwatch.GetElapsedTime(stamp).TotalMilliseconds >= milliseconds) return Status;
                 if (token.IsCancellationRequested) return End(GridSearchStatus.Cancelled, "cancelled");
                 int current = _open.Dequeue();
                 if (_state[current] == 2) continue;

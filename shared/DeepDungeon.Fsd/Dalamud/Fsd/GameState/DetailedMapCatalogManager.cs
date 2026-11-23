@@ -204,9 +204,8 @@ internal sealed class DetailedMapCatalogManager : IDisposable
     internal string? ActiveRunReleaseId => _activeRun?.ReleaseId;
     internal DetailedMapRunSnapshot? ActiveRunSnapshot => _activeRun;
 
-    /// <summary>The live instance — the catalog is terrain-level data,
-    /// always current, readable with or without a run. Mid-run release
-    /// swaps are deliberately allowed (daily update cadence).</summary>
+    /// <summary>The live instance exposes the latest installed catalog outside
+    /// a run; active runs retain their acquired catalog and yield snapshot.</summary>
     internal static DetailedMapCatalogManager? Active { get; private set; }
 
     internal static DetailedMapCatalog? SelectPresentationCatalog(
@@ -448,9 +447,11 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         }
         catch (Exception error)
         {
-            _lastCheckError = error.Message;
-            Service.Log.Error(
-                $"[DetailedMapCatalog] Update check failed: {error}");
+            if (enabled && string.Equals(taskScenarioKey, selectedScenarioKey, StringComparison.Ordinal))
+            {
+                _lastCheckError = error.Message;
+                Service.Log?.Error($"[DetailedMapCatalog] Update check failed: {error}");
+            }
             return;
         }
 
@@ -473,8 +474,15 @@ internal sealed class DetailedMapCatalogManager : IDisposable
                     result.SignatureBytes!,
                     result.HoardYieldBytes);
                 ReloadInstalledCatalog();
-                if (_currentCatalog == null)
+                if (IsUsingEmbeddedCatalog ||
+                    _installedPointer?.ReleaseId != result.Latest!.ReleaseId ||
+                    _installedPointer.CatalogSha256 != result.Latest.CatalogSha256 ||
+                    !IsInstalledReleaseComplete(_currentCatalog, _currentHoardYield))
                 {
+                    // A usable embedded fallback does not acknowledge this downloaded release.
+                    _latestEtag = null;
+                    _lastSuccessfulCheckUtc = null;
+                    SaveCheckState();
                     throw new InvalidDataException(
                         "The installed detailed-map catalog could not be reloaded.");
                 }
@@ -781,6 +789,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
         WriteAtomic(
             Path.Combine(_catalogRoot, InstalledPointerFileName),
             DetailedMapCatalogContract.SerializeLatest(latest));
+        RetainInstalledRelease(releaseDirectory);
     }
 
     private void ReloadInstalledCatalog()
@@ -845,8 +854,8 @@ internal sealed class DetailedMapCatalogManager : IDisposable
                     JsonException)
                 {
                     _hoardYieldLoadError = error.Message;
-                    Service.Log.Warning(
-                        $"[DetailedMapCatalog] Hoard-yield artifact unavailable: {error.Message}");
+                    throw new InvalidDataException(
+                        "The signed catalog's hoard-yield artifact is unavailable.", error);
                 }
             }
             catalog.WarmRoomLookup();
@@ -859,6 +868,7 @@ internal sealed class DetailedMapCatalogManager : IDisposable
 
             _currentCatalog = catalog;
             _installedPointer = latest;
+            RetainInstalledRelease(releaseDirectory);
             Service.Log.Info(
                 $"[DetailedMapCatalog] Loaded release {catalog.ReleaseId}; rooms={catalog.Rooms.Length}.");
         }
@@ -1037,6 +1047,44 @@ internal sealed class DetailedMapCatalogManager : IDisposable
             _catalogRoot,
             "releases",
             $"{latest.ReleaseId}-{latest.CatalogSha256[..12]}");
+
+    // The installed pointer is published only after validation. Keep its
+    // complete release; retired releases are not needed by in-memory run snapshots.
+    private void RetainInstalledRelease(string installedDirectory)
+    {
+        string releases = Path.GetFullPath(Path.Combine(_catalogRoot, "releases"));
+        string installed = Path.GetFullPath(installedDirectory);
+        string parentPrefix = GetValidatedCatalogParent() + Path.DirectorySeparatorChar;
+        if (!releases.StartsWith(parentPrefix, StringComparison.OrdinalIgnoreCase) ||
+            !string.Equals(Path.GetDirectoryName(installed), releases, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("Catalog retention resolved outside its release directory.");
+        }
+        if (!Directory.Exists(installed))
+            return;
+
+        try
+        {
+            foreach (string directory in Directory.EnumerateDirectories(releases))
+            {
+                if (string.Equals(Path.GetFullPath(directory), installed, StringComparison.OrdinalIgnoreCase) ||
+                    (File.GetAttributes(directory) & FileAttributes.ReparsePoint) != 0)
+                    continue;
+                try
+                {
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                {
+                    Service.Log.Warning($"[DetailedMapCatalog] Retired release could not be removed: {error.Message}");
+                }
+            }
+        }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+        {
+            Service.Log.Warning($"[DetailedMapCatalog] Release retention could not be completed: {error.Message}");
+        }
+    }
 
     private void DeleteDownloadedCatalogs()
     {

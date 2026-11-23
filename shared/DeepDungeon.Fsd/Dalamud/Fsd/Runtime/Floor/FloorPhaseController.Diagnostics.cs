@@ -5,9 +5,9 @@ public sealed partial class FloorPhaseController
     internal Action<string, object>? DiagnosticSink { get; set; }
     internal string DiagnosticGate { get; private set; } = "not-updated";
     internal long DiagnosticGeneration => _floorRuntime?.Generation ?? 0;
-    internal string DiagnosticTaskPhase => _floorRuntime?.CurrentTaskPhase.ToString() ?? "none";
+    internal string DiagnosticTaskPhase => _floorRuntime?.GetDebugSnapshot().TaskPhase ?? "none";
     internal int DiagnosticPlayerRoom => _floorRuntime?.DiagnosticPlayerRoom ?? -1;
-    internal int DiagnosticCompletedRooms => _floorRuntime?.Executor?.GetDebugSnapshot().CompletedRooms.Count ?? 0;
+    internal int DiagnosticCompletedRooms => _floorRuntime?.GetDebugSnapshot().CompletedRooms.Count ?? 0;
     internal bool DiagnosticMovementRequested => _navHelper?.HasActiveTarget == true || _floorRuntime?.DiagnosticMovementRequested == true;
     private DateTime lastDiagnosticErrorAt;
     private string lastDiagnosticError = "";
@@ -23,12 +23,9 @@ public sealed partial class FloorPhaseController
             combat = CurrentObjectiveDecision.Channels.Combat.ToString(),
             interaction = CurrentObjectiveDecision.Channels.Interaction.ToString(),
             transition = CurrentObjectiveDecision.Channels.Transition.ToString() },
-        hoardEvidenceWait = new { eventType = _activeHoardEvidenceWaitEventType,
-            state = _activeHoardEvidenceWaitState,
-            sinceUtc = _activeHoardEvidenceWaitStartedAt == DateTime.MinValue ? (DateTime?)null : _activeHoardEvidenceWaitStartedAt },
+        hoardEvidence = _floorRuntime?.GetDebugSnapshot().HoardEvidenceState.ToString(),
         nativeIntuitionSampleAvailable = _nativeIntuitionSampleAvailable,
         navigation = _navHelper?.CaptureDiagnostics(),
-        driver = new { staging = _navDriver?.IsStaging, stage = _navDriver?.StageLabel, retries = _navDriver?.StuckRetryCount },
         runtime = _floorRuntime?.CaptureDiagnostics(), diagnosticErrorCount, recorderErrorCount,
         lastDiagnosticError
     };

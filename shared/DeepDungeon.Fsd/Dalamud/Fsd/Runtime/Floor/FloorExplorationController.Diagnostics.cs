@@ -8,7 +8,7 @@ internal sealed partial class FloorExplorationController
     internal int DiagnosticPlayerRoom => LastObservedRoomIndex;
     internal object CaptureDiagnostics()
     {
-        var debug = Executor?.GetDebugSnapshot();
+        var debug = GetDebugSnapshot();
         return new
         {
             kind = Kind.ToString(), Generation, ReadyAtUtc,
@@ -20,14 +20,13 @@ internal sealed partial class FloorExplorationController
                 commandedTarget = Point(_navigation.CommandedTarget), _navigation.ArrivalRadius,
                 pathPoints = _navigation.SmoothedPath.Count
             },
-            blockedMovementOperation = _blockedMovementOperation, blockedTransitionOperation = _blockedTransitionOperation,
-            task = _taskRunner == null ? null : new { phase = _taskRunner.Phase.ToString(), _taskRunner.ElapsedSeconds,
-                _taskRunner.NavigationIssueCount },
-            search = debug == null ? null : new { room = debug.RoomContext?.RoomIndex,
-                waypointIndex = debug.RoomContext?.CurrentWaypointIndex, completedRooms = debug.CompletedRooms.Order().ToArray(),
-                roomPath = debug.RoomPath.Take(32).ToArray(), debug.DetailedMapStatus,
-                rejection = debug.PlanTrace?.RejectionReason },
-            activeWaypoint = _activeWaypoint is { } waypoint ? new { type = waypoint.Type.ToString(), position = Point(waypoint.Position) } : null
+            blockedMovementOperation = _blockedMovementOperation,
+            task = debug.TaskPhase,
+            search = new { room = LastObservedRoomIndex,
+                completedRooms = debug.CompletedRooms.Order().ToArray(),
+                roomPath = debug.RoomPath.Take(32).ToArray(), debug.HoardEvidenceState,
+                blockedWork = _siteDriver?.BlockedWorkReason },
+            activeWork = debug.Work.Take(32).ToArray()
         };
     }
 

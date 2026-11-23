@@ -39,35 +39,3 @@ public static class CombatPositionPolicy
 
 
 }
-
-/// <summary>Floor-scoped failure accounting survives target and objective replacement.</summary>
-public sealed class CombatRecoveryBudget
-{
-    public const int MaximumFailuresPerTarget = 2;
-    public const int MaximumFailuresPerFloor = 8;
-    public const int MaximumRestartsPerFloor = 1;
-    private readonly Dictionary<ulong, int> _failures = new();
-    public int TotalFailures { get; private set; }
-    public int Restarts { get; private set; }
-    public bool Exhausted => TotalFailures >= MaximumFailuresPerFloor;
-    public bool HasExhaustedTargets => _failures.Values.Any(count => count >= MaximumFailuresPerTarget);
-    public bool AllRecordedTargetsExhausted => _failures.Count > 0 && _failures.Values.All(count => count >= MaximumFailuresPerTarget);
-    public bool IsTargetExhausted(ulong targetId) =>
-        _failures.TryGetValue(targetId, out int count) && count >= MaximumFailuresPerTarget;
-    public void RecordFailure(ulong targetId)
-    {
-        _failures.TryGetValue(targetId, out int count);
-        _failures[targetId] = count + 1;
-        TotalFailures++;
-    }
-
-    public bool TryRestart(bool onlyExhaustedAggroRemains = false)
-    {
-        if (Restarts >= MaximumRestartsPerFloor) return false;
-        if (!Exhausted && !(onlyExhaustedAggroRemains && HasExhaustedTargets)) return false;
-        _failures.Clear();
-        TotalFailures = 0;
-        Restarts++;
-        return true;
-    }
-}

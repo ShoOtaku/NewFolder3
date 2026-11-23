@@ -24,6 +24,7 @@ internal static class Program
         passed += Run("detailed-map-host-options-no-service", TestDetailedMapHostOptionsNoService);
         passed += Run("catalog-manager-embedded-offline", TestEmbeddedCatalogOffline);
         passed += Run("embedded-map-signatures-and-tamper-rejection", TestEmbeddedCatalogIntegrity);
+        passed += Run("catalog-cache-fallback-scenario-isolation-and-checkpoint-settings", CatalogRecoveryTests.Run);
         passed += Run("community-evidence-upload-contract", TestCommunityEvidenceUploadContract);
         passed += Run("community-usage-scenario-index-mapping", TestCommunityUsageScenarioIndexMapping);
         passed += Run("community-usage-telemetry-contract", TestCommunityUsageTelemetryContract);

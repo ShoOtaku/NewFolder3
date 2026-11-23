@@ -217,7 +217,7 @@ public sealed unsafe class DirectMovementController : IDisposable
     }
     /// <summary>Commit a validated native heading under the current input owner.</summary>
     public bool TryWriteForcedDirection(float radians)
-        =>MovementCoordinator.Shared.CanWriteDirect(this)&&Enabled&&float.IsFinite(radians)&&backend!.TryWriteForcedDirection(radians);
+        =>Enabled&&MovementCoordinator.Shared.CanWriteDirect(this)&&!CastMovementGuard.ShouldWait()&&float.IsFinite(radians)&&backend!.TryWriteForcedDirection(radians);
     public void ClearCancellation() => WasCancelledByUser = false;
     internal static void ReleaseActive() => owner?.Release();
     public void Release()
@@ -344,7 +344,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             if (inputSuppressors.Count > 0) return 0;
             foreach(var observer in steeringObservers)observer.beforeSteeringInput?.Invoke();
             var c = Current;
-            if (c != null && !MovementCoordinator.Shared.CanWriteDirect(c)) return gate!.Original(self, flags);
+            if (c != null && (!MovementCoordinator.Shared.CanWriteDirect(c) || CastMovementGuard.ShouldWait())) { c.Release(); return gate!.Original(self, flags); }
             if (c?.hold == true) return 0;
             if (c?.steeringWorldInput is { } world)
             {
@@ -406,7 +406,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             {observer.LastUserInput=new(*left,*forward);observer.LastInputTimestamp=now;}
             var c = Current;
             if (c == null) return;
-            if (!MovementCoordinator.Shared.CanWriteDirect(c)) { c.Release(); return; }
+            if (!MovementCoordinator.Shared.CanWriteDirect(c) || CastMovementGuard.ShouldWait()) { c.Release(); return; }
             c.LastUserInput = new(*left, *forward);
             if (c.CancelOnManualInput && (*left != 0 || *forward != 0 || c.facingInput != null && *turn != 0) && (c.directionalInput == null || c.ObserveUserInput))
             {
@@ -417,6 +417,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             c.LastInputTimestamp=(double)Stopwatch.GetTimestamp()/Stopwatch.Frequency;
             c.BeforeWalkInput?.Invoke();
             if(Current!=c||!MovementCoordinator.Shared.CanWriteDirect(c))return;
+            if (CastMovementGuard.ShouldWait()) { c.Release(); return; }
             if(c.CanWriteWalkInput?.Invoke()==false)
             {c.Release();*left=*forward=*turn=0;return;}
             if (c.hold) { *left = *forward = *turn = 0;c.LastAppliedInput=Vector2.Zero;c.AfterWalkInput?.Invoke(); return; }
@@ -503,7 +504,7 @@ public sealed unsafe class DirectMovementController : IDisposable
             if (inputSuppressors.Count > 0) { result->Left = result->Forward = result->Up = 0; return; }
             var c = Current;
             if (c == null) return;
-            if (!MovementCoordinator.Shared.CanWriteDirect(c)) { c.Release(); return; }
+            if (!MovementCoordinator.Shared.CanWriteDirect(c) || CastMovementGuard.ShouldWait()) { c.Release(); return; }
             if (c.hold) { result->Left = result->Forward = result->Up = 0; return; }
             if (!c.IsAutoMove && (result->Left != 0 || result->Forward != 0 || result->Up != 0)) return;
             if (Angle.TryGetDirectionToDestination(c.destination, true, out var dir, c.Precision))

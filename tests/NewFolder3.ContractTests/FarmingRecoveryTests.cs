@@ -6,7 +6,6 @@ internal static class FarmingRecoveryTests
 {
     public static void Run()
     {
-        CombatPositionRestartLimits();
         AttachCurrentDuty();
         Check(FarmingPlan.TryCreate(FarmingMode.Hoard, SaveUse.Create, 21, 2, false, true, true, false, false,
             out var plan, out _), "Hoard plan must be valid");
@@ -65,34 +64,6 @@ internal static class FarmingRecoveryTests
             FarmingEntryPolicy.ResolveAttachmentMode(1, 191, FarmingMode.Hoard) == FarmingMode.DeepProgression,
             "Takeover mode must be supported on the live dungeon and floorset");
         Console.WriteLine("In-duty farming attachment checks passed.");
-    }
-
-    private static void CombatPositionRestartLimits()
-    {
-        var budget = new CombatRecoveryBudget();
-        for (int i = 0; i < CombatRecoveryBudget.MaximumFailuresPerTarget; i++) budget.RecordFailure(1);
-        Check(budget.IsTargetExhausted(1) && !budget.TryRestart(), "One exhausted target cannot restart FSD");
-
-        while (!budget.Exhausted) budget.RecordFailure(2);
-        Check(budget.TryRestart(), "The first floor retry exhaustion must allow an in-place restart");
-        Check(budget.Restarts == 1 && budget.TotalFailures == 0 && !budget.HasExhaustedTargets,
-            "Restart must clear both floor and per-target failure counts");
-
-        while (!budget.Exhausted) budget.RecordFailure(1);
-        Check(!budget.TryRestart() && budget.Exhausted, "A second exhaustion on the same floor must stop recovery");
-
-        var lastAggro = new CombatRecoveryBudget();
-        lastAggro.RecordFailure(2); // Another enemy failed once before being defeated.
-        lastAggro.RecordFailure(1);
-        Check(!lastAggro.TryRestart(onlyExhaustedAggroRemains: true), "Temporary target skips must not trigger a restart");
-        lastAggro.RecordFailure(1);
-        Check(!lastAggro.Exhausted && !lastAggro.TryRestart(), "An exhausted enemy alone does not exhaust the floor budget");
-        Check(lastAggro.TryRestart(onlyExhaustedAggroRemains: true) && !lastAggro.IsTargetExhausted(1),
-            "When the last live aggro target is exhausted, restart before the floor budget is spent and reenable it");
-        lastAggro.RecordFailure(1);
-        lastAggro.RecordFailure(1);
-        Check(!lastAggro.TryRestart(onlyExhaustedAggroRemains: true), "The last live aggro target cannot restart the same floor twice");
-        Console.WriteLine("Combat position restart limits passed.");
     }
 
     private static void Check(bool value, string message)

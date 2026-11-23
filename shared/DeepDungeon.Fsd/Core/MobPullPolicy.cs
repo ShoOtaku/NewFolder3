@@ -9,12 +9,14 @@ public static class MobPullPolicy
         return dungeonId switch
         {
             1 => !IsPotdHighRisk(floor, nameId),
+            2 => nameId != 7584, // Heavenly centaur.
             4 => !IsPtHighRisk(floor, nameId),
             _ => true
         };
     }
 
     private static bool IsPotdHighRisk(int floor, uint nameId) =>
+        nameId == 5464 || // Flood dragon.
         floor is >= 41 and <= 50 && nameId == 5026 || // Nightmare gnat.
         floor is >= 71 and <= 80 && nameId == 5331 || // Palace anzu.
         floor is >= 81 and <= 90 && nameId == 5338 || // Palace worm.

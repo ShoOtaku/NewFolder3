@@ -463,6 +463,7 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     var text = textNode->GetAsAtkTextNode();
                     if (text == null) return ReportSaveReadFailure(save, $"progress-{i}-not-text", out error);
                     var identity = new List<string>();
+                    var row = new System.Text.StringBuilder();
                     bool entryBlocked = false;
                     for (int nodeIndex = 0; nodeIndex < renderer->UldManager.NodeListCount; nodeIndex++)
                     {
@@ -471,6 +472,8 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                         var identityNode = node->GetAsAtkTextNode();
                         if (identityNode == null) continue;
                         string label = identityNode->NodeText.ExtractText().Trim();
+                        if (label.Length > 0)
+                            row.Append(node->NodeId).Append(':').Append(label.Length).Append(':').Append(label);
                         if (SaveSlotUiPolicy.IsBlockingMessage(label, failedLabel, completedLabel))
                         {
                             entryBlocked = true;
@@ -481,7 +484,11 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                     if (!SaveSlotUiPolicy.TryParse(i, text->NodeText.ExtractText(), emptyLabel,
                         string.Join("|", identity), !list->GetItemDisabledState(i) && !entryBlocked, out var slot, out var parseError))
                         return ReportSaveReadFailure(save, parseError, out error);
-                    result.Add(slot);
+                    result.Add(slot.Empty || row.Length == 0 ? slot : slot with
+                    {
+                        RowFingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+                            System.Text.Encoding.UTF8.GetBytes(row.ToString())))
+                    });
                 }
                 slots = result;
                 error = string.Empty;

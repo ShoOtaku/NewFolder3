@@ -14,8 +14,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 	/// Reactive flow to delete a deep dungeon save slot via NPC �?menu �?save list �?yes/no confirm �?close menu.
 	/// Mirrors PTDeleteSaveFlow behavior.
 	/// </summary>
-	public sealed class GenericDeleteSaveFlow : IDisposable
+		public sealed class GenericDeleteSaveFlow : IDisposable
 	{
+            public void Dispose()
+            {
+                _npcNavHelper?.Cancel();
+                _npcNavHelper = null;
+                _ctx = null;
+            }
 		private EntranceWindowCleanup _cleanup = new();
 		private RunContext? _ctx;
 		private readonly DungeonData _dungeon;
@@ -32,8 +38,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 		private DateTime _noWindowSince = DateTime.MinValue;
 		private DateTime _lastMenuFire = DateTime.MinValue;
 		private bool _firstProbeDone;
-		private bool _targetSlotObservedOccupied;
 		private bool _deleteSlotClickSent;
+		private long? _deleteSubmittedAt;
 		private bool _targetSlotObservedEmptyAfterDelete;
 		private bool _freshListRequested;
 		private DateTime _lastNpcNotFound = DateTime.MinValue;
@@ -41,7 +47,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 
 		private static readonly TimeSpan StabilityShort = TimeSpan.FromMilliseconds(150);
 		private static readonly TimeSpan StabilityNormal = TimeSpan.FromMilliseconds(250);
-		private static readonly TimeSpan WatchdogTimeout = TimeSpan.FromSeconds(6);
+		private static readonly TimeSpan DeleteVerificationWindow = TimeSpan.FromSeconds(10);
 
 		public GenericDeleteSaveFlow(DungeonData dungeon, int slotIndex,
 			Func<IReadOnlyList<DeepDungeon.Fsd.Core.SaveSlotSnapshot>, string?>? validateSource = null)
@@ -49,12 +55,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			_dungeon = dungeon;
 			_validateSource = validateSource;
 			_slotIndex = slotIndex >= 0 ? slotIndex : throw new ArgumentOutOfRangeException(nameof(slotIndex));
-		}
-
-		public void Dispose()
-		{
-			_npcNavHelper?.Cancel();
-			_ctx = null;
 		}
 
 		public void Prepare(RunContext context)
@@ -69,8 +69,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			_noWindowSince = DateTime.Now; // probe quickly after exit
 			_lastMenuFire = DateTime.MinValue;
 			_firstProbeDone = false;
-			_targetSlotObservedOccupied = false;
 			_deleteSlotClickSent = false;
+			_deleteSubmittedAt = null;
 			_targetSlotObservedEmptyAfterDelete = false;
 			_freshListRequested = false;
 			_npcNavHelper = new NavigationHelper(context.Navigator);
@@ -105,8 +105,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 			// 1) A modal blocks all lower-priority actions, including while stabilizing.
 			if (hasYesno)
 			{
+				if (_deleteSubmittedAt.HasValue)
+				{
+					if (!_targetSlotObservedEmptyAfterDelete && DeleteVerificationExpired("yesno"))
+						return Fail($"已送出存檔 {_slotIndex + 1} 的刪除確認，但對話仍阻止重新讀取該槽。刪除結果未確認。");
+					SetStatus($"{_dungeon.Name} Del: waiting for the same slot's delete result");
+					return false;
+				}
 				if (!SeenStable("yesno", StabilityShort) || IsOnCooldown("yesno")) return false;
-				if (!_deleteSlotClickSent || !_targetSlotObservedOccupied)
+				if (!_deleteSlotClickSent)
 				{
 					SetStatus($"{_dungeon.Name} Del: waiting for confirmation with a known target slot");
 					return false;
@@ -122,6 +129,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				{
 					return Fail($"{_dungeon.Name} Del: delete confirmation callback failed");
 				}
+				_deleteSubmittedAt = Environment.TickCount64;
+				_freshListRequested = false;
 				SetCooldown("yesno", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
 				_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
@@ -149,6 +158,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 				}
 				if (!DeepDungeonUi.TryReadSaveSlots(out var slots, out _) || !slots.Any(slot => slot.Index == _slotIndex))
 				{
+					if (!_targetSlotObservedEmptyAfterDelete && DeleteVerificationExpired("save"))
+						return Fail($"已送出刪除確認，但無法從重新開啟的列表讀取存檔 {_slotIndex + 1}。刪除結果未確認。");
 					SetStatus($"{_dungeon.Name} Del: waiting for save slot state");
 					_nextTry = DateTime.Now.AddMilliseconds(250);
 					return false;
@@ -165,6 +176,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 					return false;
 				}
+				if (_deleteSubmittedAt.HasValue)
+					return Fail($"已送出刪除確認，但重新讀取後存檔 {_slotIndex + 1} 仍非空，無法確認刪除結果。");
 				string? sourceError = _validateSource?.Invoke(slots);
 				if (!string.IsNullOrEmpty(sourceError)) return Fail(sourceError);
 				SetStatus($"{_dungeon.Name} Del: clicking slot {(_slotIndex + 1)}");
@@ -175,7 +188,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 					_nextTry = DateTime.Now.Add(InteractionTiming.GetRetryInterval());
 					return false;
 				}
-				_targetSlotObservedOccupied = true;
 				_deleteSlotClickSent = true;
 				SetCooldown("save-slot", InteractionTiming.GetRetryInterval());
 				_lastProgress = DateTime.Now;
@@ -242,6 +254,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry
 
 			_nextTry = DateTime.Now.AddMilliseconds(150);
 			return false;
+
+			bool DeleteVerificationExpired(string window) => _deleteSubmittedAt is { } sentAt &&
+				Environment.TickCount64 - sentAt >= DeleteVerificationWindow.TotalMilliseconds &&
+				SeenStable(window, DeleteVerificationWindow);
 
 			void InteractWithDungeonNpc()
 			{

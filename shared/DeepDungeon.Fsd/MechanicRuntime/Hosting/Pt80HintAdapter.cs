@@ -4,7 +4,7 @@ using BossMod.Endwalker.DeepDungeon.PilgrimsTraverse.DD80ForgivenProfanity;
 
 namespace MasterPlayer.MechanicRuntime;
 
-/// <summary>DeepDungeon-owned execution policy; leaves imported module and hints unchanged.</summary>
+/// <summary>locally maintained execution policy; leaves imported module and hints unchanged.</summary>
 internal static class Pt80HintAdapter
 {
     public static EncounterHintState Adapt(BossModule module, Actor player, EncounterHintState state, DateTime now)

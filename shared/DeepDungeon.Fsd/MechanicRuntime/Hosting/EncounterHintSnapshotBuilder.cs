@@ -6,7 +6,7 @@ using BossMod.Components;
 
 namespace MasterPlayer.MechanicRuntime;
 
-/// <summary>Shared hint conversion with DeepDungeon-owned encounter corrections;
+/// <summary>Shared hint conversion with locally maintained encounter corrections;
 /// no private mechanic queues or module-specific lifecycle reconstruction.</summary>
 public sealed class EncounterHintSnapshotBuilder
 {
@@ -40,6 +40,18 @@ public sealed class EncounterHintSnapshotBuilder
         var boss = module.PrimaryActor;
         var now = world.CurrentTime;
         var active = module.StateMachine.ActivePhase != null;
+        var knockbacks = active ? hints.Knockbacks.OrderBy(k => k.Source.Activation).ToArray() : [];
+        for (var i = 0; i < knockbacks.Length; ++i)
+        {
+            var prediction = knockbacks[i];
+            var source = prediction.Source;
+            var casterOid = world.Actors.Find(source.ActorID)?.OID ?? 0;
+            knockbacks[i] = prediction with
+            {
+                Timing = KnockbackMotionData.Resolve(source.ActionID, casterOid, source.Distance,
+                    source.Kind, source.ActivationIsEffect)
+            };
+        }
         HashSet<GenericChasingAOEs.Chaser>? simulatedSteering = null;
         var zones = new List<EncounterHazard>(hints.ForbiddenZones.Count);
         foreach (var zone in hints.ForbiddenZones)
@@ -49,6 +61,9 @@ public sealed class EncounterHintSnapshotBuilder
                 (simulatedSteering ??= []).Add(chaser);
                 continue;
             }
+            if (zone.SingleImpact && zone.shapeDistance is SDKnockbackInSquareFixedDirection square
+                && MoveLandingRestriction(knockbacks, zone.activation, square))
+                continue;
             zones.Add(EncounterHazard.FromHint(zone) with
             {
                 Geometry = TryCircle(zone.shapeDistance, out var origin, out var radius)
@@ -144,14 +159,63 @@ public sealed class EncounterHintSnapshotBuilder
             ForbiddenDirections = hints.ForbiddenDirections.ToArray()
         };
         state = Pt80HintAdapter.Adapt(module, player, state, now);
+        AddImpactForecasts(hints, zones, knockbacks, now);
         _lastBoss = boss;
-        return _last = new(world.CurrentZone, boss.InstanceID, boss.OID, now,
+        var snapshot = new EncounterPlanningSnapshot(world.CurrentZone, boss.InstanceID, boss.OID, now,
             new(boss.Position.X, boss.PosRot.Y, boss.Position.Z), boss.HitboxRadius,
             boss.IsTargetable, boss.IsDead, module.Center, module.Bounds,
             zones.ToArray(), [], [], chasers.ToArray())
-        { Hints = state, Knockbacks = active ? hints.Knockbacks.OrderBy(k => k.Source.Activation).ToArray() : [],
+        { Hints = state, Knockbacks = knockbacks,
             TemporaryObstacles = hints.TemporaryObstacles.ToArray(),
             ChasingHazards = adaptedChasers.ToArray(), PathMechanic = residence };
+        var observed = session.Displacements.Capture(snapshot, snapshot.Knockbacks);
+        return _last = snapshot with { Knockbacks = observed.Forecasts, Displacement = observed.Current };
+    }
+
+    // Only detach a rule whose existing translation exactly matches one
+    // unconditional displacement. Keep all other cast-time hint semantics.
+    private static bool MoveLandingRestriction(KnockbackPrediction[] knockbacks, DateTime at,
+        SDKnockbackInSquareFixedDirection square)
+    {
+        var match = -1;
+        ShapeDistance? unsafeLanding = null;
+        for (var i = 0; i < knockbacks.Length; ++i)
+        {
+            var prediction = knockbacks[i];
+            var source = prediction.Source;
+            if (source.Activation != at) continue;
+            if (match >= 0 || prediction.StopAtWall || prediction.StopAfterWall
+                || prediction.PathDependentImmunityStatus != 0 || prediction.UnsafeLanding != null
+                || source.Shape != null || source.Kind != GenericKnockback.Kind.DirForward)
+                return false;
+            unsafeLanding = square.UnsafeLandingFor(source.Distance * source.Direction.ToDirection());
+            if (unsafeLanding == null) return false;
+            match = i;
+        }
+        if (match < 0) return false;
+        knockbacks[match] = knockbacks[match] with { UnsafeLanding = unsafeLanding };
+        return true;
+    }
+
+    private static void AddImpactForecasts(AIHints hints, List<EncounterHazard> zones,
+        ReadOnlySpan<KnockbackPrediction> knockbacks, DateTime now)
+    {
+        if (hints.ImpactForecasts.Count == 0 || knockbacks.IsEmpty) return;
+
+        // Include impacts that overlap the time already required for forced movement.
+        var through = now;
+        foreach (ref readonly var knockback in knockbacks)
+        {
+            var at = knockback.Source.Activation;
+            if (at < now || at == DateTime.MaxValue) continue;
+            var end = knockback.Timing.Available ? at.AddSeconds(knockback.Timing.ApplicationDelay + knockback.Timing.Duration) : at;
+            if (end > through) through = end;
+        }
+        foreach (var forecast in hints.ImpactForecasts)
+        {
+            if (forecast.activation >= now && forecast.activation <= through)
+                zones.Add(EncounterHazard.FromHint(forecast) with { Predicted = true });
+        }
     }
 
     private static bool HasTargetDirective(BossModule module, Actor player, AIHints hints)

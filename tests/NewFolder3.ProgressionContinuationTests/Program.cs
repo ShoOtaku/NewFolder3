@@ -128,21 +128,37 @@ foreach (int selectedSlot in new[] { 0, 1 })
 
     var attachedPlan = selectedPlan with { StartFloor = 21, AttachCurrentDuty = true };
     var attachedSession = new FarmingSession(attachedPlan);
-    Check(attachedSession.OwnedSlot == selectedSlot && !attachedSession.AttachmentCompleted,
-        "Live takeover must retain the user's explicit selected slot.");
+    Check(attachedSession.OwnedSlot == -1 && !attachedSession.AttachmentCompleted,
+        "A configured selected slot must not confer ownership during live takeover.");
     var attachedFailure = FarmingSessionPolicy.Decide(attachedPlan, new(21, false, true, false, false));
-    Check(attachedFailure is { NextFloor: 1, DeleteOwnedSave: true, RecoverFailure: true },
-        "Live takeover of a selected slot must restart at floor one after failure, not the attachment floor.");
-    attachedSession.ConfirmOwnedSaveDeleted();
-    attachedSession.CompleteAttempt(attachedFailure, 0);
-    Check(attachedSession.AttachmentCompleted && attachedSession.OwnedSlot == -1 && attachedSession.NextFloor == 1,
-        "After failure, a live takeover must leave attachment mode and enter the empty selected slot normally.");
+    Check(attachedFailure is { DeleteOwnedSave: false, RecoverFailure: false, CountCycle: false } &&
+        attachedFailure.Error.Length > 0, "Live takeover with no verified source must retain its save after failure.");
     Check(FarmingSessionPolicy.Decide(attachedPlan with { HoldOnFailure = true }, new(21, false, true, false, false)) is
         { DeleteOwnedSave: false, RecoverFailure: false }, "Explicit diagnostic holds must override failure recovery.");
 }
 Check(!SelectedProgressionSavePolicy.TrySelect([], -1, 100, out _, out _) &&
     !SelectedProgressionSavePolicy.TrySelect([], 2, 100, out _, out _), "Only the two real save slots can be selected.");
 checks += FreeExplorationTests.Run();
+var candidate = new SaveSlotSnapshot(0, false, 21, "21", "original");
+Check(OwnedSavePolicy.ValidateForDeletion([candidate], 0, 21, null) != null,
+    "Matching progress and a configured slot cannot prove ownership.");
+Check(OwnedSavePolicy.ValidateForDeletion([candidate with { Identity = "replacement" }], 0, 21, candidate) != null,
+    "A replaced identity in the same slot and floorset must be rejected.");
+Check(OwnedSavePolicy.ValidateForDeletion([candidate], 0, 21, candidate) == null,
+    "A verified matching source may be cleaned.");
+var createdSession = new FarmingSession(owned with { StartFloor = 21 });
+Check(createdSession.BindCreatedSave(0) && createdSession.CreatedBySession &&
+    OwnedSavePolicy.ValidateForDeletion([candidate], createdSession.OwnedSlot, 21, null, createdSession.CreatedBySession) == null,
+    "A task-created source must remain eligible after its first failure before any saved progress is pinned.");
+createdSession.ConfirmOwnedSaveDeleted();
+Check(!createdSession.CreatedBySession && createdSession.OwnedSlot == -1,
+    "Deletion completion must revoke the old creation provenance.");
+var fingerprintSlot = candidate with { RowFingerprint = new string('A', 64) };
+var checkpointSession = new FarmingSession(owned);
+checkpointSession.RestoreCheckpoint(fingerprintSlot, 2, 123, () => null, _ => { });
+Check(!checkpointSession.PrepareSource().Observe([fingerprintSlot with { RowFingerprint = new string('B', 64) }],
+    out _, out _), "Checkpoint recovery must reject a changed row fingerprint even when slot, floor and identity match.");
+Check(checkpointSession.Source.Observe([fingerprintSlot], out _, out _), "The original checkpoint must still validate.");
 Console.WriteLine($"Progression continuation and selected-slot checks passed: {checks}.");
 
 void Check(bool condition, string message)

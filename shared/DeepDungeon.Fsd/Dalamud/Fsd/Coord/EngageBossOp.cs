@@ -85,7 +85,7 @@ internal sealed class EngageBossOp : FloorOperation
         var dz = destination.Z - facts.PlayerPosition.Z;
         var range = targetRadius + native.EncounterAttackRange;
         _state = MathF.Sqrt(dx * dx + dz * dz) <= range ? "engage" : "approach";
-        Claim = MoveClaim.To(Priority, destination, range);
+        Claim = new(Priority, new GoToVerb(destination, range) { EncounterId = _encounterId });
         return OpStatus.Running;
     }
 

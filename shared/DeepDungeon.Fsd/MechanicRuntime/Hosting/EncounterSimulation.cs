@@ -10,6 +10,7 @@ internal sealed class EncounterSimulation
 {
     internal readonly EncounterRouteRequest Request;
     readonly double _start, _step;
+    readonly double _moveFrom = double.PositiveInfinity, _moveUntil = double.PositiveInfinity;
     readonly CancellationToken _token;
     readonly INavigationTerrain _terrain;
     readonly TimedTransition[] _events;
@@ -25,6 +26,24 @@ internal sealed class EncounterSimulation
     public double End => Ends[^1];
     public bool RequiresHistory { get; }
     public ReadOnlySpan<Vector2> ControlTargets => [];
+    internal IEnumerable<double> DecisionTimes => _events.Select(e => e.At)
+        .Concat(_persistent.SelectMany(h => new[] { h.At, h.End })).Append(_moveFrom).Append(_moveUntil);
+
+    internal bool RequiresMovement(double from, double until) => _moveFrom < until - 1e-8 && from < _moveUntil - 1e-8;
+
+    internal (WPos Previous, float Step, float Radius)? ChaseAt(EncounterForecastState state, double at)
+    {
+        for (var i = state.EventIndex; i < _events.Length && _events[i].At <= at + 1e-7; ++i)
+        {
+            var e = _events[i];
+            if (e.Chase < 0 || e.At < at - 1e-7) continue;
+            var chase = Request.Snapshot.ChasingHazards[e.Chase];
+            if (chase.TargetId != Request.PlayerId) continue;
+            var center = state.Centers[e.Chase];
+            return (new(center.X, center.Y), e.Step, EncounterChaseRules.Radius(chase.Radius, Speed));
+        }
+        return null;
+    }
 
     internal static bool NeedsHistory(EncounterPlanningSnapshot snapshot) => snapshot.PathMechanic != null
         || snapshot.ChasingHazards.Any(c => c.Remaining > 0)
@@ -36,6 +55,12 @@ internal sealed class EncounterSimulation
         _terrain = request.Terrain ?? new EncounterTerrain(request.Snapshot);
         Request = request; _start = start; _step = .05; _token = token;
         RequiresHistory = NeedsHistory(request.Snapshot);
+        if (request.Snapshot.Hints is { KeepMoving: true }) _moveFrom = double.NegativeInfinity;
+        else if (request.Snapshot.Hints is { Mode: AIHints.SpecialMode.Freezing } freezing)
+        {
+            _moveFrom = start + (freezing.ModeActivation - request.Now).TotalSeconds - EncounterHintPlanner.ImpactLeadSeconds;
+            if (freezing.ModeFinish != default) _moveUntil = start + (freezing.ModeFinish - request.Now).TotalSeconds;
+        }
         Ends = Enumerable.Range(1, (int)Math.Ceiling(horizon / ControlMath.Knot))
             .Select(k => start + Math.Min(horizon, k * ControlMath.Knot)).ToArray();
         var events = new List<TimedTransition>();
@@ -84,12 +109,24 @@ internal sealed class EncounterSimulation
             Centers = Request.Snapshot.ChasingHazards.Select(c => new Vector2(c.PreviousPosition.X, c.PreviousPosition.Z)).ToArray(),
             Unsafe = new bool[_persistent.Length]
         };
+        for (var i = 0; i < _persistent.Length; ++i)
+        {
+            var (hazard, at, end) = _persistent[i];
+            s.Unsafe[i] = at <= _start && _start < end && EncounterHazardRules.Clearance(hazard, s.P) < 0;
+            s.StartsExposed |= s.Unsafe[i];
+        }
+        if (Request.Displacement is { } displacement && displacement.End > Request.Now)
+        {
+            s.Forced = displacement.Transition(s.P, Request.Now, _start);
+            s.Velocity = Vector2.Zero;
+        }
         if (Request.Snapshot.PathMechanic?.Initialize(ref s.Mechanic, s.P, Request.Now, _start) == true)
             Hit(s, _start);
 
         foreach (var chase in Request.Snapshot.ChasingHazards)
             if (chase.Remaining > 0 && (chase.NextActivation - Request.Now).TotalSeconds < -EncounterHintPlanner.ImpactLeadSeconds)
             { s.StaleChase = true; Hit(s, _start); }
+        ApplyEvents(s);
         return s;
     }
     public EncounterForecastState Copy(EncounterForecastState source)
@@ -97,8 +134,10 @@ internal sealed class EncounterSimulation
     public void CopyFrom(EncounterForecastState target, EncounterForecastState source)
     {
         target.StartupRemaining = source.StartupRemaining;
+        target.Forced = source.Forced;
         target.P = source.P; target.Velocity = source.Velocity; target.Time = source.Time; target.EventIndex = source.EventIndex;
         target.GeometryFailures = source.GeometryFailures;
+        target.TimingUnresolved = source.TimingUnresolved;
         target.Failures = source.Failures; target.Soft = source.Soft; target.Travel = source.Travel;
         target.ImpactMarginShortfall = source.ImpactMarginShortfall; target.Exposure = source.Exposure;
         target.Mechanic = source.Mechanic; target.Outside = source.Outside;
@@ -113,6 +152,7 @@ internal sealed class EncounterSimulation
     public Vector2 Position(EncounterForecastState state) => state.P;
     public void Advance(EncounterForecastState s, Vector2 velocity, double until)
     {
+        if (s.TimingUnresolved) return;
         if ((++_advances & 255) == 0) _token.ThrowIfCancellationRequested();
         // A control is one straight segment. Sample its geometry once, rather
         // than repeating the same boundary work at every integration substep.
@@ -128,18 +168,22 @@ internal sealed class EncounterSimulation
         var origin = s.P;
         var startedAt = s.Time;
         var initialVelocity = s.Velocity;
-        while (s.Time < until - 1e-9)
+        while (!s.TimingUnresolved && s.Time < until - 1e-9)
         {
             if (ApplyEvents(s))
             { origin = s.P; startedAt = s.Time; initialVelocity = s.Velocity; initialStartup = s.StartupRemaining; }
+            if (s.TimingUnresolved) return;
             var next = Math.Min(until, s.Time + _step);
             if (s.EventIndex < _events.Length) next = Math.Min(next, _events[s.EventIndex].At);
+            if (s.Forced is { } activeMotion) next = Math.Min(next, activeMotion.End);
             var dt = next - s.Time;
             // Evaluate from the control's origin. Repeated float additions can
             // drift a legal boundary endpoint outside the arena before a hold.
             var atVelocity = initialVelocity;
             s.StartupRemaining = initialStartup;
-            var p = origin + Request.AdvanceWalking(ref atVelocity, ref s.StartupRemaining, velocity, next - startedAt);
+            var p = s.Forced is { } forced ? forced.Position(next)
+                : origin + Request.AdvanceWalking(ref atVelocity, ref s.StartupRemaining, velocity, next - startedAt);
+            if (s.Forced.HasValue) { atVelocity = Vector2.Zero; s.StartupRemaining = 0; }
             s.Velocity = atVelocity;
             if (Request.Snapshot.Knockbacks.Length != 0 && !_terrain.CanTraverse(new Vector3(s.P.X, 0, s.P.Y), new(p.X, 0, p.Y)))
                 ++s.GeometryFailures;
@@ -147,13 +191,12 @@ internal sealed class EncounterSimulation
             {
                 var (hazard, activation, expiry) = _persistent[k];
                 if (activation > next || expiry <= s.Time) continue;
-                var finish = Math.Min(next, expiry);
                 var begin = Math.Max(s.Time, activation);
                 var sample = hazard;
                 var check = EncounterHazardRules.Evaluate(System.Runtime.InteropServices.MemoryMarshal.CreateReadOnlySpan(ref sample, 1),
-                    s.P, p, s.Time - _start, next - _start, Request.Now);
+                    s.P, p, s.Time - _start, next - _start, Request.Now, allowExistingExposure: s.Unsafe[k]);
                 if (!check.GeometryValid) ++s.GeometryFailures;
-                if (check.Hits != 0 && !s.Unsafe[k]) Hit(s, begin);
+                if (check.Hits != 0) Hit(s, begin);
                 s.Unsafe[k] = EncounterHazardRules.Clearance(hazard, p) < 0;
                 s.Exposure += check.Exposure;
                 s.Soft += EncounterScoring.ExposureCost(check.Exposure);
@@ -169,12 +212,8 @@ internal sealed class EncounterSimulation
                     ResidenceConstraints?.Add(new(outcome.Region, Request.Now.AddSeconds(outcome.FirstViolation - _start),
                         EncounterHazardKind.Impact, Predicted: true));
             }
-            var hint = Request.Snapshot.Hints;
-            var stopped = velocity.LengthSquared() < 1e-6f && hint != null
-                && (hint.KeepMoving || hint.Mode == AIHints.SpecialMode.Freezing
-                    && next >= _start + (hint.ModeActivation - Request.Now).TotalSeconds - EncounterHintPlanner.ImpactLeadSeconds
-                    && (hint.ModeFinish == default || s.Time <= _start + (hint.ModeFinish - Request.Now).TotalSeconds));
-            if (stopped && !s.Stopped) Hit(s, s.Time);
+            var stopped = velocity.LengthSquared() < 1e-6f && RequiresMovement(s.Time, next);
+            if (stopped && !s.Stopped) Hit(s, Math.Max(s.Time, _moveFrom));
             s.Stopped = stopped;
             s.Travel += Vector2.Distance(s.P, p); s.P = p; s.Time = next;
             if (ApplyEvents(s))
@@ -182,9 +221,25 @@ internal sealed class EncounterSimulation
         }
     }
 
+    internal bool IsExposed(EncounterForecastState state)
+    {
+        for (var i = 0; i < _persistent.Length; ++i)
+        {
+            var (hazard, at, end) = _persistent[i];
+            if (at <= state.Time && state.Time < end && EncounterHazardRules.Clearance(hazard, state.P) < 0)
+                return true;
+        }
+        return false;
+    }
+
     bool ApplyEvents(EncounterForecastState s)
     {
         var displaced = false;
+        if (s.Forced is { } finished && s.Time >= finished.End - 1e-8)
+        {
+            s.P = finished.To; s.Forced = null;
+            s.Velocity = Vector2.Zero; s.StartupRemaining = 0; displaced = true;
+        }
         while (s.EventIndex < _events.Length && _events[s.EventIndex].At <= s.Time + 1e-8)
         {
             var e = _events[s.EventIndex++]; float clearance; float margin;
@@ -198,10 +253,20 @@ internal sealed class EncounterSimulation
             }
             if (e.Knockback >= 0)
             {
-                var to = EncounterDisplacement.Project(Request.Snapshot, Request.Snapshot.Knockbacks[e.Knockback], s.P, s.Mechanic);
-                if (to == s.P) continue;
-                if (!_terrain.CanTraverse(new Vector3(s.P.X, 0, s.P.Y), new(to.X, 0, to.Y))) ++s.GeometryFailures;
-                s.P = to; s.Velocity = Vector2.Zero; s.StartupRemaining = 0; displaced = true;
+                var prediction = Request.Snapshot.Knockbacks[e.Knockback];
+                if (EncounterDisplacement.Transition(Request.Snapshot, prediction, s.P, s.Mechanic, s.Time) is not { } motion)
+                {
+                    s.TimingUnresolved = true;
+                    return displaced;
+                }
+                if (motion.End == s.Time && motion.To == s.P) continue;
+                // Native overlap/queue semantics are not established. Do not
+                // silently replace a motion and certify that route as feasible.
+                if (s.Forced.HasValue) { ++s.GeometryFailures; continue; }
+                if (!prediction.AllowsLanding(motion.To) ||
+                    !_terrain.CanTraverse(new Vector3(s.P.X, 0, s.P.Y), new(motion.To.X, 0, motion.To.Y)))
+                    ++s.GeometryFailures;
+                s.Forced = motion; s.Velocity = Vector2.Zero; s.StartupRemaining = 0; displaced = true;
                 continue;
             }
             if (e.Chase >= 0)
@@ -255,11 +320,12 @@ internal sealed class EncounterSimulation
 
 internal sealed class EncounterForecastState
 {
+    internal ForcedDisplacement? Forced;
     public Vector2 P, Velocity;
     public float StackCost;
     public double StartupRemaining;
     public double FirstViolation = double.PositiveInfinity;
-    public bool StaleChase, StartsExposed;
+    public bool StaleChase, StartsExposed, TimingUnresolved;
     public double Time, Soft, Travel, Exposure, ImpactMarginShortfall;
     public MechanicBranchState Mechanic;
     public int EventIndex, Failures, GeometryFailures;

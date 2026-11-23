@@ -64,7 +64,9 @@ internal partial class FsdEngine
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();
+        ImGui.BeginDisabled(ProgressionPauseLocked);
         DrawRotationSettings();
+        ImGui.EndDisabled();
         ImGui.Spacing();
         ImGui.Separator();
         ImGui.Spacing();

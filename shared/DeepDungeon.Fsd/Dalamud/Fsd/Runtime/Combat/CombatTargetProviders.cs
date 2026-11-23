@@ -7,11 +7,11 @@ using MasterPlayer.MechanicRuntime;
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat;
 
 internal readonly record struct CombatTargetRequest(RunContext? Context, bool BossFloor, bool InCombat,
-    bool PassageOpen, float Range, bool AutoSelect, EncounterPlanningSnapshot? Snapshot)
+    bool PassageOpen, float Range, EncounterPlanningSnapshot? Snapshot)
 {
     public Vector3? SightOrigin { get; init; }
     public bool Allowed(IBattleChara target) => Context?.IsCombatTargetSuppressed(target.GameObjectId) != true &&
-        (InCombat || Context?.IsNewCombatTargetAllowed(target) != false) &&
+        Context?.IsNewCombatTargetAllowed(target) != false &&
         (SightOrigin is not { } origin || !IsSightBlocked(origin, target.Position));
 
     internal static bool IsSightBlocked(Vector3 position, Vector3 target) =>
@@ -59,28 +59,22 @@ internal sealed class DefaultTargetProvider : ICombatTargetProvider
             choice = new(null, "default");
             return true;
         }
-        ulong preferred = 0;
-        q.Context?.TryGetPreferredAggroTarget(out preferred);
         IBattleChara? target;
         if (q.InCombat && q.BossFloor)
             target = PickBossTarget(q.Context, q.Allowed);
         else if (q.InCombat)
         {
+            var excluded = CombatTargetingHelpers.PickExcludedAggroTarget(q.Context, q.Allowed);
+            if (excluded != null)
+            {
+                choice = new(excluded, "excluded-aggro");
+                return true;
+            }
             target = CombatTargetingHelpers.PickHostileHighestHP(q.Range, true, true, q.Allowed);
-            target ??= CombatTargetingHelpers.PickAggroedHostile(float.MaxValue, out _, preferred, q.Allowed);
+            target ??= CombatTargetingHelpers.PickNearestAggroedHostile(q.Allowed);
         }
-        else if (q.PassageOpen)
-            target = preferred == 0 ? null : CombatTargetingHelpers.PickAggroedHostile(q.Range * 2.5f, out _, preferred, q.Allowed);
         else
-        {
-            target = preferred == 0 ? null : CombatTargetingHelpers.GetBattleCharaByGameObjectId(preferred);
-            if (target != null && !q.Allowed(target)) target = null;
-            if (target == null && !q.AutoSelect && Service.TargetManager.Target is IBattleChara current &&
-                !current.IsDead && q.Allowed(current) && Service.LocalPlayer is { } player &&
-                CombatPositionNavigation.CheckAttack(player.Position, current.Position, q.Range).Allowed)
-                target = current;
-            target ??= CombatTargetingHelpers.PickNearestHostile(q.Range, out _, q.Allowed);
-        }
+            target = q.PassageOpen ? null : CombatTargetingHelpers.PickNearestHostile(q.Range, out _, q.Allowed);
         choice = new(target, "default");
         return true;
     }

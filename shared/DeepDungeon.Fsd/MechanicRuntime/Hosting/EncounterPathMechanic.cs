@@ -20,6 +20,5 @@ public abstract record EncounterPathMechanic
     internal abstract void Sample(ref MechanicBranchState branch, double time, Random random);
     internal abstract double AddDistance(double distance, in MechanicBranchState first, in MechanicBranchState second);
     internal abstract double BranchDeadline(in MechanicBranchState branch);
-    internal abstract void ProposeRoutes(EncounterForwardProblem problem, ref MechanicRouteSelection selection);
     internal abstract PlanScore ScoreTerminal(in MechanicBranchState branch, double time, PlanScore score);
 }

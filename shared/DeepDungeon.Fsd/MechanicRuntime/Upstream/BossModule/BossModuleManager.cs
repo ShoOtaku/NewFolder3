@@ -15,6 +15,8 @@ public sealed class BossModuleManager : IDisposable
     public Event<BossModule> ModuleUnloaded = new();
     public Event<BossModule> ModuleActivated = new();
     public Event<BossModule> ModuleDeactivated = new();
+    // Local host adaptation: retain the cause before the manager unloads a crashed module.
+    public Event<BossModule, Exception> ModuleUpdateFailed = new();
 
     // drawn module among loaded modules; this can be changed explicitly if needed
     // usually we don't have multiple concurrently active modules, since this prevents meaningful cd planning, raid cooldown tracking, etc.
@@ -145,6 +147,7 @@ public sealed class BossModuleManager : IDisposable
                 catch (Exception ex)
                 {
                     Service.Log($"Boss module {m.GetType()} crashed: {ex}");
+                    ModuleUpdateFailed.Fire(m, ex);
                     wasActive = true; // force unload if exception happened before activation
                     isActive = false;
                 }

@@ -132,22 +132,24 @@ public sealed class Plugin : IDalamudPlugin, IDisposable
                     : usageTelemetryCollector ?? (IRunTelemetryObserver?)longRunLogCollector;
 
             // FsdApplication injects the shared Dalamud services required by FSD.
-            application = new FsdApplication(
+            var yAxisController = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
+            yAxis = yAxisController;
+            _yAxis = yAxisController;
+            application = FsdApplication.CreateStandalone(
                 pluginInterface,
                 _configuration,
                 ProductIdentity.HostIdentity,
                 hostVersion,
                 NewFolder3BuildProfile.CreateDetailedMapHostOptions(),
-                _communityEvidenceCollector,
-                runTelemetryObserver,
+                playerYOffsetProvider: () => yAxisController.ActualYOffset,
+                floorEvidenceObserver: _communityEvidenceCollector,
+                runTelemetryObserver: runTelemetryObserver,
                 tryAuthorizeFsdStart: _accessGate.TryAuthorizeFsdStart,
                 fsdStartDenialNoticeProvider: () => _accessGate.FsdStartDenialNotice);
             _application = application;
             diagnosticEndpoints = new FsdDiagnosticsIpc(pluginInterface, application, pluginLog);
             diagnosticsIpc = diagnosticEndpoints;
 
-            yAxis = new YAxisAdjustController(_configuration, objectTable, partyList, pluginLog);
-            _yAxis = yAxis;
             _window = new FsdWindow(_application, _yAxis);
             _windows.AddWindow(_window);
 

@@ -126,6 +126,8 @@ public sealed class AIHints
     }
 
     public readonly List<ForbiddenZone> ForbiddenZones = [];
+    // Future impacts available to the planner without changing current AI or drawing hints.
+    internal readonly List<ForbiddenZone> ImpactForecasts = [];
     internal readonly List<MasterPlayer.MechanicRuntime.StackPositionGoal> StackGoals = [];
     internal readonly List<MasterPlayer.MechanicRuntime.KnockbackPrediction> Knockbacks = [];
     internal readonly List<(Components.GenericChasingAOEs.Chaser Chaser, float StepDistance)> Chasers = [];
@@ -212,6 +214,7 @@ public sealed class AIHints
         SpinDirection = null;
         InteractWithTarget = null;
         ForbiddenZones.Clear();
+        ImpactForecasts.Clear();
         StackGoals.Clear();
         Knockbacks.Clear();
         Chasers.Clear();

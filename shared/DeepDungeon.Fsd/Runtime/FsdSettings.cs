@@ -10,7 +10,6 @@ public sealed class FsdSettings
     public FarmingSettings Farming { get; set; } = new();
 
     public FsdRotationSettings Rotation { get; set; } = new();
-
     public long? LifetimeHoardPickups { get; set; }
 
     public bool AutoUseRecoveryPotion { get; set; }
@@ -32,6 +31,7 @@ public sealed class FsdSettings
     public int NecromancerAutoLeaveAfterMinutes { get; set; }
     public int NecromancerFsdScenarioIndex { get; set; } = 1;
     public bool UseDetailedMap { get; set; }
+    public bool UseBuiltInFloorMaps { get; set; }
     public bool PauseAfterCurrentFloorset { get; set; }
     public int NecromancerSaveSlot { get; set; }
     public int NecromancerFsdEndMode { get; set; }

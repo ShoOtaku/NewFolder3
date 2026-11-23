@@ -68,6 +68,7 @@ public sealed record EncounterPlanningSnapshot(ushort Territory, ulong Encounter
     public EncounterHintState? Hints { get; init; }
     // BMR provides activation and displacement geometry, not travel duration.
     public KnockbackPrediction[] Knockbacks { get; init; } = [];
+    public NativeDisplacementObservation? Displacement { get; init; }
     public EncounterChaser[] ChasingHazards { get; init; } = [];
     internal EncounterPathMechanic? PathMechanic { get; init; }
     // Keep the recorded PT50 shape and the public replay API readable by existing callers.
@@ -78,21 +79,29 @@ public sealed record EncounterPlanningSnapshot(ushort Territory, ulong Encounter
     }
     // Directed barriers: entry is blocked, an already covered start may escape.
     public ShapeDistance[] TemporaryObstacles { get; init; } = [];
-}
 
-/// <summary>Host-registered snapshot provider — the planner reads the
-/// latest immutable copy; the host owns construction cadence.</summary>
-public static class EncounterPlanningSnapshotRegistry
-{
-    private static Func<EncounterPlanningSnapshot?>? _provider;
-    private static Func<EncounterPlanningSnapshot?>? _localHazards;
-    public static void SetProvider(Func<EncounterPlanningSnapshot?>? provider,
-        Func<EncounterPlanningSnapshot?>? localHazards = null)
-    {
-        _provider = provider;
-        _localHazards = localHazards;
-    }
+    public bool RequiresTimedPlanning => Hazards.Length != 0 || Knockbacks.Length != 0 ||
+        Displacement != null || ChasingHazards.Length != 0 || PathMechanic != null ||
+        Hints is { Goals.Length: > 0 } or { StackGoals.Length: > 0 } or { KeepMoving: true }
+            or { Mode: not AIHints.SpecialMode.Normal } or { PendingKnockback: true };
 
-    public static EncounterPlanningSnapshot? ReadLocalHazards() => _localHazards?.Invoke();
-    public static EncounterPlanningSnapshot? Read() => _provider?.Invoke();
+    // Compare movement inputs, excluding position and targeting preferences.
+    // A new frame alone does not mean the constraints have changed.
+    public bool HasSameMovementConstraints(EncounterPlanningSnapshot? previous) =>
+        ReferenceEquals(this, previous) ||
+        previous != null && UsesDutyTerrain == previous.UsesDutyTerrain &&
+        ArenaCenter == previous.ArenaCenter && Equals(PathMechanic, previous.PathMechanic) &&
+        Hazards.SequenceEqual(previous.Hazards) && Knockbacks.SequenceEqual(previous.Knockbacks) &&
+        ChasingHazards.SequenceEqual(previous.ChasingHazards) &&
+        StaticObstacles.SequenceEqual(previous.StaticObstacles) &&
+        TemporaryObstacles.SequenceEqual(previous.TemporaryObstacles) &&
+        SameMovementHints(Hints, previous.Hints);
+
+    private static bool SameMovementHints(EncounterHintState? current, EncounterHintState? previous) =>
+        ReferenceEquals(current, previous) || current != null && previous != null &&
+        current.Mode == previous.Mode && current.KeepMoving == previous.KeepMoving &&
+        current.PendingKnockback == previous.PendingKnockback &&
+        (current.Mode == AIHints.SpecialMode.Normal ||
+            current.ModeActivation == previous.ModeActivation && current.ModeFinish == previous.ModeFinish) &&
+        current.ObstacleMap == previous.ObstacleMap && current.StackGoals.SequenceEqual(previous.StackGoals);
 }

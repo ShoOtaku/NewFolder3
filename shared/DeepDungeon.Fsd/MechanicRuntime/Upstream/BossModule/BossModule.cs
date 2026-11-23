@@ -479,9 +479,10 @@ public abstract class BossModule : IDisposable
         for (var i = 0; i < count; ++i)
         {
             var component = Components[i];
+            var firstZone = hints.ForbiddenZones.Count;
             component.AddAIHints(slot, actor, assignment, hints);
             if (component is Components.GenericKnockback knockback)
-                knockback.AddKnockbackPredictions(slot, actor, hints);
+                knockback.AddKnockbackPredictions(slot, actor, hints, firstZone);
             if (component is Components.GenericChasingAOEs chasing)
                 chasing.AddChaserPredictions(hints);
         }

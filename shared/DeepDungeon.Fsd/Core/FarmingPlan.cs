@@ -97,7 +97,10 @@ public static class FarmingTargetPolicy
         targets == Constrain(mode, targets) && (mode != FarmingMode.Aetherpool || targets.Silver || targets.Bronze);
 }
 
-public readonly record struct SaveSlotSnapshot(int Index, bool Empty, int StartFloor, string Progress, string Identity = "", bool Enterable = true);
+public readonly record struct SaveSlotSnapshot(int Index, bool Empty, int StartFloor, string Progress, string Identity = "", bool Enterable = true)
+{
+    public string? RowFingerprint { get; init; }
+}
 
 public static class SaveSlotUiPolicy
 {
@@ -172,8 +175,10 @@ public static class PreparedSavePolicy
 public static class OwnedSavePolicy
 {
     public static string? ValidateForDeletion(IReadOnlyList<SaveSlotSnapshot> slots,
-        int ownedSlot, int entryFloor, SaveSlotSnapshot? pinned)
+        int ownedSlot, int entryFloor, SaveSlotSnapshot? pinned, bool createdBySession = false)
     {
+        if (pinned == null && !createdBySession)
+            return "無法證明存檔來源；停止清理，保留存檔。";
         SaveSlotSnapshot source = default;
         int matches = 0;
         foreach (var slot in slots)
@@ -181,7 +186,7 @@ public static class OwnedSavePolicy
         if (ownedSlot < 0 || entryFloor < 1 || matches != 1 || source.Empty || source.Progress == null ||
             source.StartFloor < entryFloor || source.StartFloor > entryFloor + 10)
             return "本任務存檔內容與預期層段不符；停止清理。";
-        if (pinned is { } expected && (source.Index != expected.Index || source.Identity != expected.Identity))
+        if (pinned is { } expected && (expected.Empty || string.IsNullOrWhiteSpace(expected.Identity) || source.Index != expected.Index || source.Identity != expected.Identity))
             return "本任務存檔來源資訊已變更；停止清理。";
         return null;
     }

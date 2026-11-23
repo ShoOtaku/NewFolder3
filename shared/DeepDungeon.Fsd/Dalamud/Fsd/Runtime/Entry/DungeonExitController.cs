@@ -71,14 +71,38 @@ internal sealed class DungeonExitController(bool returnToEntrance, uint entrance
             Service.Condition[global::Dalamud.Game.ClientState.Conditions.ConditionFlag.InCombat], ui.Kind,
             ctx.Duty.IsInDuty && exit != null);
         var action = ExitUiPolicy.Decide(facts, returnToEntrance);
-        string revision = $"{facts.InDuty}:{facts.AtEntrance}:{facts.RestExitPresent}:{facts.DutyExitPresent}:{ui.Revision}";
-        _dispatch.Observe(revision, now);
+        string scope = $"{Service.ClientState.TerritoryType}:{facts.InDuty}";
+        string actionName = action.ToString();
+        string revision = action is ExitAction.ApproachDutyExit or ExitAction.ApproachRestExit
+            ? $"{action}:{exit?.GameObjectId}" : $"{action}:{ui.Revision}";
         if (action == ExitAction.Complete)
         {
+            _dispatch.ClearReceipt();
             _navigation?.Cancel();
             Outcome = ExitOutcome.Completed;
             SetStatus(returnToEntrance ? "已回到入口 NPC。" : "已離開副本。");
             return Outcome;
+        }
+        bool canRetryConfirmation = false;
+        if (_dispatch.Pending is { } pending)
+        {
+            if (pending.Scope != scope ||
+                pending.Action == nameof(ExitAction.LeaveResult) && action is ExitAction.ConfirmDutyExit or ExitAction.ConfirmRestExit ||
+                ui.Kind == ExitUiKind.None && _dispatch.ResultStillUnconfirmed(now) &&
+                action is ExitAction.RequestDutyExit or ExitAction.ApproachDutyExit or ExitAction.ApproachRestExit)
+                _dispatch.ClearReceipt();
+            else if (pending.Action == actionName && pending.Prompt == ui.Prompt && !ui.ConfirmDisabled)
+                canRetryConfirmation = true;
+            else
+            {
+                if (ui.ConfirmDisabled && pending.Prompt == ui.Prompt)
+                    _dispatch.ObserveDisabledControl($"{pending.Action}:{ui.Revision}");
+                _navigation?.Cancel();
+                SetStatus(_dispatch.ResultStillUnconfirmed(now)
+                    ? $"已送出 {pending.Action}，尚未觀測到過圖或可重試的出口。目前 UI：{ui.Kind}。"
+                    : "已送出退本確認，等待過圖。");
+                return Outcome;
+            }
         }
         if (action == ExitAction.Wait)
         {
@@ -87,9 +111,11 @@ internal sealed class DungeonExitController(bool returnToEntrance, uint entrance
                 ? $"等待可識別的退本 UI：{ui.Revision}" : "等待出口或可退本狀態。");
             return Outcome;
         }
-        if (!_dispatch.CanDispatch(now))
+        _dispatch.Observe(revision, now, preservePending: canRetryConfirmation);
+        if (!_dispatch.CanDispatch(now, canRetryConfirmation))
         {
-            if (_dispatch.Exhausted) SetStatus("退本操作尚未生效；等待新的畫面或狀態，不再重送。");
+            if (_dispatch.Pending is { } receipt)
+                SetStatus($"已送出退本操作 {receipt.Action}，等待{receipt.Expected}。");
             return Outcome;
         }
         if (action is ExitAction.RequestDutyExit or ExitAction.ApproachRestExit or ExitAction.ApproachDutyExit &&
@@ -107,7 +133,7 @@ internal sealed class DungeonExitController(bool returnToEntrance, uint entrance
         }
         _navigation?.Cancel();
         var current = ReadUi(ctx.Duty.IsInDuty);
-        if (current.Revision != ui.Revision || current.Kind != ui.Kind) return Outcome;
+        if (current.Revision != ui.Revision || current.Kind != ui.Kind || current.ConfirmDisabled) return Outcome;
         bool sent = false;
         switch (action)
         {
@@ -141,52 +167,58 @@ internal sealed class DungeonExitController(bool returnToEntrance, uint entrance
                 }
                 break;
         }
-        _dispatch.Dispatched(now);
+        bool finalConfirmation = action is ExitAction.ConfirmDutyExit or ExitAction.ConfirmRestExit or ExitAction.LeaveResult;
+        _dispatch.RecordDispatch(now, sent && finalConfirmation
+            ? new(actionName, "退本過圖及目的地", scope, ui.Prompt) : null);
         if (sent) _lastRequest = now;
         SetStatus($"退本操作 {action}：{(sent ? "已送出，等待結果" : "未送出")}");
         ctx.RecordDiagnostic?.Invoke("exit-action", new { action = action.ToString(), ui.Kind, ui.Revision, sent });
         return Outcome;
     }
 
-    private unsafe (ExitUiKind Kind, nint Address, string Revision) ReadUi(bool inDuty)
+    private readonly record struct ExitUiObservation(
+        ExitUiKind Kind, nint Address, string Revision, bool ConfirmDisabled = false, string? Prompt = null);
+
+    private unsafe ExitUiObservation ReadUi(bool inDuty)
     {
         if (DeepDungeonUi.TryGetAddon("SelectYesno", out var yesno))
         {
             string identity = $"SelectYesno:{yesno->Id}:{(nint)yesno:X}";
             if (!yesno->IsAddonAndNodesReady() ||
                 !DeepDungeonUi.TryGetConfirmationPromptText(yesno, out var prompt, out _))
-                return (ExitUiKind.Incomplete, (nint)yesno, identity);
+                return new(ExitUiKind.Incomplete, (nint)yesno, identity);
             string text = PtEntryText.Normalize(prompt);
             var button = ((AddonSelectYesno*)yesno)->YesButton;
-            var kind = button == null || !button->IsEnabled ? ExitUiKind.Incomplete
-                : text.Length > 0 && text == _dutyPrompt ? ExitUiKind.DutyConfirmation
+            var kind = text.Length > 0 && text == _dutyPrompt ? ExitUiKind.DutyConfirmation
                 : text.Length > 0 && _restPrompts.Contains(text) ? ExitUiKind.RestConfirmation : ExitUiKind.Unknown;
-            return (kind, (nint)yesno, identity + ":" + text);
+            bool disabled = button != null && !button->IsEnabled && kind != ExitUiKind.Unknown;
+            return new(button == null || disabled ? ExitUiKind.Incomplete : kind,
+                (nint)yesno, identity + ":" + text, disabled, text);
         }
         if (!inDuty)
         {
             foreach (var name in BlockingWindows)
                 if (DeepDungeonUi.TryGetAddon(name, out var addon))
-                    return (ExitUiKind.Unknown, (nint)addon, $"{name}:{addon->Id}:{(nint)addon:X}");
+                    return new(ExitUiKind.Unknown, (nint)addon, $"{name}:{addon->Id}:{(nint)addon:X}");
         }
         if (DeepDungeonUi.TryGetAddon("DeepDungeonResult", out var result))
         {
             string identity = $"DeepDungeonResult:{result->Id}:{(nint)result:X}";
-            if (!result->IsAddonAndNodesReady()) return (ExitUiKind.Incomplete, (nint)result, identity);
+            if (!result->IsAddonAndNodesReady()) return new(ExitUiKind.Incomplete, (nint)result, identity);
             var titleNode = result->UldManager.SearchNodeById(2);
             var title = titleNode == null ? null : titleNode->GetAsAtkTextNode();
             var buttonNode = result->UldManager.SearchNodeById(25);
             var button = buttonNode == null ? null : buttonNode->GetAsAtkComponentButton();
             if (title == null || button == null || button->ButtonTextNode == null)
-                return (ExitUiKind.Incomplete, (nint)result, identity);
+                return new(ExitUiKind.Incomplete, (nint)result, identity);
             string titleText = PtEntryText.Normalize(title->NodeText.ExtractText());
             string buttonText = PtEntryText.Normalize(button->ButtonTextNode->NodeText.ExtractText());
-            var kind = !button->IsEnabled ? ExitUiKind.Incomplete
-                : _resultTitle.Length > 0 && titleText == _resultTitle && buttonText == _resultExit
-                    ? ExitUiKind.Result : ExitUiKind.Unknown;
-            return (kind, (nint)result, identity + ":" + titleText + ":" + buttonText);
+            bool recognized = _resultTitle.Length > 0 && titleText == _resultTitle && buttonText == _resultExit;
+            bool disabled = recognized && !button->IsEnabled;
+            return new(disabled ? ExitUiKind.Incomplete : recognized ? ExitUiKind.Result : ExitUiKind.Unknown,
+                (nint)result, identity + ":" + titleText + ":" + buttonText, disabled, buttonText);
         }
-        return (ExitUiKind.None, 0, "none");
+        return new(ExitUiKind.None, 0, "none");
     }
 
     private static global::Dalamud.Game.ClientState.Objects.Types.IGameObject? FindResultExit(RunContext context)

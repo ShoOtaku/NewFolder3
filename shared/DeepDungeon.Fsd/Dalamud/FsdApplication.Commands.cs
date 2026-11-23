@@ -40,12 +40,10 @@ public sealed partial class FsdApplication
                             "/cc fsd terrain-export",
                             "/cc fsd stop",
                             "/cc fsd preflight [startFloor=21|31] (default: 21)",
-                            "/cc fsd arm-survey",
                             "/cc fsd close-entry",
                             "/cc fsd leave confirm=leave-deep-dungeon",
                             "/cc fsd delete-save slotNumber=1|2 confirm=delete-pt-save-slot",
                             "/cc fsd start-pt startFloor=21|31 confirm=start-pt-fsd [targetLoops=1..] [infinite=true|false] [leaveMode=default|finish|hoard|immediate|boss|minutes]",
-                            "/cc fsd start-controlled confirm=start-controlled-pt-capture [targetLoops=1..] [infinite=true|false]"
                         },
                         diagnosticFloors = "stopAfterFloor must be a ten-floor boundary; startFloor must begin a ten-floor group. Existing start/save guards apply."
                     };
@@ -67,34 +65,21 @@ public sealed partial class FsdApplication
                     result = Stop();
                     break;
                 case "terrain-capture":
-                    result = Map.LiveTerrainCapture.Configure(ReadCommandOptions(args, null, "compiler", "sqpack", "output", "enabled"));
+                    result = (Map.FloorMapSource.Live ?? throw new InvalidOperationException("此構建僅使用內建底圖。"))
+                        .Configure(ReadCommandOptions(args, null, "compiler", "sqpack", "output", "enabled"));
                     break;
                 case "terrain-export":
+                {
                     ReadCommandOptions(args, null);
-                    Map.LiveTerrainCapture.UpdateExportStatus();
-                    if (!Map.LiveTerrainCapture.Exporting) Map.LiveTerrainCapture.Export();
-                    result = new { ok = true, status = Map.LiveTerrainCapture.ExportStatus };
+                    var live = Map.FloorMapSource.Live ?? throw new InvalidOperationException("此構建僅使用內建底圖。");
+                    live.UpdateExportStatus();
+                    if (!live.Exporting) live.Export();
+                    result = new { ok = true, status = live.ExportStatus };
                     break;
+                }
                 case "nav-debug":
                 {
-                    var options = ReadCommandOptions(args, "goto", "goto", "auto");
-                    if (options.TryGetValue("auto", out var auto) && auto != null)
-                    {
-                        var on = auto.Equals("on", StringComparison.OrdinalIgnoreCase)
-                              || auto.Equals("start", StringComparison.OrdinalIgnoreCase)
-                              || auto.Equals("true", StringComparison.OrdinalIgnoreCase)
-                              || auto == "1";
-                        string navauto;
-                        if (on)
-                            navauto = Coord.NavDebug.StartAuto();
-                        else
-                        {
-                            Coord.NavDebug.StopAuto("stopped");
-                            navauto = "stopped";
-                        }
-                        result = new { ok = true, navauto };
-                        break;
-                    }
+                    var options = ReadCommandOptions(args, "goto", "goto");
                     if (options.TryGetValue("goto", out var g) && g != null)
                     {
                         if (g.Equals("stop", StringComparison.OrdinalIgnoreCase))
@@ -130,10 +115,6 @@ public sealed partial class FsdApplication
                     result = GetPilgrimsTraverseFsdPreflight(startFloor);
                     break;
                 }
-                case "arm-survey":
-                    ReadCommandOptions(args, null);
-                    result = ArmControlledReusableSaveSurveyCapture();
-                    break;
                 case "close-entry":
                     ReadCommandOptions(args, null);
                     result = CloseDeepDungeonEntryWindowsForBridge();
@@ -170,17 +151,6 @@ public sealed partial class FsdApplication
                         throw new ArgumentException("leaveMode must be default, finish, hoard, immediate, boss, or minutes.");
                     result = StartPilgrimsTraverseFsd(startFloor, targetLoops, infinite,
                         ReadRequiredCommandString(options, "confirm"), leaveMode);
-                    break;
-                }
-                case "start-controlled":
-                {
-                    var options = ReadCommandOptions(args, null, "targetLoops", "infinite", "confirm");
-                    int targetLoops = ReadOptionalCommandInt(options, "targetLoops", 1, int.MaxValue)
-                        ?? Math.Max(1, _settings.NecromancerFsdLoopCount);
-                    bool infinite = ReadOptionalCommandBool(options, "infinite")
-                        ?? _settings.NecromancerFsdLoopInfinite;
-                    result = StartControlledPilgrimsTraverseCapture(targetLoops, infinite,
-                        ReadRequiredCommandString(options, "confirm"));
                     break;
                 }
                 default:

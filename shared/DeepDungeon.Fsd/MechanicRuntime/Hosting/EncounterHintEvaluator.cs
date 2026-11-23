@@ -42,13 +42,12 @@ public static class EncounterHintEvaluator
     public static int Violations(in EncounterPlanningSnapshot snapshot, Vector2 position,
         DateTime now, double seconds, out float clearance)
     {
-        var p = new WPos(position.X, position.Y);
         var count = 0;
         clearance = float.PositiveInfinity;
         foreach (var zone in snapshot.Hazards)
         {
             if (!Active(zone, now, seconds)) continue;
-            var distance = zone.Shape.Distance(p) - zone.ClearanceMargin;
+            var distance = EncounterHazardRules.Clearance(zone, position);
             if (!float.IsFinite(distance)) { ++count; clearance = float.NegativeInfinity; continue; }
             clearance = MathF.Min(clearance, distance);
             if (distance < 0) ++count;

@@ -24,7 +24,12 @@ public sealed record MechanicWorldFrame(ushort Territory, ushort ContentFinderCo
 {
     // 逐目标原生 IncomingEffects 槽位（仅实时采样提供；回放录制未存该数据，保持为空）
     public MechanicActorIncomingEffects[] IncomingEffects { get; init; } = [];
+    public NativeDisplacementObservation? Displacement { get; init; }
+    public MechanicTimelineObservation[] ActionTimelines { get; init; } = [];
 }
+
+public readonly record struct MechanicTimelineObservation(ulong CasterId, uint ActionId, uint GlobalSequence,
+    ushort TimelineId, DateTime ObservedAt, float Timestamp, float Speed);
 
 public abstract record MechanicFeedEvent;
 public sealed record MechanicEventTether(ulong SourceId, uint TetherId, ulong TargetId) : MechanicFeedEvent;
@@ -41,7 +46,12 @@ public sealed record MechanicEventSystemLog(uint MessageId, int[] Args) : Mechan
 public sealed record MechanicEventPlayActionTimeline(ulong SourceId, ushort TimelineId) : MechanicFeedEvent;
 public sealed record MechanicActionEffectTarget(ulong Id, ulong[] RawEffects);
 public sealed record MechanicEventActionEffect(ulong CasterId, byte ActionType, uint ActionId, ulong MainTargetId, float AnimationLock,
-    Vector3 TargetPos, uint GlobalSequence, uint SourceSequence, ushort RotationInt, MechanicActionEffectTarget[] Targets) : MechanicFeedEvent;
+    Vector3 TargetPos, uint GlobalSequence, uint SourceSequence, ushort RotationInt, MechanicActionEffectTarget[] Targets) : MechanicFeedEvent
+{
+    public DateTime ReceivedAt { get; init; }
+    public MechanicTimelineObservation? Timeline { get; init; }
+    public Vector2? LocalPosition { get; init; }
+}
 
 public sealed class MechanicWorldFeed
 {
@@ -67,6 +77,7 @@ public sealed class MechanicWorldFeed
     public void ApplyFrame(MechanicWorldFrame frame)
     {
         ArgumentNullException.ThrowIfNull(frame);
+        _session.Displacements.ObserveFrame(frame, World.CurrentTime);
         if (World.CurrentZone != frame.Territory || World.CurrentCFCID != frame.ContentFinderConditionId)
             _session.Execute(new WorldState.OpZoneChange(frame.Territory, frame.ContentFinderConditionId));
 
@@ -191,6 +202,8 @@ public sealed class MechanicWorldFeed
                 effects[j] = raw[j];
             info.Targets.Add(new(target.Id, effects));
         }
+        KnockbackMotionData.Observe(info);
+        _session.Displacements.ObserveEffect(e, info, World);
         _session.Execute(new ActorState.OpCastEvent(e.CasterId, info));
     }
 

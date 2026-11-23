@@ -1,8 +1,10 @@
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
+using MasterPlayer.MechanicRuntime;
+using Dalamud.Game.ClientState.Conditions;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor;
 
-/// <summary>Adapts the existing encounter planner and approach fallback.</summary>
+/// <summary>Mechanic navigation with an explicit supported-module approach phase.</summary>
 internal sealed unsafe class NormalBossMovementStrategy(FloorExplorationController floor) : IBossMovementStrategy
 {
     public string Name => "mechanics";
@@ -12,12 +14,30 @@ internal sealed unsafe class NormalBossMovementStrategy(FloorExplorationControll
 
     public string? Update(InstanceContentDeepDungeon* dungeon)
     {
-        if (!floor.UpdateBossEncounter(dungeon))
+        var readiness = floor.GetBossReadiness();
+        if (readiness.Kind == EncounterReadinessKind.Approach && Service.Condition[ConditionFlag.InCombat])
+            readiness = new(EncounterReadinessKind.Faulted,
+                "Combat started before the supported boss module became ready.", readiness.ObservedAt);
+        if (readiness.Kind == EncounterReadinessKind.Ready)
         {
-            floor.UpdateBossEscape(dungeon);
-            floor.Boss.UpdateApproach(dungeon);
+            if (floor.UpdateBossEncounter(dungeon))
+            {
+                floor.Boss.ReportMechanicReadiness(readiness);
+                return null;
+            }
+            readiness = new(EncounterReadinessKind.Faulted,
+                "Mechanic coordination is unavailable.", readiness.ObservedAt);
         }
-        return null; // Existing controllers publish the normal-strategy status.
+        floor.Boss.ReportMechanicReadiness(readiness);
+        if (readiness.Kind == EncounterReadinessKind.Approach)
+        {
+            // A known pending module can load as we approach. This is not a
+            // replacement for missing/failed mechanics after combat starts.
+            floor.Boss.UpdateApproach(dungeon);
+            return "Boss floor - approaching supported module load range";
+        }
+        floor.CancelCoordMovement();
+        return $"Boss floor - {readiness.Kind.ToString().ToLowerInvariant()}: {readiness.Detail}";
     }
 
     public void Stop() => floor.CancelCoordMovement();

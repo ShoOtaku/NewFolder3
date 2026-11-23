@@ -29,8 +29,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
         private readonly Func<IBossMovementStrategy>? _spinBossMovementFactory;
 		private readonly NativeDeepDungeonLogMessageSource _logMessageSource;
 		private NavigationHelper? _navHelper;
-		private NavigationDriver? _navDriver;
-		private AutoPilotExecutor? _executor => _floorRuntime?.Executor;
 		private ChatWatchers? _chatWatchers;
 		private DeepDungeonRunRecorder? _runRecorder;
 		private FloorEvidenceJournal? _floorEvidenceJournal;
@@ -43,49 +41,47 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
         private Vector3 ResolvePassageWalkingPosition(Vector3 actor) =>
             _passageDestination.Resolve(actor, _floorRuntime?.Generation ?? -1);
 		private long _nextFloorGeneration;
-		private long _nextRoomSearchRequestId;
 		private string _status = "Idle";
 		private bool _wasTransitioning;
 		private byte _lastGraphPendingFloor = 255;
 		private uint _lastGraphPendingDungeonId;
-		private string _activeHoardEvidenceWaitEventType = string.Empty;
-		private string _activeHoardEvidenceWaitState = string.Empty;
-		private DateTime _activeHoardEvidenceWaitStartedAt = DateTime.MinValue;
 		private NativeIntuitionState? _lastNativeIntuitionState;
 		private bool _nativeIntuitionActive;
 		private bool _nativeIntuitionSampleAvailable;
 		private bool? _lastNativeIntuitionReadAvailable;
 		private DateTime _nextNativeIntuitionPollAt = DateTime.MinValue;
-		private DateTime _lastPassageExitDelayEventAt = DateTime.MinValue;
-		private DateTime _lastChaseTargetEventAt = DateTime.MinValue;
-		private string _lastChaseTargetEventKey = string.Empty;
-		private string _lastChaseAcquisitionFailureKey = string.Empty;
-		private DateTime _lastPassageNavigationEventAt = DateTime.MinValue;
-		private string _lastPassageNavigationEventKey = string.Empty;
 		private DateTime _lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 		private DateTime _lastObjectEvidenceUnavailableAt = DateTime.MinValue;
-        private bool yieldingToPromeRadar;
-        private bool waitingForCast;
-		private bool _controlledReusableSaveSurveyArmed;
 		private static readonly TimeSpan NativeIntuitionPollInterval = TimeSpan.FromMilliseconds(250);
 		private readonly record struct NativeIntuitionState(bool IsActive, int Count, bool IsUsable);
-		private FloorPlanningSession PlanningState =>
-			_floorRuntime?.PlanningState ?? throw new InvalidOperationException("No active floor planning state.");
-		private PendingIntuitionState PendingIntuition =>
-			_floorRuntime?.PendingIntuition ?? throw new InvalidOperationException("No active floor Intuition attempt state.");
 		public FloorPhase CurrentPhase => _phase;
         internal Vector3? CameraChestPosition => _floorRuntime?.CameraChestPosition;
         internal bool UsesEncounterCoordination =>
             _floorRuntime is { IsDisposed: false, Boss.UsesSpinStrategy: false, UsesEncounterCoordination: true };
         internal bool BossRequestsNorthCamera => _floorRuntime?.Boss?.RequestsNorthCamera == true;
-        internal bool OwnsDirectFloorMovement => _floorRuntime is { IsDisposed: false, UsesSiteCoordination: true };
         internal object? BossMovementSnapshot => _floorRuntime is { Kind: FloorRuntimeKind.Boss, IsDisposed: false } runtime
             ? new { strategy = runtime.Boss.MovementStrategyName, running = runtime.Boss.MovementStarted,
-                northCamera = runtime.Boss.RequestsNorthCamera }
+                northCamera = runtime.Boss.RequestsNorthCamera, combatReady = runtime.Boss.AllowsCombatAssist }
             : null;
         public void SuspendBossMovement() => _floorRuntime?.Boss?.SuspendMovement();
+
+        internal void SuspendForMissingDutyObservation()
+        {
+            _observingInheritance = false;
+            _nativeIntuitionSampleAvailable = false;
+            _nextNativeIntuitionPollAt = DateTime.MinValue;
+            _floorRuntime?.Survey.CancelInheritedObservation();
+            CancelActiveMovement();
+        }
 		public string Status => _status;
-		public string? RunRecorderPath => _runRecorder?.FilePath;
+		private string? lastRecorderPath;
+        public string? RunRecorderPath => _runRecorder?.FilePath ?? lastRecorderPath;
+        internal bool OwnsDirectFloorMovement => _floorRuntime is { IsDisposed: false } runtime && !runtime.Boss.UsesPromeRadar;
+        public void YieldToPromeRadar()
+        {
+            _floorRuntime?.SetExternalMovement(true);
+            _navHelper?.YieldMovement();
+        }
 		public ObjectiveArbiterDecision CurrentObjectiveDecision => _floorRuntime?.Objectives.ObjectiveDecision ?? default;
 		public bool AllowsCombatChannel =>
 			_floorRuntime is { IsDisposed: false } &&
@@ -93,13 +89,15 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			 (_floorRuntime.Objectives.HasObjectiveDecision &&
 			  _floorRuntime.Objectives.ObjectiveDecision.Channels.Combat != CommandChannelPermission.Blocked));
 		public bool AllowsMovementChannel =>
+                !waitingForCast && !waitingForPromeRadar &&
 			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
 			_floorRuntime.Objectives.ObjectiveDecision.Channels.Movement != CommandChannelPermission.Blocked;
 		public bool AllowsTransitionChannel =>
 			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
 			_floorRuntime.Objectives.ObjectiveDecision.Channels.Transition == CommandChannelPermission.PrimaryObjective;
 		public bool AllowsChestSidecarInteraction =>
-            !PromeRadarMovementGate.IsBlocked && !yieldingToPromeRadar && !waitingForCast && _floorRuntime?.Objectives.HasObjectiveDecision == true &&
+                !waitingForCast && !waitingForPromeRadar &&
+			_floorRuntime?.Objectives.HasObjectiveDecision == true &&
 			_floorRuntime.Objectives.ObjectiveDecision.Channels.Interaction != CommandChannelPermission.Blocked;
 
 		public FloorPhaseController(
@@ -114,71 +112,49 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
             _spinBossMovementFactory = spinBossMovementFactory;
 		}
 
-		public object ArmControlledReusableSaveSurveyCapture()
-		{
-			if (_floorRuntime != null)
-			{
-				return new
-				{
-					ok = false,
-					error = "Controlled reusable-save survey capture must be armed before the stable floor session is created."
-				};
-			}
-
-			_controlledReusableSaveSurveyArmed = true;
-			Service.Log.Info("[FloorEvidenceJournal] Armed one controlled reusable-save survey capture; runtime gate requires Pilgrim's Traverse floor <30.");
-			return new
-			{
-				ok = true,
-				mode = FloorEvidenceAcquisitionMode.ControlledReusableSaveSurvey.ToString(),
-				constraint = "Pilgrim's Traverse floor <30",
-				oneShot = true
-			};
-		}
+        private (uint Dungeon, byte Floor) _intuitionScope;
+        private bool _observingInheritance;
+        private bool? _earlyIntuitionResult;
+        private long _intuitionScopeStartedAt;
+        private bool _intuitionScopeDuringTransition;
 
 		public void Initialize(RunContext context)
 		{
 			Dispose();
 			_ctx = context;
+            _intuitionScope = default;
+            _earlyIntuitionResult = null;
+            _intuitionScopeDuringTransition = false;
+            _observingInheritance = false;
+            soloDeadSince = null;
+            _waitingForRevival = false;
+            waitingForCast = false;
+            waitingForPromeRadar = false;
 			context.RecordDiagnostic = RecordReplayEvent;
 			_chaseHelper.CanSelectNewTarget = context.CanSelectNewCombatTarget;
-			_ctx.ClearPreferredAggroTarget();
 			_navHelper = new NavigationHelper(_ctx.Navigator);
             _terminalRooms = new TerminalRoomController(context, _navHelper, status => _status = status,
                 RecordReplayEvent, DestroyFloorRuntime, ResolvePassageWalkingPosition);
-			_navDriver = new NavigationDriver(_navHelper);
 			DisposeChatWatchers();
 			_chatWatchers = new ChatWatchers(_logMessageSource);
 			_chatWatchers.StateChanged += OnChatWatchersStateChanged;
 			CloseRunRecording("controller-reinitialized");
 			_chaseHelper.Reset();
 			_phase = FloorPhase.FloorSetup;
-			_nextRoomSearchRequestId = 0;
 			_wasTransitioning = false;
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
-			_activeHoardEvidenceWaitEventType = string.Empty;
-			_activeHoardEvidenceWaitState = string.Empty;
-			_activeHoardEvidenceWaitStartedAt = DateTime.MinValue;
 			_lastNativeIntuitionState = null;
 			_nativeIntuitionActive = false;
 			_nativeIntuitionSampleAvailable = false;
 			_lastNativeIntuitionReadAvailable = null;
 			_nextNativeIntuitionPollAt = DateTime.MinValue;
-			_lastPassageExitDelayEventAt = DateTime.MinValue;
-			_lastChaseTargetEventAt = DateTime.MinValue;
-			_lastChaseTargetEventKey = string.Empty;
-			_lastChaseAcquisitionFailureKey = string.Empty;
-			_lastPassageNavigationEventAt = DateTime.MinValue;
-			_lastPassageNavigationEventKey = string.Empty;
 			_lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 			_lastObjectEvidenceUnavailableAt = DateTime.MinValue;
-            yieldingToPromeRadar = false;
-            waitingForCast = false;
 			_floorRuntime?.ResetPermissionBlocks();
 			_floorRuntime?.ResetEngagedTargetProgress();
-			_floorRuntime?.ResetPatrolPlan();
 			_runRecorder = new DeepDungeonRunRecorder(BuildRecorderSessionName());
+            lastRecorderPath = _runRecorder.FilePath;
 			try
 			{
 				_floorEvidenceJournal = new FloorEvidenceJournal(_floorEvidenceObserver);
@@ -199,46 +175,31 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			Service.Log.Info($"[FloorPhase] DD run recorder -> {_runRecorder.FilePath}");
 		}
 
-        internal void YieldToPromeRadar()
-        {
-            if (_floorRuntime is { Kind: FloorRuntimeKind.Normal } runtime && !yieldingToPromeRadar)
-            {
-                if (!waitingForCast) runtime.SetExternalMovement(true);
-                yieldingToPromeRadar = true;
-                RecordReplayEvent("mp-normal-floor-movement", new { floor = runtime.Floor, mpOwnsMovement = true, source = "synchronous-handoff" });
-            }
-            _navHelper?.YieldMovement();
-        }
-
 		public unsafe void Update(IFramework _)
 		{
-			DiagnosticGate = "floor-update";
 			_floorRuntime?.ItemUse.BeginUpdate();
 			if (_ctx == null || _terminalRooms == null)
-			{
-				DiagnosticGate = "floor-context-unavailable";
 				return;
-			}
 
 			if (!_ctx.Duty.IsInDuty)
 			{
 				DestroyFloorRuntime(0, "outside-duty");
+                _intuitionScope = default;
+                _nativeIntuitionSampleAvailable = false;
 				return;
 			}
 
 			var efw = FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework.Instance();
 			if (efw == null)
 			{
-				DiagnosticGate = "event-framework-unavailable";
-                SuspendBossMovement();
+                SuspendForMissingDutyObservation();
 				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				return;
 			}
 			var dd = efw->GetInstanceContentDeepDungeon();
 			if (dd == null)
 			{
-				DiagnosticGate = "deep-dungeon-state-unavailable";
-                SuspendBossMovement();
+                SuspendForMissingDutyObservation();
 				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				return;
 			}
@@ -249,7 +210,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				ObserveDutyTransitionState(dd->Floor, isTransitioning);
 				if (TryMarkPlayerDeathFatal(dd))
 				{
-					DiagnosticGate = "player-dead";
 					if (_ctx.FarmingPlan == null)
 						DestroyFloorRuntime(dd->Floor, "player-death");
 					return;
@@ -257,16 +217,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 				if (isTransitioning)
 				{
-					DiagnosticGate = "floor-transition";
+                    if (!_intuitionScopeDuringTransition) _observingInheritance = false;
 					DestroyFloorRuntime(dd->Floor, "transitioning");
 					_status = "Waiting for map to load...";
 					_navHelper?.Cancel();
 					return;
 				}
 
+                DiagnosticGate = "floor-observation";
+                // The native floor identifies evidence before the player position
+                // is stable enough for movement.
+                ObserveIntuitionScope(dd);
+                _intuitionScopeDuringTransition = false;
 				if (!IsLoadedFloorReady(dd))
 				{
-					DiagnosticGate = "waiting-floor-state";
 					DestroyFloorRuntime(dd->Floor, "floor-not-ready");
 					_status = "Waiting for floor state...";
 					_navHelper?.Cancel();
@@ -278,29 +242,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                     DeepDungeon.Fsd.Runtime.DeepDungeonFloorKind.Result)
                 {
                     _terminalRooms.UpdateResultRoom();
-                    DiagnosticGate = "result-room";
                     return;
                 }
-                if (_terminalRooms.TryUpdatePt99ResultTransfer(dd))
-                {
-                    DiagnosticGate = "result-room-transfer";
-                    return;
-                }
+                if (_terminalRooms.TryUpdatePt99ResultTransfer(dd)) return;
 				bool nativeIntuitionActive = false;
 				bool nativeStateAvailable = !requiresIntuitionState ||
 				                            TryGetNativeIntuitionState(out nativeIntuitionActive);
-				var readyIntuition = ReadyFloorIntuitionPlanner.Decide(new ReadyFloorIntuitionSnapshot(
-					nativeStateAvailable,
-					requiresIntuitionState && nativeIntuitionActive));
-				if (readyIntuition.Kind == ReadyFloorIntuitionDecisionKind.Wait)
-				{
-					DiagnosticGate = "waiting-native-intuition";
-					_floorRuntime?.Objectives.ClearObjectiveDecision();
-					_status = "Waiting for native Intuition state...";
-					RecordNativeIntuitionState("native-state-unavailable", force: false, nativeStateAvailable, nativeIntuitionActive);
-					return;
-				}
-				_nativeIntuitionActive = readyIntuition.IntuitionActive;
+                if (!nativeStateAvailable)
+                    _observingInheritance = false;
 
 				if (_floorRuntime != null &&
 				    (_floorRuntime.Floor != dd->Floor ||
@@ -312,10 +261,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (_floorRuntime == null)
 				{
 					if (!TryBuildFloorRuntime(dd))
-					{
-						DiagnosticGate = "waiting-floor-runtime";
 						return;
-					}
 				}
 
 				var activeRuntime = _floorRuntime;
@@ -324,19 +270,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				activeRuntime.RunTelemetry?.SampleStable(DateTime.UtcNow);
 				activeRuntime.ResolvePendingFloorItemUse(dd);
 				if (activeRuntime.Kind == FloorRuntimeKind.Normal && !RefreshFloorObjectEvidence(dd, activeRuntime))
-				{
-					DiagnosticGate = "waiting-object-evidence";
 					return;
-				}
+                if (!_observingInheritance)
+                    activeRuntime.Survey.CancelInheritedObservation();
 				activeRuntime.Survey.ResolveInheritedIntuition();
-				if (_ctx.ControlledPtSurvey?.LeaveRequested == true)
-				{
-					DiagnosticGate = "controlled-survey-leave-requested";
-					CancelActiveMovement();
-					activeRuntime.Objectives.ClearObjectiveDecision();
-					_status = "Controlled PT capture complete; abandoning before further floor movement";
-					return;
-				}
+                if (activeRuntime.Survey.InheritedIntuitionDecision.HasValue) _observingInheritance = false;
 				activeRuntime.ObserveFloorRuntimeNativeIntuitionEdge();
 
 				// Knowledge ingest: once per outer update, after shared
@@ -346,35 +284,28 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				if (activeRuntime.UsesSiteCoordination)
 					activeRuntime.IngestKnowledge(dd);
 
-                // Keep MP smart movement on at every floor. Only its active
-                // dodge input preempts FSD travel; observation and combat remain live.
-                bool mpOwnsMovement = activeRuntime.Kind == FloorRuntimeKind.Normal && PromeRadarMovementGate.IsBlocked;
-                bool castWait = !mpOwnsMovement && CastMovementGuard.ShouldWait();
+                bool mpYield = activeRuntime.Kind == FloorRuntimeKind.Normal && PromeRadarMovementGate.ShouldYield();
+                bool castWait = CastMovementGuard.ShouldWait();
                 activeRuntime.Boss.ObservePromeRadarApproachBoundary(castWait);
-                if ((mpOwnsMovement || castWait) != (yieldingToPromeRadar || waitingForCast))
+                activeRuntime.SetExternalMovement(mpYield || castWait);
+                if (mpYield != waitingForPromeRadar)
                 {
-                    activeRuntime.SetExternalMovement(mpOwnsMovement || castWait);
-                    if (mpOwnsMovement || castWait) _navHelper?.Cancel();
-                }
-                if (mpOwnsMovement != yieldingToPromeRadar)
-                {
-                    yieldingToPromeRadar = mpOwnsMovement;
-                    RecordReplayEvent("mp-normal-floor-movement", new { floor = dd->Floor, mpOwnsMovement });
+                    waitingForPromeRadar = mpYield;
+                    RecordReplayEvent("mp-normal-floor-movement", new { active = mpYield, floor = dd->Floor });
                 }
                 if (castWait != waitingForCast)
                 {
                     waitingForCast = castWait;
-                    var player = Service.LocalPlayer;
-                    RecordReplayEvent("fsd-cast-movement-wait", new { waiting = castWait,
-                        action = player?.CastActionId, remaining = player == null ? 0 : player.TotalCastTime - player.CurrentCastTime });
+                    RecordReplayEvent("fsd-cast-movement-wait", new { active = castWait, floor = dd->Floor });
                 }
-                if (mpOwnsMovement || castWait)
+                if (mpYield || castWait)
                 {
-                    activeRuntime.RefreshObjectiveDecision(dd);
+                    _navHelper?.Cancel();
                     DiagnosticGate = castWait ? "waiting-cast" : "prome-radar-dodge";
-                    _status = castWait ? "Waiting for cast completion before moving" : "PromeRadar dodging; FSD travel suspended";
+                    _status = castWait ? "Waiting for cast completion" : "PromeRadar owns movement";
                     return;
                 }
+                DiagnosticGate = "floor-execution";
 
 				// Observation -> work decision -> completion check -> exec:
 				// the site scheduler commits THIS update's selected work
@@ -383,15 +314,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				    _phase == FloorPhase.FloorActive)
 					activeRuntime.PrepareNormalDecision(dd);
 
-				if (_ctx?.ControlledPtSurvey == null &&
-				    !activeRuntime.UsesSiteCoordination &&
-				    activeRuntime.TryReconcileDelayedHoardEvidence(dd))
-				{
-					activeRuntime.RefreshObjectiveDecision(dd);
-					DiagnosticGate = "waiting-delayed-hoard-evidence";
-					return;
-				}
-
+                if (_ctx.StatusIsError) { DiagnosticGate = "scenario-error"; return; }
                 if (activeRuntime.TryFinishHarvest(dd)) return;
                 if (activeRuntime.TryUseHohMagicite(dd))
                 {
@@ -409,6 +332,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						break;
 					case FloorPhase.BossFloor:
 						activeRuntime.Boss.Update(dd);
+                        if (activeRuntime.Boss.MovementFailure is { } movementFailure && _ctx != null)
+                        {
+                            _ctx.StatusLine = movementFailure;
+                            _ctx.StatusIsError = true;
+                        }
 						break;
 					case FloorPhase.Done:
 						break;
@@ -421,7 +349,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                 SuspendBossMovement();
 				_floorRuntime?.Objectives.ClearObjectiveDecision();
 				DiagnosticGate = "floor-update-exception";
-				ReportDiagnosticError("floor-update", ex);
+                ReportDiagnosticError("floor-update", ex);
 			}
 		}
 
@@ -429,8 +357,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		{
 			DestroyFloorRuntime(0, "controller-disposed");
             _terminalRooms = null;
-			_controlledReusableSaveSurveyArmed = false;
-			EndHoardEvidenceWait("controller-disposed");
 			CancelActiveMovement();
 			_chaseHelper.Reset();
 			DisposeChatWatchers();
@@ -475,7 +401,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						reason,
 						_ctx?.DetailedMap.ScenarioKey,
 						_ctx?.DetailedMap.Policy == DetailedMapRuntimePolicy.DetailedMap,
-						_ctx?.ControlledPtSurvey != null));
+						ControlledSurvey: false));
 			}
 			catch (Exception ex)
 			{
@@ -486,20 +412,22 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		public void CancelActiveMovement()
 		{
             SuspendBossMovement();
-			_floorRuntime?.EndActiveWaypointTelemetry(RunWaypointTerminalOutcome.Aborted, "MovementCanceled");
 			_floorRuntime?.CancelCoordMovement();
 			bool navigationActive = _navHelper?.HasActiveTarget == true;
-			_floorRuntime?.ResetTaskRunner(cancelNavigation: false);
-			_navDriver?.Reset();
 			if (navigationActive)
 				_navHelper?.Cancel();
-			_floorRuntime?.ClearActiveWaypoint();
 		}
 
 		public bool TickCombatChannel(out string status)
 		{
 			status = string.Empty;
 			var context = _ctx;
+			if (_floorRuntime is { Kind: FloorRuntimeKind.Boss } bossRuntime && !bossRuntime.Boss.AllowsCombatAssist)
+			{
+				context?.CombatAssist.Suspend();
+				status = _status;
+				return false;
+			}
 			if (context == null || context.FarmingPlan?.ReusesSave == true || !AllowsCombatChannel)
 				return false;
 
@@ -511,38 +439,22 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return true;
 		}
 
-		public Vector3? CachedHoardIndicatorPos => _executor?.CachedHoardIndicatorPos;
+        public Vector3? CachedHoardIndicatorPos => _ctx?.Knowledge.Floor?.ExactHoardPosition;
 
-		public IReadOnlyList<Vector3> ObservedSightTrapPositions =>
-			_executor?.ObservedSightTrapPositions ?? Array.Empty<Vector3>();
+        public IReadOnlyList<Vector3> ObservedSightTrapPositions =>
+            _floorRuntime?.ObservedSightTrapPositions ?? Array.Empty<Vector3>();
 
-		public AutoPilotExecutor.AutoPilotDebugSnapshot? GetDebugSnapshot()
-		{
-			var snap = _executor?.GetDebugSnapshot();
-			if (snap != null)
-			{
-				snap.Phase = _phase;
-				snap.TaskPhase = _floorRuntime?.CurrentTaskPhase ?? TaskPhase.Idle;
-				snap.Status = _status;
-			}
-			return snap;
-		}
+        internal FloorWorkDebugSnapshot? GetDebugSnapshot() =>
+            _floorRuntime?.GetDebugSnapshot();
 
 		private unsafe bool RefreshFloorObjectEvidence(InstanceContentDeepDungeon* dd, FloorExplorationController runtime)
 		{
-			runtime.Survey.TryArmControlledCandidateObjectAudit(dd);
-			IReadOnlyList<ControlledCandidateAuditPoint>? auditUniverse =
-				_ctx?.ControlledPtSurvey != null &&
-				runtime.Survey.ControlledCandidateObjectAuditArmed
-					? runtime.Survey.ControlledCandidateObjectAuditUniverse
-					: null;
-			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId, auditUniverse);
+			var refresh = runtime.ObjectEvidence.RefreshIfDue(runtime.DungeonId);
 			if (refresh.Attempted)
 			{
 				runtime.ObserveCurrentRoom(dd);
 				runtime.Survey.ObserveFloorEvidence(dd);
 				runtime.PublishAuthoritativeRunFloorStateIfChanged(dd);
-				runtime.Survey.ObserveControlledCandidateObjectMatches(refresh);
 			}
 			var snapshot = runtime.ObjectEvidence.Current;
 			var now = DateTime.UtcNow;
@@ -596,48 +508,20 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return false;
 		}
 
-		private unsafe FloorEvidenceAcquisitionMode ConsumeFloorEvidenceAcquisitionMode(InstanceContentDeepDungeon* dd)
-		{
-			if (_ctx?.ControlledPtSurvey != null)
-				return FloorEvidenceAcquisitionMode.ControlledReusableSaveSurvey;
-
-			if (!_controlledReusableSaveSurveyArmed)
-				return FloorEvidenceAcquisitionMode.NaturalGameplay;
-
-			_controlledReusableSaveSurveyArmed = false;
-			if (dd->DeepDungeonId == DungeonCatalog.PilgrimsTraverse.DungeonId && dd->Floor < 30)
-				return FloorEvidenceAcquisitionMode.ControlledReusableSaveSurvey;
-
-			Service.Log.Error(
-				$"[FloorEvidenceJournal] Rejected controlled reusable-save survey tag for dungeon={dd->DeepDungeonId}, floor={dd->Floor}; required Pilgrim's Traverse floor <30.");
-			return FloorEvidenceAcquisitionMode.NaturalGameplay;
-		}
-
 		private unsafe bool TryBuildFloorRuntime(InstanceContentDeepDungeon* dd)
 		{
 			var readyAtUtc = DateTime.UtcNow;
 			bool isBossFloor = DeepDungeonHelper.IsBossFloor(dd->DeepDungeonId, dd->Floor);
 			NormalFloorGraphSnapshot? normalGraph = null;
 			var runtimeKind = isBossFloor ? FloorRuntimeKind.Boss : FloorRuntimeKind.Normal;
-			bool controlledInheritedFloor =
-				_ctx?.ControlledPtSurvey != null &&
-				!isBossFloor &&
-				dd->Floor > ControlledPtSurveyPolicy.FirstFloor &&
-				dd->Floor <= ControlledPtSurveyPolicy.LastResearchFloor;
-			var controlledNativeGate = controlledInheritedFloor
-				? ControlledPtSurveyPolicy.DecideInheritedNativeGate(
-					_nativeIntuitionSampleAvailable,
-					_nativeIntuitionActive)
-				: ControlledPtInheritedNativeGateAction.ProceedInherited;
-			if (controlledNativeGate == ControlledPtInheritedNativeGateAction.WaitForNativeState)
-			{
-				_status = "Controlled PT: waiting for authoritative inherited Intuition state";
-				return false;
-			}
-
-			if (FloorMapKey.For(dd) is { } key && FloorMap.Get(key) == null)
+			if (FloorMapKey.For(dd) is { } key && FloorMap.Get(key, dd->Floor) == null)
 			{
 				_status = FloorMap.Error;
+                if (FloorMap.Failed && _ctx != null)
+                {
+                    _ctx.StatusLine = _status;
+                    _ctx.StatusIsError = true;
+                }
 				_navHelper?.Cancel();
 				return false;
 			}
@@ -669,9 +553,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				readyAtUtc,
 				normalGraph,
 				isBossFloor ? null : _nativeIntuitionActive,
-				_ctx?.DetailedMap ??
-					throw new InvalidOperationException(
-						"Floor runtime requires the run-scoped detailed-map policy."),
 				_runTelemetryObserver == null
 					? null
 					: new RunFloorTelemetryTrace(
@@ -681,20 +562,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						((dd->Floor - 1) / 10) * 10 + 1,
 						dd->Floor,
 						floorGeneration,
-						_ctx?.ControlledPtSurvey != null,
+						false,
 						!isBossFloor),
                 new FloorItemExecutor(_ctx!, _pomanderManager, _chatWatchers, () => _phase,
                     (checkpoint, force) => RecordNativeIntuitionState(checkpoint, force), RecordReplayEvent),
-                _ctx!, _navHelper!, _navDriver!, _chaseHelper, _pomanderManager, _chatWatchers,
+                _ctx!, _chaseHelper, _pomanderManager, _chatWatchers,
                 _runTelemetryObserver, _passageDestination, () => _phase, value => _phase = value,
                 () => _status, value => _status = value, () => _nativeIntuitionActive,
                 CancelActiveMovement, RecordReplayEvent,
                 (checkpoint, force) => RecordNativeIntuitionState(checkpoint, force),
-                RecordHoardEvidenceWait, EndHoardEvidenceWait, SnapshotRunOptions,
-                () => ++_nextRoomSearchRequestId,
-                RecordPassageExitDelayedByCombat, RecordChaseTargetEvent,
-                RecordChaseAcquisitionFailure, RecordPassageNavigationEvent,
-                () => _lastChaseAcquisitionFailureKey = string.Empty, RecordNativeIntuitionState);
+                SnapshotRunOptions, RecordNativeIntuitionState);
             _floorRuntime.AttachBoss(new FloorBossController(dd->Floor, _ctx!, _navHelper!,
                 _pomanderManager, _floorRuntime.Items,
                 (operation, objective) => _floorRuntime.RequireMovementPermission(operation, objective),
@@ -704,16 +581,14 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
             _floorRuntime.AttachSurvey(new FloorSurveyController(
                 _floorRuntime.Generation, _floorRuntime.DungeonId, _floorRuntime.Floor, !isBossFloor,
                 _floorRuntime.ReadyAtUtc, normalGraph, _floorRuntime.ObjectEvidence, _floorRuntime.Items,
-                _ctx!, _floorRuntime.Executor, _pomanderManager, _chatWatchers, _navDriver, _floorEvidenceJournal,
-                () => _phase, () => _nativeIntuitionActive, () => _status, value => _status = value,
-                CancelActiveMovement, RecordReplayEvent, _floorRuntime.RequestPlanRefresh, _floorRuntime.HandleNoHoardEvidenceInvalidated,
-                outcome => EndHoardEvidenceWait(outcome), _floorRuntime.NavigateToRoom));
+                _ctx!, _pomanderManager, _chatWatchers,
+                () => _phase, () => _nativeIntuitionActive, value => _status = value,
+                RecordReplayEvent, _floorRuntime.RequestPlanRefresh));
             _floorRuntime.Survey.InitializeNaturalInventory();
 			if (runtimeKind == FloorRuntimeKind.Normal)
 			{
 				try
 				{
-					var acquisitionMode = ConsumeFloorEvidenceAcquisitionMode(dd);
 					var roomBindings = FloorEvidenceSession.BuildRoomBindings(dd, normalGraph!.ReachableRooms);
 					_floorRuntime.Survey.OpenEvidenceSession(new FloorEvidenceSession(
 						FsdEngineIdentity.InformationalVersion,
@@ -721,16 +596,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 						dd->Floor,
 						Service.ClientState.TerritoryType,
 						dd->ActiveLayoutIndex,
-						acquisitionMode,
+						FloorEvidenceAcquisitionMode.NaturalGameplay,
 						roomBindings));
-					if (_ctx?.ControlledPtSurvey is { } controlled)
-					{
-						_floorRuntime.Survey.EvidenceSession!.ConfigureControlledSurvey(
-							ControlledPtSurveyPolicy.IsResearchFloor(dd->Floor)
-								? ControlledSurveyFloorRole.SelectedTarget
-								: ControlledSurveyFloorRole.Transit,
-							controlled.ResearchFloors);
-					}
 				}
 				catch (Exception ex)
 				{
@@ -740,34 +607,19 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_lastObjectEvidenceTelemetryAt = DateTime.MinValue;
 			_lastObjectEvidenceUnavailableAt = DateTime.MinValue;
 			_phase = isBossFloor ? FloorPhase.BossFloor : FloorPhase.FloorSetup;
-			_floorRuntime?.ResetTaskRunner();
-			_navDriver?.Cancel();
 			_chaseHelper.Reset();
-			_floorRuntime?.ResetPatrolPlan();
 			_floorRuntime?.ResetPermissionBlocks();
-			_ctx?.ClearPreferredAggroTarget();
-			PlanningState.ObserveHoardCount(dd->HoardCount);
+			if (_ctx != null) _ctx.ClearingTargetId = null;
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
-			_lastPassageExitDelayEventAt = DateTime.MinValue;
-			_lastChaseAcquisitionFailureKey = string.Empty;
-			_floorRuntime?.ResetEngagedTargetProgress();
-			bool controlledFirstFloor =
-				_ctx?.ControlledPtSurvey != null &&
-				!isBossFloor &&
-				dd->Floor == ControlledPtSurveyPolicy.FirstFloor;
-			_floorRuntime!.Survey.ConfigureCurrentIntuitionUse(controlledFirstFloor ||
-                controlledNativeGate == ControlledPtInheritedNativeGateAction.ReactivateWithCurrentUse);
-			_chatWatchers?.BeginReadyFloor(
-				controlledFirstFloor
-					? false
-					: !isBossFloor && _nativeIntuitionActive);
-			if (!controlledFirstFloor && !isBossFloor && _nativeIntuitionActive)
-			{
-				_floorRuntime.Survey.BeginInheritedIntuition();
-			}
+			_floorRuntime!.ResetEngagedTargetProgress();
+			_chatWatchers?.BeginReadyFloor();
+            if (!isBossFloor && _observingInheritance)
+                _floorRuntime.Survey.BeginInheritedIntuition(_intuitionScopeStartedAt, _earlyIntuitionResult == true);
+            if (_earlyIntuitionResult is { } hasHoard)
+                _ctx!.Knowledge.Floor?.ObserveIntuitionResult(hasHoard);
 			_status = isBossFloor ? "Boss floor" : $"Floor {_floorRuntime.Floor} - initializing";
-			RecordNativeIntuitionState("stable-floor-session-created", force: true, nativeStateAvailable: true, nativeIntuitionActive: _nativeIntuitionActive);
+			RecordNativeIntuitionState("stable-floor-session-created", force: true, nativeStateAvailable: isBossFloor || _nativeIntuitionSampleAvailable, nativeIntuitionActive: _nativeIntuitionActive);
 			Service.Log.Info($"[FloorPhase] Floor changed to {_floorRuntime.Floor} (generation {_floorRuntime.Generation})");
 			RecordReplayEvent("floor-changed", new
 			{
@@ -851,6 +703,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
 		private void DestroyFloorRuntime(byte observedFloor, string reason)
 		{
+            waitingForCast = false;
+            waitingForPromeRadar = false;
+            waitingForCast = false;
+            waitingForPromeRadar = false;
 			var runtime = _floorRuntime;
 			if (runtime == null)
 				return;
@@ -869,26 +725,17 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 					Service.Log.Error($"[FloorEvidenceJournal] Failed to finalize floor {runtime.Floor} generation {runtime.Generation}: {ex}");
 				}
 			}
-			EndHoardEvidenceWait(reason);
-			_floorRuntime?.PreemptActiveObjectiveExecutions($"FloorRuntimeDestroyed:{reason}");
-			_floorRuntime?.EndActiveWaypointTelemetry(
-				RunWaypointTerminalOutcome.Aborted,
-				$"FloorRuntimeDestroyed:{reason}");
 			CancelActiveMovement();
 			ObserveFloorTerminalTelemetry(runtime, reason);
 			ObserveFloorTelemetryBoundary(runtime, reason);
-			_chatWatchers?.CancelExpectedIntuitionResult(runtime.Survey.InheritedIntuitionAttemptId);
 			if (runtime.ItemUse.Pending is { } pendingFloorItemUse)
 				runtime.Items.CancelPendingIntuitionAttempt(pendingFloorItemUse);
 			runtime.Dispose();
 			_floorRuntime = null;
-			yieldingToPromeRadar = false;
-			waitingForCast = false;
 			_phase = FloorPhase.FloorSetup;
 			_chaseHelper.Reset();
-			_floorRuntime?.ResetPatrolPlan();
 			_floorRuntime?.ResetPermissionBlocks();
-			_ctx?.ClearPreferredAggroTarget();
+			if (_ctx != null) _ctx.ClearingTargetId = null;
 			_lastGraphPendingFloor = 255;
 			_lastGraphPendingDungeonId = 0;
 
@@ -921,56 +768,98 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			return $"{mode}-ddrun";
 		}
 
+        private unsafe void ObserveIntuitionScope(InstanceContentDeepDungeon* dd)
+        {
+            var scope = (dd->DeepDungeonId, dd->Floor);
+            if (_intuitionScope == scope) return;
+
+            bool carried = _intuitionScope.Dungeon == scope.Item1 &&
+                _intuitionScope.Floor + 1 == scope.Item2 && _nativeIntuitionSampleAvailable && _nativeIntuitionActive;
+            _intuitionScope = scope;
+            _earlyIntuitionResult = null;
+            _intuitionScopeStartedAt = Environment.TickCount64;
+            _nativeIntuitionSampleAvailable = _pomanderManager.TryIsActive(
+                FloorInitPlanner.IntuitionPomanderSlotIndex, out _nativeIntuitionActive);
+            _observingInheritance = carried && _nativeIntuitionSampleAvailable && _nativeIntuitionActive;
+            _nextNativeIntuitionPollAt = DateTime.MinValue;
+        }
+
+        private unsafe bool ObserveScopedIntuitionMessage(ChatWatchers.StateChangedInfo info)
+        {
+            var efw = FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework.Instance();
+            var dd = efw == null ? null : efw->GetInstanceContentDeepDungeon();
+            if (_ctx == null || dd == null || dd->Floor == 0 || dd->DeepDungeonId == 0)
+                return false;
+            var scope = (dd->DeepDungeonId, dd->Floor);
+            bool changingAreas = _ctx.Duty.IsTransitioning || DutyState.IsClientTransitioning;
+            if (changingAreas && (_floorRuntime is { } last && last.DungeonId == scope.Item1 &&
+                    last.Floor == scope.Item2 ||
+                _intuitionScope == scope && !_intuitionScopeDuringTransition))
+                return false;
+
+            if (_intuitionScope != scope)
+                _intuitionScopeDuringTransition = changingAreas;
+            ObserveIntuitionScope(dd);
+            bool positive = info.Reason == "LogMessage7272";
+            if (info.EvidenceTargetFloor != 0 && info.EvidenceTargetFloor != dd->Floor)
+            {
+                // A receipt for the prior floor cannot establish presence here.
+                // A positive message at this boundary invalidates an absence inference.
+                if (positive) _observingInheritance = false;
+                return false;
+            }
+            var runtimeInScope = _floorRuntime is { IsDisposed: false } current &&
+                current.Floor == dd->Floor && current.DungeonId == dd->DeepDungeonId ? current : null;
+            bool inherited = _observingInheritance && !info.EvidenceAccepted;
+            if (inherited)
+            {
+                if (runtimeInScope != null)
+                    runtimeInScope.Survey.ObserveInheritedMessage(positive);
+                // An unexpected negative during loading cannot later count as silence.
+                else if (!positive)
+                    _observingInheritance = false;
+            }
+            bool floorEvidence = positive || !inherited;
+            if (floorEvidence)
+            {
+                _earlyIntuitionResult = positive || _earlyIntuitionResult == true;
+                if (runtimeInScope != null && _ctx.Knowledge.Floor?.ObserveIntuitionResult(positive) == true)
+                {
+                    runtimeInScope.ObjectEvidence.Invalidate();
+                    RequestPlanRefresh(info.Reason);
+                }
+            }
+            runtimeInScope?.Survey.EvidenceSession?.ObserveSemanticMessage(positive ? 7272u : 7273u, info.EvidenceAccepted);
+            if (runtimeInScope != null &&
+                _chatWatchers?.CompleteExpectedIntuitionResult(info.EvidenceAttemptId) == true)
+            {
+                runtimeInScope.PendingIntuition.TryMarkResolved(info.EvidenceAttemptId);
+                if (runtimeInScope.ItemUse.Pending is { } pending &&
+                    pending.IntuitionAttemptId == info.EvidenceAttemptId)
+                    pending.ObserveAuthoritativeConfirmation();
+            }
+            RecordReplayEvent("intuition-message-scope", new { floor = dd->Floor, dungeonId = dd->DeepDungeonId,
+                info.Reason, floorEvidence, inherited,
+                bufferedBeforeRuntime = runtimeInScope == null });
+            return true;
+        }
+
 		private void OnChatWatchersStateChanged(ChatWatchers.StateChangedInfo info)
 		{
+            if (info.Reason is "LogMessage7272" or "LogMessage7273")
+            {
+                if (!ObserveScopedIntuitionMessage(info))
+                {
+                    RecordReplayEvent("intuition-message-outside-stable-floor", info);
+                    return;
+                }
+            }
 			if (info.Reason is "LogMessage7256" or "LogMessage11251Mazeroot")
 				_floorRuntime?.ObjectEvidence.Invalidate();
 
-			if (info.EvidenceAccepted && info.EvidenceTargetFloor != 0)
-			{
-				var runtime = _floorRuntime;
-				if (runtime == null || runtime.IsDisposed || runtime.Floor != info.EvidenceTargetFloor)
-				{
-					RecordReplayEvent("chat-watchers-state-rejected", new
-					{
-						info.Reason,
-						info.EvidenceAttemptId,
-						info.EvidenceTargetFloor,
-						activeFloor = runtime?.Floor ?? 0,
-						activeFloorGeneration = runtime?.Generation ?? 0,
-						reason = "stale-floor-runtime"
-					});
-					return;
-				}
-			}
-
-			if (info.EvidenceAccepted &&
-			    (info.Reason is "LogMessage7272" or "LogMessage7273") &&
-			    _floorRuntime?.ItemUse.Pending is
-			    {
-				    Key:
-				    {
-					    Kind: FloorItemUseKind.Pomander,
-					    ItemId: FloorInitPlanner.IntuitionPomanderSlotIndex
-				    }
-			    } pendingIntuitionUse &&
-			    pendingIntuitionUse.IntuitionAttemptId == info.EvidenceAttemptId)
-			{
-				pendingIntuitionUse.ObserveAuthoritativeConfirmation();
-			}
-
-			_floorRuntime?.Survey.ObserveInheritedMessage(info);
-
 			RecordReplayEvent("chat-watchers-state", info);
-			uint semanticMessageId = info.Reason switch
-			{
-				"LogMessage7272" or "LogMessage7272Rejected" => 7272,
-				"LogMessage7273" or "LogMessage7273Rejected" => 7273,
-				"LogMessage7274" or "LogMessage7274Rejected" => 7274,
-				_ => 0
-			};
-			if (semanticMessageId != 0)
-				_floorRuntime?.Survey.EvidenceSession?.ObserveSemanticMessage(semanticMessageId, info.EvidenceAccepted);
+			if (info.Reason == "LogMessage7274Observed")
+				_floorRuntime?.Survey.EvidenceSession?.ObserveSemanticMessage(7274, accepted: false);
 
 			switch (info.Reason)
 			{
@@ -986,97 +875,10 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
                 case "FalsePassageObserved":
                     _floorRuntime?.ObserveFalsePassage();
                     break;
-				case "LogMessage7272":
-					PendingIntuition.TryMarkResolved(info.EvidenceAttemptId);
-					if (info.EvidenceAccepted)
-						_floorRuntime?.ObjectEvidence.Invalidate();
-					RequestPlanRefresh(info.Reason);
-					break;
-				case "LogMessage7273":
-					PendingIntuition.TryMarkResolved(info.EvidenceAttemptId);
-					if (info.EvidenceExpectationKind != IntuitionEvidenceExpectationKind.InheritedFloorResult)
-						HandleNoHoardEvidenceInvalidated(info.Reason);
-					RequestPlanRefresh(info.Reason);
-					break;
-				case "LogMessage7274":
-					if (info.EvidenceAccepted)
-						_floorRuntime?.ObjectEvidence.Invalidate();
-					RequestPlanRefresh(info.Reason);
-					break;
 			}
 
-			if (info.Reason is "LogMessage7272" or "LogMessage7273" or "LogMessage7274")
-			{
+			if (info.Reason is "LogMessage7272" or "LogMessage7273")
 				RecordNativeIntuitionState($"chat-{info.Reason}", force: true);
-				EndHoardEvidenceWait(info.Reason);
-			}
-		}
-
-		private void RecordHoardEvidenceWait(string eventType, int? remainingWaitMilliseconds = null)
-		{
-			string evidenceState = _executor?.HoardEvidenceState.ToString() ?? string.Empty;
-			if (string.IsNullOrEmpty(_activeHoardEvidenceWaitEventType))
-			{
-				_activeHoardEvidenceWaitEventType = eventType;
-				_activeHoardEvidenceWaitState = evidenceState;
-				_activeHoardEvidenceWaitStartedAt = DateTime.UtcNow;
-				RecordReplayEvent(eventType, new
-				{
-					waitStage = "start",
-					floor = _floorRuntime?.Floor ?? 0,
-					hoardEvidenceState = evidenceState,
-					remainingWaitMilliseconds,
-					status = _status
-				});
-				return;
-			}
-
-			if (string.Equals(_activeHoardEvidenceWaitEventType, eventType, StringComparison.Ordinal) &&
-			    string.Equals(_activeHoardEvidenceWaitState, evidenceState, StringComparison.Ordinal))
-			{
-				return;
-			}
-
-			RecordReplayEvent($"{_activeHoardEvidenceWaitEventType}-changed", new
-			{
-				waitStage = "material-change",
-				floor = _floorRuntime?.Floor ?? 0,
-				previousEventType = _activeHoardEvidenceWaitEventType,
-				nextEventType = eventType,
-				previousHoardEvidenceState = _activeHoardEvidenceWaitState,
-				nextHoardEvidenceState = evidenceState,
-				remainingWaitMilliseconds,
-				status = _status
-			});
-			_activeHoardEvidenceWaitEventType = eventType;
-			_activeHoardEvidenceWaitState = evidenceState;
-		}
-
-		private void EndHoardEvidenceWait(string outcome, string? expectedEventType = null)
-		{
-			if (string.IsNullOrEmpty(_activeHoardEvidenceWaitEventType))
-				return;
-			if (expectedEventType != null &&
-			    !string.Equals(_activeHoardEvidenceWaitEventType, expectedEventType, StringComparison.Ordinal))
-			{
-				return;
-			}
-
-			var now = DateTime.UtcNow;
-			RecordReplayEvent($"{_activeHoardEvidenceWaitEventType}-ended", new
-			{
-				waitStage = "end",
-				floor = _floorRuntime?.Floor ?? 0,
-				hoardEvidenceState = _activeHoardEvidenceWaitState,
-				outcome,
-				durationMilliseconds = _activeHoardEvidenceWaitStartedAt == DateTime.MinValue
-					? 0
-					: (int)Math.Max(0, (now - _activeHoardEvidenceWaitStartedAt).TotalMilliseconds),
-				status = _status
-			});
-			_activeHoardEvidenceWaitEventType = string.Empty;
-			_activeHoardEvidenceWaitState = string.Empty;
-			_activeHoardEvidenceWaitStartedAt = DateTime.MinValue;
 		}
 
 		private bool TryGetNativeIntuitionState(out bool nativeIntuitionActive)
@@ -1154,9 +956,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 				nativeIsActive = state.IsActive,
 				nativeCount = state.Count,
 				nativeIsUsable = state.IsUsable,
-				chatIntuitionActive = _chatWatchers?.IntuitionActive ?? false,
-				chatSaysHoard = _chatWatchers?.ChatSaysHoard ?? false,
-				chatSaysNoHoard = _chatWatchers?.ChatSaysNoHoard ?? false,
+				chatSaysHoard = _ctx?.Knowledge.Floor?.ChatSaysHoard ?? false,
+				chatSaysNoHoard = _ctx?.Knowledge.Floor?.ChatSaysNoHoard ?? false,
 				usedIntuitionThisFloor = _chatWatchers?.UsedIntuitionThisFloor ?? false,
 				status = _status
 			});
@@ -1170,7 +971,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_wasTransitioning = isTransitioning;
 			if (isTransitioning)
 			{
-				EndHoardEvidenceWait("floor-transition-started");
 				RecordNativeIntuitionState("floor-transition-started", force: true);
 			}
 			RecordReplayEvent(isTransitioning ? "floor-transition-started" : "floor-transition-ended", new
@@ -1203,14 +1003,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			_chatWatchers = null;
 		}
 
+        private bool waitingForPromeRadar;
+        private bool waitingForCast;
         private bool _waitingForRevival;
-        private DateTime? _playerDeadSinceUtc;
+        private DateTime? soloDeadSince;
 		private unsafe bool TryMarkPlayerDeathFatal(InstanceContentDeepDungeon* dd)
 		{
 			var player = Service.LocalPlayer;
 			if (player == null || !player.IsDead)
             {
-                _playerDeadSinceUtc = null;
+                soloDeadSince = null;
                 if (player != null && _waitingForRevival)
                 {
                     _waitingForRevival = false;
@@ -1221,30 +1023,24 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 
             if (_ctx?.FarmingPlan != null)
             {
-                var now = DateTime.UtcNow;
-                _playerDeadSinceUtc ??= now;
-                bool raising = dd->Items[(int)FloorInitPlanner.RaisingPomanderSlotIndex].IsActive;
+                soloDeadSince ??= DateTime.UtcNow;
+                if (!_ctx.DutyFailureObserved && FarmingDeathPolicy.IsConfirmedSoloFailure(true,
+                    dd->Items[(int)FloorInitPlanner.RaisingPomanderSlotIndex].IsActive,
+                    Service.PartyList.Length, (DateTime.UtcNow - soloDeadSince.Value).TotalSeconds))
+                {
+                    _ctx.MarkDutyFailed();
+                    RecordReplayEvent("observed-solo-duty-failure", new { floor = dd->Floor });
+                }
                 if (!_waitingForRevival)
                 {
                     _waitingForRevival = true;
                     RecordReplayEvent("player-dead-waiting-duty-outcome", new
                     {
                         floor = dd->Floor, hp = player.CurrentHp,
-                        raisingActive = raising
+                        raisingActive = dd->Items[(int)FloorInitPlanner.RaisingPomanderSlotIndex].IsActive
                     });
                 }
-                if (!_ctx.DutyFailureObserved && FarmingDeathPolicy.IsConfirmedSoloFailure(
-                    true, raising, Service.PartyList.Length, (now - _playerDeadSinceUtc.Value).TotalSeconds))
-                {
-                    _ctx.MarkDutyFailed();
-                    RecordReplayEvent("observed-solo-duty-failure", new
-                    {
-                        floor = dd->Floor, hp = player.CurrentHp, raisingActive = raising,
-                        partySize = Service.PartyList.Length, deadSeconds = (now - _playerDeadSinceUtc.Value).TotalSeconds
-                    });
-                    Service.Log.Warning($"[Farming] Solo death confirmed without Raising: floor={dd->Floor}; leaving and resetting the owned save.");
-                }
-                _status = _ctx.DutyFailureObserved ? "Solo failure confirmed - leaving farming attempt" : "Waiting for revival or duty outcome";
+                _status = "Waiting for revival or duty outcome";
                 SuspendBossMovement();
                 _floorRuntime?.CancelCoordMovement();
                 _navHelper?.Cancel();
@@ -1271,19 +1067,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 		private RunOptions SnapshotRunOptions()
 		{
 			var source = _ctx?.RunOptions?.Current ?? new RunOptions();
-			if (_ctx?.ControlledPtSurvey != null)
-			{
-				return new RunOptions
-				{
-					OpenGold = false,
-					OpenSilver = false,
-					OpenBronze = false,
-					BandedEnabled = false,
-					LeaveMode = source.LeaveMode,
-					LeaveAfterMinutes = 0,
-					RequireValidatedAbandonPrompt = true
-				};
-			}
 			return new RunOptions
 			{
 				OpenGold = source.OpenGold,
@@ -1298,107 +1081,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime.Floor
 			};
 		}
 
-		private unsafe void RecordPassageExitDelayedByCombat(InstanceContentDeepDungeon* dd)
-		{
-			var now = DateTime.UtcNow;
-			if ((now - _lastPassageExitDelayEventAt).TotalMilliseconds < 1000)
-				return;
-
-			_lastPassageExitDelayEventAt = now;
-			RecordReplayEvent("passage-open-exit-delayed", new
-			{
-				floor = dd->Floor,
-				reason = "in-combat",
-				phase = _phase.ToString(),
-				status = _status
-			});
-		}
-
-		private void RecordChaseTargetEvent(string eventType, EnemyChaseTarget target)
-		{
-			var now = DateTime.UtcNow;
-			string key = $"{eventType}:{target.GameObjectId}:{target.Reason}";
-			if (string.Equals(key, _lastChaseTargetEventKey, StringComparison.Ordinal) &&
-			    (now - _lastChaseTargetEventAt).TotalMilliseconds < 1000)
-			{
-				return;
-			}
-
-			_lastChaseTargetEventKey = key;
-			var npc = CombatTargetingHelpers.GetBattleCharaByGameObjectId(target.GameObjectId);
-			_lastChaseTargetEventAt = now;
-			RecordReplayEvent(eventType, new
-			{
-				phase = _phase.ToString(),
-				targetId = target.GameObjectId,
-				nameId = npc?.NameId,
-				baseId = npc?.BaseId,
-				hp = npc?.CurrentHp, maxHp = npc?.MaxHp,
-				livePosition = new { target.LivePosition.X, target.LivePosition.Y, target.LivePosition.Z },
-				inCombat = Service.Condition[ConditionFlag.InCombat],
-				currentTargetId = Service.TargetManager.Target?.GameObjectId,
-				attackWindowStartedUtc = _floorRuntime?.AttackWindowStartedAt,
-				reason = target.Reason.ToString(),
-				acquisitionPlayerRoom = target.AcquisitionPlayerRoomIndex,
-				acquisitionTargetRoom = target.AcquisitionTargetRoomIndex,
-				acquisitionGraphHops = target.AcquisitionGraphHops,
-				x = target.Position.X,
-				y = target.Position.Y,
-				z = target.Position.Z
-			});
-		}
-
-		private unsafe void RecordChaseAcquisitionFailure(
-			InstanceContentDeepDungeon* dd,
-			EnemyChaseAcquisitionFailure failure)
-		{
-			string key = $"{dd->Floor}:{_floorRuntime?.Generation ?? 0}:{failure}";
-			if (string.Equals(key, _lastChaseAcquisitionFailureKey, StringComparison.Ordinal))
-				return;
-
-			_lastChaseAcquisitionFailureKey = key;
-			RecordReplayEvent("clearing-target-acquisition-failed", new
-			{
-				floor = dd->Floor,
-				floorGeneration = _floorRuntime?.Generation ?? 0,
-				phase = _phase.ToString(),
-				reason = failure.ToString()
-			});
-		}
-
-		private void RecordPassageNavigationEvent(string eventType, string result, bool usedActor, int passageRoomIndex, int playerRoom)
-		{
-			var now = DateTime.UtcNow;
-			string key = $"{eventType}:{result}:{usedActor}:{passageRoomIndex}:{playerRoom}";
-			if (string.Equals(key, _lastPassageNavigationEventKey, StringComparison.Ordinal) &&
-			    (now - _lastPassageNavigationEventAt).TotalMilliseconds < 1000)
-			{
-				return;
-			}
-
-			_lastPassageNavigationEventKey = key;
-			_lastPassageNavigationEventAt = now;
-			RecordReplayEvent(eventType, new
-			{
-				phase = _phase.ToString(),
-				result,
-				usedActor,
-				passageRoomIndex,
-				playerRoom,
-				playerPosition = Service.LocalPlayer is { } player ? new { player.Position.X, player.Position.Y, player.Position.Z } : null,
-				actorPosition = usedActor ? new { _passageDestination.ActorPosition.X, _passageDestination.ActorPosition.Y, _passageDestination.ActorPosition.Z } : null,
-				walkingPosition = usedActor ? new { _passageDestination.WalkingPosition.X, _passageDestination.WalkingPosition.Y, _passageDestination.WalkingPosition.Z } : null,
-				projected = usedActor && _passageDestination.Projected,
-				pathRunning = moveHelper.VNav.Path.IsRunning(),
-				pathfindPending = moveHelper.VNav.SimpleMove.PathfindInProgress()
-			});
-		}
-
-        public void TickInteractionChannel(IFramework framework)
-        {
-            if (!PromeRadarMovementGate.IsBlocked && !yieldingToPromeRadar && !waitingForCast) _floorRuntime?.TickInteractionChannel(framework);
-        }
         private void RequestPlanRefresh(string reason) => _floorRuntime?.RequestPlanRefresh(reason);
-        private bool HandleNoHoardEvidenceInvalidated(string reason) => _floorRuntime?.HandleNoHoardEvidenceInvalidated(reason) == true;
 	}
 }

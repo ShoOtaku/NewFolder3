@@ -4,7 +4,6 @@ using MasterPlayer.MechanicRuntime;
 using global::Dalamud.Game.ClientState.Conditions;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using DeepDungeon.Fsd.Dalamud.Runtime;
-using DeepDungeon.Fsd.Dalamud.Runtime.Helpers;
 using DeepDungeon.Fsd.Dalamud.Runtime.Navigation;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Combat;
@@ -21,10 +20,18 @@ internal sealed class CombatAssistPolicy
     private readonly ICombatTargetProvider _default = new DefaultTargetProvider();
     private CombatTargetChoice _decision;
     private DateTime _decisionFrame;
-    private DateTime _chaseTargetFrame;
-    private ulong _chaseTargetId;
     internal string? TargetSource => _decision.Source;
     internal ulong SelectedId { get; private set; }
+
+    internal void Suspend()
+    {
+        // Release only our last selection; a user's unrelated target is not ours.
+        if (SelectedId != 0 && Service.TargetManager.Target?.GameObjectId == SelectedId)
+            Service.TargetManager.Target = null;
+        SelectedId = 0;
+        _decision = default;
+        _decisionFrame = default;
+    }
 
     // Cache the navigation decision once per frame. Attack-side sight filtering
     // must not replace it, so navigation can still approach an obstructed target.
@@ -47,33 +54,22 @@ internal sealed class CombatAssistPolicy
     // independently selected target when that target is behind a wall.
     private CombatTargetChoice SelectAttack(in CombatTargetRequest request, Vector3 position)
     {
+        if (!request.BossFloor && request.Context?.ClearingTargetId is { } targetId)
+        {
+            var selected = Service.GameObjects.SearchById(targetId) as IBattleChara;
+            if (selected is { IsDead: false, IsTargetable: true, CurrentHp: > 0 } &&
+                CombatPositionNavigation.CheckAttack(position, selected.Position, request.Range).Allowed)
+                return new(selected, "clearing-target");
+            // An obstructed chase target does not own the attack channel.
+            var nearby = Choose(request with { SightOrigin = position });
+            return nearby.Target == null ? nearby with { HoldFire = true } : nearby;
+        }
+
         var choice = Select(request);
         if (choice.Target is not { } target || !CombatTargetRequest.IsSightBlocked(position, target.Position))
             return choice;
         choice = Choose(request with { SightOrigin = position });
         return choice.Target == null ? choice with { HoldFire = true } : choice;
-    }
-
-    internal void OfferChaseTarget(ulong targetId)
-    {
-        _chaseTargetFrame = Service.Framework.LastUpdateUTC;
-        _chaseTargetId = targetId;
-    }
-
-    private static CombatTargetChoice UseChaseTarget(in CombatTargetRequest request, Vector3 position,
-        ulong chaseTargetId, CombatTargetChoice choice)
-    {
-        if (choice.Target != null || choice.Source != "default" || request.BossFloor || request.PassageOpen ||
-            chaseTargetId == 0 || request.Context is not { } context || context.IsCombatTargetSuppressed(chaseTargetId))
-            return choice;
-
-        if (CombatTargetingHelpers.GetBattleCharaByGameObjectId(chaseTargetId) is not
-                IBattleNpc { IsDead: false, IsTargetable: true, CurrentHp: > 0 } target ||
-            !context.IsNewCombatTargetAllowed(target) ||
-            !CombatPositionNavigation.CheckAttack(position, target.Position, request.Range).Allowed)
-            return choice;
-
-        return new(target, "chase");
     }
 
     private static void Apply(in CombatTargetChoice decision)
@@ -90,7 +86,7 @@ internal sealed class CombatAssistPolicy
     internal (Vector3 Position, float Radius)? SelectForNavigation(RunContext ctx, EncounterPlanningSnapshot snapshot)
     {
         var choice = Select(new(ctx, true, Service.Condition[ConditionFlag.InCombat], ctx.Duty.PassageOpen,
-            GetEngageRange(), true, snapshot));
+            GetEngageRange(), snapshot));
         Apply(choice);
         return choice.Target is { } target ? (target.Position, target.HitboxRadius) : null;
     }
@@ -110,10 +106,8 @@ internal sealed class CombatAssistPolicy
             if (player == null || player.IsDead) return;
             bool inCombat = Service.Condition[ConditionFlag.InCombat];
             float range = GetEngageRange();
-            var request = new CombatTargetRequest(context, isBossFloor, inCombat, passageOpen, range, true,
-                EncounterPlanningSnapshotRegistry.Read());
-            ulong chaseTargetId = _chaseTargetFrame == Service.Framework.LastUpdateUTC ? _chaseTargetId : 0;
-            var choice = UseChaseTarget(request, player.Position, chaseTargetId, SelectAttack(request, player.Position));
+            var choice = SelectAttack(new(context, isBossFloor, inCombat, passageOpen, range,
+                context.Encounters.Read().Encounter), player.Position);
             var target = choice.Target;
             SelectedId = target?.GameObjectId ?? 0;
             Apply(choice);
@@ -140,8 +134,8 @@ internal sealed class CombatAssistPolicy
                 floor = context.Duty.Floor, status, autoSelect = true,
                 inCombat, passageOpen, engageRange = range,
                 currentTargetId = Service.TargetManager.Target?.GameObjectId,
-                selectedTargetId = SelectedId, targetHp = target?.CurrentHp, chaseTargetId,
-                preferredTargetId = context.TryGetPreferredAggroTarget(out var preferred) ? preferred : 0
+                selectedTargetId = SelectedId, targetHp = target?.CurrentHp,
+                clearingTargetId = context.ClearingTargetId
             });
         }
         catch (Exception ex)

@@ -8,8 +8,11 @@ public sealed partial record EncounterResidenceHazard(ShapeDistance UnsafeRegion
     double ReentrySeconds, uint StatusId) : EncounterPathMechanic
 {
     public double ResetDwellSeconds { get; init; }
+    public double SafetyMarginSeconds { get; init; }
     public double ImmunityGrantSeconds { get; init; }
     public double ImmunityLossSeconds { get; init; }
+    public float MaximumPlanningSpeed { get; init; } = float.PositiveInfinity;
+    internal IResidenceBoundary? ResetBoundary { get; init; }
     public double InitialSafeContact { get; init; }
     public double InitialImmunityContact { get; init; }
     public bool? StatusPresent { get; init; }
@@ -17,6 +20,7 @@ public sealed partial record EncounterResidenceHazard(ShapeDistance UnsafeRegion
     public bool WindImmune { get; init; }
     public uint ImmunityStatusId { get; init; }
     public DateTime? RequiresImmunityAt { get; init; }
+    internal double TargetContactSlack => Math.Max(0, (ReentrySeconds - SafetyMarginSeconds - ImmunityGrantSeconds - ResetDwellSeconds) / 4);
 
     internal override DateTime? ResolutionAt => RequiresImmunityAt;
     internal override DateTime Deadline => InitialDeadline;
@@ -82,15 +86,19 @@ public sealed partial record EncounterResidenceHazard(ShapeDistance UnsafeRegion
     internal override PlanScore ScoreTerminal(in MechanicBranchState branch, double time, PlanScore score)
     {
         ref readonly var state = ref branch.Residence;
+        score = score with { ResidenceMarginShortfall = MarginShortfall(state) };
         if (state.Active)
         {
             var age = ReentrySeconds - (state.Deadline - time);
-            score = score with { Soft = score.Soft + Math.Pow(Math.Max(0, age - 1.5), 2) * 3000 };
+            score = score with { RecoveryPending = true, Soft = score.Soft + Math.Pow(Math.Max(0, age - 1.5), 2) * 3000 };
         }
         if (state.LastResetAt >= branch.WindAt && !state.Active && double.IsFinite(branch.WindAt))
-            score = score with { CompletionSlack = Math.Min(branch.WindSlack, state.MinimumResetSlack) };
+            score = score with { CompletionSlack = Math.Min(TargetContactSlack, Math.Min(branch.WindSlack, state.MinimumResetSlack)) };
         return score;
     }
+
+    internal double MarginShortfall(in EncounterResidenceState state) =>
+        Math.Max(0, SafetyMarginSeconds - state.MinimumResetSlack);
 }
 
 // Inline storage travels with the pooled search branch. Other simultaneous

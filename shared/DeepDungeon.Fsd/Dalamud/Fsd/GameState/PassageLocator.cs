@@ -1,6 +1,7 @@
 using System;
 using System.Numerics;
 using DeepDungeon.Fsd.Core;
+using DeepDungeon.Fsd.Dalamud.Map;
 using FFXIVClientStructs.FFXIV.Client.Game.Object;
 using global::Dalamud.Game.ClientState.Objects.Types;
 using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
@@ -22,58 +23,41 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
             0x1EBE24  // PylonPT     (PT)
         };
 
-        /// <summary>
-        /// Tries to find the nearest passage actor (pylon/cairn) to the local player.
-        /// </summary>
-        public static unsafe bool TryGetPassageActorPosition(InstanceContentDeepDungeon* dd, out Vector3 dest)
+        internal static unsafe bool TryResolveRequestedRoom(InstanceContentDeepDungeon* dd,
+            int room, out Vector3 destination, out bool usedActor)
         {
-            dest = default;
+            destination = default;
+            usedActor = false;
+            if (dd == null || (uint)room >= RoomGraph.MaxRooms ||
+                !MapPos.TryGetRoomCenter(dd, room, out var center))
+                return false;
 
-            try
+            var rooms = new List<PassageSearchPoint>();
+            var flags = dd->MapData;
+            for (int index = 0; index < flags.Length; index++)
+                if (flags[index] != 0 && MapPos.TryGetRoomCenter(dd, index, out var point))
+                    rooms.Add(new(index, point));
+            var beacons = new List<PassageBeacon>();
+            foreach (var actor in Service.GameObjects)
             {
-                var player = Service.LocalPlayer;
-                IGameObject? best = null;
-                float bestD2 = float.MaxValue;
-
-                foreach (var obj in Service.GameObjects)
-                {
-                    if (obj == null)
-                        continue;
-
-                    if (!IsAvailablePassage(obj))
-                        continue;
-
-                    float d2;
-                    if (player != null)
-                    {
-                        var dx = obj.Position.X - player.Position.X;
-                        var dz = obj.Position.Z - player.Position.Z;
-                        d2 = dx * dx + dz * dz;
-                    }
-                    else
-                    {
-                        d2 = 0f;
-                    }
-
-                    if (best == null || d2 < bestD2)
-                    {
-                        best = obj;
-                        bestD2 = d2;
-                    }
-                }
-
-                if (best != null)
-                {
-                    dest = best.Position;
-                    return true;
-                }
-            }
-            catch
-            {
-                // ignore
+                if (actor.ObjectKind != global::Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj ||
+                    !IsPassageBase(actor.BaseId) || actor.Address == IntPtr.Zero)
+                    continue;
+                var closest = rooms.Count > 0
+                    ? rooms.MinBy(point => Vector3.DistanceSquared(point.Position, actor.Position)).Room
+                    : -1;
+                beacons.Add(new(actor.GameObjectId, actor.BaseId, ((EventObject*)actor.Address)->SharedTimelineState,
+                    closest, actor.Position));
             }
 
-            return false;
+            var from = Service.LocalPlayer?.Position ?? center;
+            var goal = PassageGoalPolicy.Select(beacons, [new(room, center)],
+                position => Vector3.DistanceSquared(from, position), _ => true, requestedRoom: room);
+            if (goal is not { } selected)
+                return false;
+            destination = selected.Position;
+            usedActor = !selected.IsSearch;
+            return true;
         }
 
         internal static bool TryGetPassageActorPosition(FloorObjectEvidenceSnapshot evidence, out Vector3 dest)
@@ -100,91 +84,6 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
             return found;
         }
 
-        /// <summary>
-        /// Tries to resolve a reasonable passage destination using room center if the actor is not yet loaded.
-        /// Returns true and a world position if successful.
-        /// </summary>
-        public static unsafe bool TryGetPassageRoomCenter(InstanceContentDeepDungeon* dd, out int passageRoomIndex, out Vector3 dest)
-        {
-            dest = default;
-            passageRoomIndex = -1;
-
-            if (dd == null)
-                return false;
-
-            try
-            {
-                passageRoomIndex = RoomGraph.GetPassageRoomIndex(dd);
-                if (passageRoomIndex < 0)
-                    return false;
-
-                if (!TryGetRoomCenter(dd, passageRoomIndex, out dest))
-                    return false;
-
-                return true;
-            }
-            catch
-            {
-                // ignore
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Resolves the best passage destination, preferring the actual actor position when available
-        /// and falling back to the room center otherwise.
-        /// </summary>
-        public static unsafe bool TryResolvePassageDestination(InstanceContentDeepDungeon* dd, out Vector3 dest, out bool usedActorPosition, out int passageRoomIndex)
-        {
-            dest = default;
-            usedActorPosition = false;
-            passageRoomIndex = -1;
-
-            if (dd == null)
-                return false;
-
-            // Prefer exact actor position
-            if (TryGetPassageActorPosition(dd, out dest))
-            {
-                usedActorPosition = true;
-                passageRoomIndex = RoomGraph.GetPassageRoomIndex(dd);
-                return true;
-            }
-
-            // Fallback to room center
-            if (TryGetPassageRoomCenter(dd, out passageRoomIndex, out dest))
-            {
-                usedActorPosition = false;
-                return true;
-            }
-
-            return false;
-        }
-
-        internal static unsafe bool TryResolvePassageDestination(
-            InstanceContentDeepDungeon* dd,
-            FloorObjectEvidenceSnapshot evidence,
-            out Vector3 dest,
-            out bool usedActorPosition,
-            out int passageRoomIndex)
-        {
-            dest = default;
-            usedActorPosition = false;
-            passageRoomIndex = -1;
-            if (dd == null || !evidence.Available)
-                return false;
-
-            if (TryGetPassageActorPosition(evidence, out dest))
-            {
-                usedActorPosition = true;
-                passageRoomIndex = RoomGraph.GetPassageRoomIndex(dd);
-                return true;
-            }
-
-            return TryGetPassageRoomCenter(dd, out passageRoomIndex, out dest);
-        }
-
         internal static bool IsPassageBase(uint baseId)
         {
             for (int i = 0; i < PassageBaseIds.Length; i++)
@@ -205,22 +104,5 @@ namespace DeepDungeon.Fsd.Dalamud.GameState
                 obj.Address != IntPtr.Zero && NativePassageAvailability.IsAvailable(
                     obj.BaseId, ((EventObject*)obj.Address)->SharedTimelineState);
         }
-
-        private static unsafe bool TryGetRoomCenter(InstanceContentDeepDungeon* dd, int roomIndex, out Vector3 center)
-        {
-            center = default;
-
-            try
-            {
-                return DeepDungeon.Fsd.Dalamud.Map.MapPos.TryGetRoomCenter(dd, roomIndex, out center);
-            }
-            catch
-            {
-                // ignore
-            }
-
-            return false;
-        }
     }
 }
-

@@ -4,7 +4,10 @@ namespace MasterPlayer.MechanicRuntime;
 
 public sealed record EncounterCandidateAssessment(int Violations, float Exposure, bool GeometryValid,
     bool Complete, bool StaleChase, double FirstViolation, EncounterHazard[] ChaseConstraints,
-    EncounterHazard[] ResidenceConstraints, double ResidenceDeadline, bool StartsExposed);
+    EncounterHazard[] ResidenceConstraints, double ResidenceDeadline, bool StartsExposed)
+{
+    public bool TimingUnresolved { get; init; }
+}
 
 /// <summary>Offline diagnostics and legacy candidate callers use the production simulation.</summary>
 public static class EncounterCandidateValidator
@@ -24,11 +27,13 @@ public static class EncounterCandidateValidator
             var command = points[i].CommandVelocity ?? (points[i].Position - points[i - 1].Position) / (float)dt;
             simulation.Advance(state, command, points[i].Seconds);
         }
-        var complete = points.Length >= 2 && points[0].Seconds == 0 && points[^1].Seconds >= horizon - 1e-6;
-        if (!complete) { ++state.Failures; state.FirstViolation = Math.Min(state.FirstViolation, points[^1].Seconds); }
+        var complete = !state.TimingUnresolved && points.Length >= 2
+            && points[0].Seconds == 0 && points[^1].Seconds >= horizon - 1e-6;
+        if (!complete && !state.TimingUnresolved) { ++state.Failures; state.FirstViolation = Math.Min(state.FirstViolation, points[^1].Seconds); }
         return new(state.Failures, (float)state.Exposure, state.GeometryFailures == 0, complete,
             state.StaleChase, state.FirstViolation, simulation.ChaseConstraints!.ToArray(), simulation.ResidenceConstraints!.ToArray(),
-            q.Snapshot.PathMechanic?.BranchDeadline(state.Mechanic) ?? double.PositiveInfinity, state.StartsExposed);
+            q.Snapshot.PathMechanic?.BranchDeadline(state.Mechanic) ?? double.PositiveInfinity, state.StartsExposed)
+        { TimingUnresolved = state.TimingUnresolved };
     }
 
     public static Vector2 PositionAt(ReadOnlySpan<EncounterRoutePoint> points, double seconds)

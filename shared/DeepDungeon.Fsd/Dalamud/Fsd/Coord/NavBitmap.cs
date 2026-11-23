@@ -1,4 +1,5 @@
 using MasterPlayer.MechanicRuntime;
+using DeepDungeon.Fsd.Core;
 using System;
 using System.Collections.Generic;
 using System.Numerics;
@@ -22,6 +23,7 @@ internal sealed class NavBitmap : INavigationGrid
     /// <summary>Room anchors from planmap.lgb — exact room-center
     /// positions paired with room index. The coverage set's anchors.</summary>
     public List<(int Room, Vector3 Pos)> RoomAnchors { get; } = [];
+    internal List<PassageSearchPoint> PassageObservationPoints { get; } = [];
 
     public int Width { get; }
     public int Height { get; }
@@ -89,6 +91,16 @@ internal sealed class NavBitmap : INavigationGrid
                 PaintDoor(door.Box);
                 ClosedBoxes++;
             }
+
+        for (int i = 0; i < map.Doors.Length; i++)
+        {
+            var door = map.Doors[i];
+            if ((RoomFlags[door.Cell] & door.Connection) == 0 || map.Centers[door.Cell] is not { } center)
+                continue;
+            var position = new Vector3(door.Box.M41, center.Y, door.Box.M43);
+            if (Vector3.DistanceSquared(center, position) >= CoverageSet.VisitRadius * CoverageSet.VisitRadius)
+                PassageObservationPoints.Add(new(door.Cell, position, i + 1));
+        }
     }
 
     internal unsafe bool Matches(FloorMapKey? key, InstanceContentDeepDungeon* dd)

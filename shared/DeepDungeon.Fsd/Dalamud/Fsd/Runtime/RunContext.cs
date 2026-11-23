@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Numerics;
 using System.Threading;
 using DeepDungeon.Fsd.Core;
 using DeepDungeon.Fsd.Dalamud.GameState;
@@ -19,6 +18,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	public sealed class RunContext : IDisposable
 	{
 		public readonly FsdSettings Configuration;
+        public readonly MasterPlayer.MechanicRuntime.IEncounterSource Encounters;
 		public readonly CancellationTokenSource CancellationSource;
 
 		// Services
@@ -33,12 +33,11 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		/// facts, work completion truth and the observed collection rate.</summary>
 		internal RunKnowledge Knowledge { get; } = new();
 		internal readonly CombatAssistPolicy CombatAssist;
-		internal CombatRecoveryBudget CombatRecoveryBudget = new();
+        internal PromeRadarFarmingMovement? PromeRadarMovement;
+        internal ulong? ClearingTargetId { get; set; }
 		internal readonly FsdChestInteraction ChestInteraction;
-		internal ControlledPtSurveySession? ControlledPtSurvey;
         internal DeepDungeon.Fsd.Core.FarmingPlan? FarmingPlan;
         internal Action<string, object>? RecordDiagnostic;
-        internal PromeRadarFarmingMovement? PromeRadarMovement;
         internal long CombatPreparationSequence { get; private set; }
         private ulong _preparedCombatTarget;
         private bool _rotationWasInCombat;
@@ -59,6 +58,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
         internal bool TerminalRewardsRequired;
         internal bool TerminalRoomObserved;
         internal bool TerminalReviewRequested;
+        internal bool TerminalStayRequested;
         internal bool AttemptAborted;
         internal string AttemptAbortReason = string.Empty;
         internal int HoardDiscoveries;
@@ -72,17 +72,16 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		internal long DutyCompletionSequence { get; private set; }
 		public bool DutyFailureObserved { get; private set; }
 
-		private readonly object _preferredAggroLock = new();
-		private ulong _preferredAggroTargetId;
-		private Vector3 _preferredAggroTargetPosition;
-		private DateTime _preferredAggroExpiry = DateTime.MinValue;
+		private readonly object _suppressedCombatTargetsLock = new();
 		private readonly Dictionary<ulong, DateTime> _suppressedCombatTargets = new();
 
 	internal RunContext(
+        MasterPlayer.MechanicRuntime.IEncounterSource encounterSource,
 		FsdSettings configuration,
 		DutyState dutyState,
 		DetailedMapRunSnapshot detailedMap)
 	{
+		Encounters = encounterSource ?? throw new ArgumentNullException(nameof(encounterSource));
 		Configuration = configuration;
 		DetailedMap = detailedMap ??
 			throw new ArgumentNullException(nameof(detailedMap));
@@ -108,10 +107,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 	public CancellationToken Token => CancellationSource.Token;
 
+    internal bool IsPullExcluded(IBattleChara target) =>
+        !DeepDungeon.Fsd.Core.MobPullPolicy.CanInitiate(FarmingPlan?.Mode, Duty.DungeonId, Duty.Floor, target.NameId);
+
     // Existing hate is an obligation, even for a mob we would not voluntarily pull.
     internal bool IsNewCombatTargetAllowed(IBattleChara target) =>
-        DeepDungeon.Fsd.Core.MobPullPolicy.CanInitiate(FarmingPlan?.Mode, Duty.DungeonId, Duty.Floor, target.NameId) ||
-        Floor.EnemyChaseHelper.IsAggroedToPlayer(target.GameObjectId);
+        !IsPullExcluded(target) || Floor.EnemyChaseHelper.IsAggroedToPlayer(target.GameObjectId);
 
 	public void Cancel()
 	{
@@ -146,6 +147,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	{
 		Knowledge.Reset();
 		Cancel();
+        try { PromeRadarMovement?.Dispose(); }
+        catch (Exception ex)
+        {
+            Service.Log?.Error($"[RunContext] Failed to release PromeRadar session: {ex}");
+        }
+        finally { PromeRadarMovement = null; }
 		try { (Navigator as IDisposable)?.Dispose(); }
 		catch (Exception ex)
 		{
@@ -156,14 +163,6 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		{
 			try { Service.Log.Error($"[RunContext] Failed to dispose cancellation source: {ex}"); } catch { }
 		}
-		try { PromeRadarMovement?.Dispose(); }
-		catch (Exception ex) { Service.Log.Error($"[RunContext] Failed to release PromeRadar FSD session: {ex}"); }
-		try { PromeRadarMovement?.Dispose(); }
-		catch (Exception ex)
-		{
-			Service.Log.Error($"[RunContext] Failed to release PromeRadar session: {ex}");
-		}
-		PromeRadarMovement = null;
 	}
 
 	public void MarkDutyCompleted()
@@ -191,68 +190,12 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 		DutyCompletionObserved = false;
 	}
 
-	public void SetPreferredAggroTarget(ulong targetId, Vector3 position, TimeSpan? ttl = null)
-	{
-		if (targetId == 0)
-			return;
-
-		var expiry = DateTime.Now + (ttl ?? TimeSpan.FromSeconds(6));
-		lock (_preferredAggroLock)
-		{
-			_preferredAggroTargetId = targetId;
-			_preferredAggroTargetPosition = position;
-			_preferredAggroExpiry = expiry;
-		}
-	}
-
-	public void ClearPreferredAggroTarget()
-	{
-		lock (_preferredAggroLock)
-		{
-			_preferredAggroTargetId = 0;
-			_preferredAggroTargetPosition = default;
-			_preferredAggroExpiry = DateTime.MinValue;
-		}
-	}
-
-	public bool TryGetPreferredAggroTarget(out ulong targetId)
-	{
-		lock (_preferredAggroLock)
-		{
-			if (_preferredAggroTargetId != 0 && DateTime.Now <= _preferredAggroExpiry)
-			{
-				targetId = _preferredAggroTargetId;
-				return true;
-			}
-		}
-
-		targetId = 0;
-		return false;
-	}
-
-	public bool TryGetPreferredAggroTarget(out ulong targetId, out Vector3 position)
-	{
-		lock (_preferredAggroLock)
-		{
-			if (_preferredAggroTargetId != 0 && DateTime.Now <= _preferredAggroExpiry)
-			{
-				targetId = _preferredAggroTargetId;
-				position = _preferredAggroTargetPosition;
-				return true;
-			}
-		}
-
-		targetId = 0;
-		position = default;
-		return false;
-	}
-
 	public void SuppressCombatTarget(ulong targetId, TimeSpan? ttl = null)
 	{
 		if (targetId == 0)
 			return;
 
-		lock (_preferredAggroLock)
+		lock (_suppressedCombatTargetsLock)
 		{
 			PruneSuppressedCombatTargetsLocked();
 			_suppressedCombatTargets[targetId] = DateTime.UtcNow + (ttl ?? TimeSpan.FromSeconds(20));
@@ -263,10 +206,8 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 	{
 		if (targetId == 0)
 			return false;
-		if (CombatRecoveryBudget.IsTargetExhausted(targetId))
-			return true;
 
-		lock (_preferredAggroLock)
+		lock (_suppressedCombatTargetsLock)
 		{
 			PruneSuppressedCombatTargetsLocked();
 			return _suppressedCombatTargets.ContainsKey(targetId);
@@ -275,7 +216,7 @@ namespace DeepDungeon.Fsd.Dalamud.Runtime
 
 	public void ClearSuppressedCombatTargets()
 	{
-		lock (_preferredAggroLock)
+		lock (_suppressedCombatTargetsLock)
 		{
 			_suppressedCombatTargets.Clear();
 		}

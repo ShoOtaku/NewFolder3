@@ -187,29 +187,6 @@ namespace DeepDungeon.Fsd.Dalamud
 			return new FsdControlResult(true, Snapshot: GetMobPilotSnapshot());
 		}
 
-		public object ArmControlledReusableSaveSurveyCapture()
-		{
-			if (!_detailedMapHostOptions.SupportsControlledPtSurvey)
-			{
-				return new
-				{
-					ok = false,
-					error = "Controlled reusable-save survey capture is unavailable for this FSD host."
-				};
-			}
-
-			if (_ddHost?.FsdActive != true)
-			{
-				return new
-				{
-					ok = false,
-					error = "Controlled reusable-save survey capture requires an active FSD session."
-				};
-			}
-
-			return _ddHost.ArmControlledReusableSaveSurveyCapture();
-		}
-
 		public object GetPilgrimsTraverseFsdPreflight(int startFloor)
 		{
 			var blockers = new List<string>();
@@ -428,6 +405,7 @@ namespace DeepDungeon.Fsd.Dalamud
 
 			var slotIndex = slotNumber - 1;
 			_bridgeDeleteSaveContext = new RunContext(
+				_encounters,
 				_configuration,
 				_dutyState,
 				new DetailedMapRunSnapshot(
@@ -494,6 +472,7 @@ namespace DeepDungeon.Fsd.Dalamud
 			}
 
 			_bridgeLeaveDutyContext = new RunContext(
+				_encounters,
 				_configuration,
 				_dutyState,
 				new DetailedMapRunSnapshot(
@@ -539,7 +518,8 @@ namespace DeepDungeon.Fsd.Dalamud
 			string hostStatus = activeHost?.CurrentStatus ?? string.Empty;
 			bool hostStatusIsError = activeHost?.CurrentStatusIsError ?? false;
 			string debugStatus = debug?.Status ?? string.Empty;
-			string snapshotStatus = hostStatusIsError && !string.IsNullOrWhiteSpace(hostStatus)
+			string snapshotStatus = (hostStatusIsError || activeHost?.DutyObservationUnavailable == true) &&
+                !string.IsNullOrWhiteSpace(hostStatus)
 				? hostStatus
 				: !string.IsNullOrWhiteSpace(debugStatus)
 					? debugStatus
@@ -605,61 +585,26 @@ namespace DeepDungeon.Fsd.Dalamud
 				passageOpen = dd != null ? DeepDungeonHelper.IsPassageOpen(dd) : status?.passageOpen ?? false,
 				playerRoom,
 				phase = debug?.Phase.ToString() ?? string.Empty,
-				taskPhase = debug?.TaskPhase.ToString() ?? string.Empty,
+				taskPhase = debug?.TaskPhase ?? string.Empty,
 				status = snapshotStatus,
 				statusIsError = leaveDutyActive ? leaveDutyStatusIsError : hostStatusIsError,
 				hoardCount = debug?.HoardCount ?? 0,
 				hoardEvidenceState = debug?.HoardEvidenceState.ToString() ?? string.Empty,
 				cachedHoardIndicator = SnapshotVector(debug?.CachedHoardIndicatorPos),
-				currentTargetRoom = debug?.RoomPlan.FirstOrDefault()?.RoomIndex,
+				currentTargetRoom = debug?.CurrentTargetRoom,
 				roomPath = debug?.RoomPath.ToArray() ?? [],
 				completedRooms = debug?.CompletedRooms.OrderBy(room => room).ToArray() ?? [],
-				roomPlan = debug?.RoomPlan.Select(entry => new
-				{
-					entry.RoomIndex,
-					entry.ShouldProbeHoard,
-					entry.ShouldSearchChests,
-					entry.ShouldVisitForIntel,
-					hoardEvidenceState = entry.HoardEvidenceState.ToString()
-				}).ToArray() ?? [],
-				planTrace = debug?.PlanTrace == null
-					? null
-					: new
-					{
-						rejectionReason = debug.PlanTrace.RejectionReason ?? string.Empty,
-						candidates = debug.PlanTrace.Candidates.Select(candidate => new
-						{
-							candidate.RoomIndex,
-							candidate.Eligible,
-							candidate.ShouldProbeHoard,
-							candidate.ShouldSearchChests,
-							candidate.ShouldVisitForIntel,
-							hoardEvidenceState = candidate.HoardEvidenceState.ToString(),
-							candidate.BasePriority,
-							candidate.Reason
-						}).ToArray(),
-						selections = debug.PlanTrace.Selections.Select(selection => new
-						{
-							selection.Step,
-							selection.FromRoomIndex,
-							selection.SelectedRoomIndex,
-							selection.Distance,
-							selection.PassageDistance,
-							selection.BasePriority
-						}).ToArray()
-					},
-				roomContext = debug?.RoomContext == null
-					? null
-					: new
-					{
-						debug.RoomContext.RoomIndex,
-						debug.RoomContext.CurrentWaypointIndex,
-						waypoints = debug.RoomContext.Waypoints.Select(waypoint => new
-						{
-							type = waypoint.Type.ToString(),
-							position = SnapshotVector(waypoint.Position)
-						}).ToArray()
-					},
+                roomPlan = debug?.Work.Select(site => new
+                {
+                    site.RoomIndex,
+                    shouldProbeHoard = site.Kind is Coord.ObjectiveSiteKind.Candidate or Coord.ObjectiveSiteKind.Hoard or Coord.ObjectiveSiteKind.HoardIndicator,
+                    shouldSearchChests = site.Kind == Coord.ObjectiveSiteKind.ConfirmedChest,
+                    shouldVisitForIntel = site.Kind is Coord.ObjectiveSiteKind.RoomProbe or Coord.ObjectiveSiteKind.PassageSearch,
+                    hoardEvidenceState = debug.HoardEvidenceState.ToString(),
+                    kind = site.Kind.ToString(),
+                    site.Key,
+                    position = SnapshotVector(site.Position)
+                }).ToArray() ?? [],
                 companions = new
                 {
                     farmingMode = activeHost?.Context?.FarmingPlan?.Mode.ToString(),

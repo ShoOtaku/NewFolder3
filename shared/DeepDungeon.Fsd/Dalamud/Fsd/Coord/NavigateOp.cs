@@ -37,10 +37,9 @@ internal sealed class NavigateOp : FloorOperation
     internal Vector3 Destination => _destination;
     internal NavigationPath? PreparedPath { get; set; }
 
-    /// <summary>Change the goal leg WITHOUT resetting the attempt budget:
-    /// same destination+radius is a no-op; a real change only drops the
-    /// reposition window and the stale movement claim — attempts, held
-    /// effort and any terminal failure are retained.</summary>
+    /// <summary>Start a different goal leg or continue observing the same one.
+    /// An unchanged destination retains its attempt and stall evidence.
+    /// </summary>
     internal void Retarget(Vector3 destination, float arrivalRadius)
     {
         if (_destination == destination && ArrivalRadius == arrivalRadius)
@@ -48,6 +47,10 @@ internal sealed class NavigateOp : FloorOperation
         _destination = destination;
         ArrivalRadius = arrivalRadius;
         PreparedPath = null;
+        _bestRemaining = float.PositiveInfinity;
+        _heldSec = 0f;
+        Failure = null;
+        Attempts = 0;
         _repositionUntilUtc = DateTime.MinValue;
         Claim = MoveClaim.None;
     }
@@ -86,7 +89,17 @@ internal sealed class NavigateOp : FloorOperation
         // or danger arbitration is not making progress, but it is also
         // not failing — only frames where our claim actually won burn
         // the effort budget.
-        _heldSec += authority.HeldDt;
+        if (authority.HeldDt > 0)
+        {
+            if (native.RemainingDistance(_destination, ArrivalRadius) is { } remaining &&
+                remaining < _bestRemaining - NavigationRange.MovementTolerance)
+            {
+                _bestRemaining = remaining;
+                _heldSec = 0f;
+            }
+            else
+                _heldSec += authority.HeldDt;
+        }
         if (_heldSec >= NavDeadlineSec)
         {
             _heldSec = 0;
@@ -107,6 +120,7 @@ internal sealed class NavigateOp : FloorOperation
     internal override void OnNavFailed(DateTime now) => NotifyNavFailed(now);
 
     private DateTime _lastFailAt = DateTime.MinValue;
+    private float _bestRemaining = float.PositiveInfinity;
     private float _heldSec;
     private static readonly TimeSpan FailCooldown = TimeSpan.FromSeconds(1);
     private const float NavDeadlineSec = 30f;

@@ -24,8 +24,9 @@ internal sealed partial class FloorExplorationController
         if (dd->DeepDungeonId != 2 || Kind != FloorRuntimeKind.Normal) return false;
         if (_magiciteAwaitingRelease)
         {
-            if (ItemUse.Pending != null || Service.LocalPlayer?.IsCasting == true ||
-                !PomanderManager.CanDispatchItemRequest()) return true;
+            var actions = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+            if (ItemUse.Pending is { Key.Kind: FloorItemUseKind.Stone } ||
+                Service.LocalPlayer?.IsCasting == true || actions != null && actions->AnimationLock > 0) return true;
             _magiciteAwaitingRelease = false;
         }
         if (ItemUse.Pending is { Key.Kind: FloorItemUseKind.Stone,
@@ -53,45 +54,16 @@ internal sealed partial class FloorExplorationController
         return 0;
     }
 
-    private unsafe Coord.ChestOvercapProgress ResolveSilverChestOvercap(
-        ChestInteractionAttempt attempt, InstanceContentDeepDungeon* dd)
+    private unsafe byte SelectSilverOvercapStone(InstanceContentDeepDungeon* dd)
     {
-        if (ItemUse.Pending != null) return Coord.ChestOvercapProgress.Waiting;
-        int count = 0;
-        foreach (byte typeId in dd->Magicite)
-            if (typeId != 0) count++;
-        if (count < 3)
-        {
-            attempt.PendingSilverOvercapStoneRowId = null;
-            attempt.NextInteractAt = DateTime.MinValue;
-            return Coord.ChestOvercapProgress.Ready;
-        }
-        byte selected;
         if (dd->DeepDungeonId == 2)
-        {
-            selected = HohMagicitePolicy.ShouldUse(dd->Floor, overflow: true, alreadyUsedThisFloor: false)
+            return HohMagicitePolicy.ShouldUse(dd->Floor, overflow: true, alreadyUsedThisFloor: false)
                 ? FindAvailableHohMagicite(dd) : (byte)0;
-        }
-        else
-        {
-            var decision = SilverChestOvercapPolicy.Decide(count,
-                GetStoneCountAvailableForFloorUse(3) > 0,
-                DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId));
-            selected = dd->DeepDungeonId == 4 && decision == SilverChestOvercapDecision.UseSerenityIncense ? (byte)3 : (byte)0;
-        }
-        if (selected == 0) return Coord.ChestOvercapProgress.PolicySkipped;
-        if (!Items.CanAttemptPomanderUse(allowCombat: dd->DeepDungeonId == 2)) return Coord.ChestOvercapProgress.Waiting;
-        if (TryDispatchFloorStone(selected, dd, dd->DeepDungeonId == 2
-                ? "silver overcap relief (HoH magicite)" : "silver overcap relief (serenity incense)",
-                FloorItemUsePurpose.SilverChestOvercap))
-        {
-            if (dd->DeepDungeonId == 2) _magiciteAwaitingRelease = true;
-            if (CoordOwnsWork)
-            {
-                _coordOvercapRequest = ItemUse.Pending;
-                _coordOvercapAttempt = attempt;
-            }
-        }
-        return Coord.ChestOvercapProgress.Waiting;
+        if (dd->DeepDungeonId != 4) return 0;
+
+        var decision = SilverChestOvercapPolicy.Decide(Coord.SiteSearchBoundary.ReadStoneCount(dd),
+            GetStoneCountAvailableForFloorUse(3) > 0,
+            DeepDungeonFloorItemUsePolicy.CanUsePtIncense(dd->DeepDungeonBanId));
+        return decision == SilverChestOvercapDecision.UseSerenityIncense ? (byte)3 : (byte)0;
     }
 }

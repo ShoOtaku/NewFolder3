@@ -114,7 +114,7 @@ public sealed partial class EncounterHintPlanner
                 best = candidate with { PredictedHits = score.Failures, Exposure = (float)score.Exposure,
                     Assessment = score,
                     Reason = _allowUnsafeRecovery ? "hint-interval-least-exposure" : "hint-safe-interval-recovery" };
-                if (score.Failures == 0 && score.Exposure == 0) break;
+                if (score.Failures == 0 && !score.RecoveryPending) break;
             }
         }
         finally

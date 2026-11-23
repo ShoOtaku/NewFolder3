@@ -11,15 +11,35 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public bool OpenSilver { get; private set; } = plan.OpenSilver;
     public bool OpenBronze { get; private set; } = plan.OpenBronze;
     public int NextFloor { get; private set; } = plan.StartFloor;
-    public int OwnedSlot { get; private set; } = ownedSlot switch
-    {
-        >= 0 => ownedSlot,
-        _ when plan.AttachCurrentDuty && plan.UsesSelectedProgressionSave => plan.ProgressionSaveSlot.GetValueOrDefault(),
-        _ => -1
-    };
+    public int OwnedSlot { get; private set; } = ownedSlot;
+    public bool CreatedBySession { get; private set; }
     public bool AttachmentCompleted { get; private set; }
     public int Failures { get; private set; }
     public int Discoveries { get; private set; }
+    public Func<SaveSlotSnapshot, string?>? PersistPause { get; set; }
+    public Func<string?>? ConfirmResume { get; private set; }
+    public Action<string>? RejectResumeSource { get; private set; }
+    public ulong? ResumeCharacter { get; private set; }
+
+    public void RestoreCheckpoint(SaveSlotSnapshot slot, int failures, ulong character, Func<string?> confirmResume,
+        Action<string> rejectResumeSource)
+    {
+        NextFloor = slot.StartFloor;
+        OwnedSlot = slot.Index;
+        Failures = failures;
+        Source.PinCheckpoint(slot);
+        ConfirmResume = confirmResume;
+        RejectResumeSource = rejectResumeSource;
+        ResumeCharacter = character;
+    }
+
+    public void MarkResumed()
+    {
+        Source.ReleaseCheckpointPin();
+        ConfirmResume = null;
+        RejectResumeSource = null;
+        ResumeCharacter = null;
+    }
 
     public bool TrySetTargets(in FarmingTargets targets)
     {
@@ -40,8 +60,10 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
 
     public bool BindCreatedSave(int slot)
     {
+        if (slot < 0 || slot > 1) return false;
         OwnedSlot = slot;
-        return slot >= 0;
+        CreatedBySession = true;
+        return true;
     }
 
     public bool BindSelectedSave(in SaveSlotSnapshot source)
@@ -53,6 +75,7 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
             Source.ConfigureForEntry(false, source.StartFloor, source.Index, Plan.MaxFloor);
             if (!Source.Observe([source], out _, out _)) return false;
         }
+        CreatedBySession = source.Empty;
         OwnedSlot = source.Index;
         NextFloor = source.Empty ? 1 : source.StartFloor;
         return true;
@@ -61,14 +84,14 @@ internal sealed class FarmingSession(FarmingPlan plan, int ownedSlot = -1)
     public void ConfirmOwnedSaveDeleted()
     {
         OwnedSlot = -1;
+        CreatedBySession = false;
         Source = new PreparedSaveBinding(maxFloor: Plan.MaxFloor);
     }
 
     public void CompleteAttempt(in FarmingSessionDecision decision, int discoveries)
     {
         NextFloor = decision.NextFloor;
-        if (Plan.ContinuesAttachedProgression && decision.Error.Length == 0)
-            AttachmentCompleted = true;
+        if (Plan.ContinuesAttachedProgression && decision.Error.Length == 0) AttachmentCompleted = true;
         Discoveries += discoveries;
         if (decision.RecoverFailure) Failures++;
     }
@@ -81,6 +104,7 @@ internal sealed class PreparedSaveBinding
     public int? ExpectedFloor { get; private set; }
     public int? RequiredSlot { get; private set; }
     public int MaxFloor { get; private set; }
+    public bool RequireCheckpointMatch { get; private set; }
     public string Description => Pinned is { } value ? $"存檔 {value.Index + 1}，起點 {value.StartFloor} 層" : "唯一存檔待讀取";
 
     public PreparedSaveBinding(bool reusable = false, int? expectedFloor = null, int? requiredSlot = null, int maxFloor = 100) =>
@@ -94,10 +118,23 @@ internal sealed class PreparedSaveBinding
         MaxFloor = maxFloor;
     }
 
+    public void PinCheckpoint(SaveSlotSnapshot slot)
+    {
+        Pinned = slot;
+        RequireCheckpointMatch = true;
+    }
+
+    public void ReleaseCheckpointPin() => RequireCheckpointMatch = false;
+
     public bool Observe(IReadOnlyList<SaveSlotSnapshot> slots, out SaveSlotSnapshot source, out string error)
     {
         if (!PreparedSavePolicy.TryResolve(slots, Reusable ? Pinned : null, Reusable,
                 ExpectedFloor, out source, out error, RequiredSlot, MaxFloor)) return false;
+        if (RequireCheckpointMatch && source != Pinned)
+        {
+            error = "存檔內容與暫停時的紀錄不符，無法繼續。";
+            return false;
+        }
         // Non-reusable progress is permitted to advance only to the explicitly expected floorset.
         if (Pinned.HasValue && source.Index != Pinned.Value.Index)
         {

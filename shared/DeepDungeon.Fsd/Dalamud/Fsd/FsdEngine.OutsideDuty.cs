@@ -9,12 +9,20 @@ namespace DeepDungeon.Fsd.Dalamud
     {
         private const string HostDeniedFsdStartError = "FSD start was denied by the host.";
 
+        private bool TryStartOutsideDutyFsd(
+            Func<IScenario> scenarioFactory, int targetLoops, bool infinite, string? detailedMapScenarioKey,
+            out string error, bool resumePausedProgression = false, int completedLoops = 0) =>
+            TryStartFsd(scenarioFactory, targetLoops, infinite, detailedMapScenarioKey, out error,
+                resumePausedProgression, completedLoops);
+
         private bool TryStartFsd(
             Func<IScenario> scenarioFactory,
             int targetLoops,
             bool infinite,
             string? detailedMapScenarioKey,
-            out string error)
+            out string error,
+            bool resumePausedProgression = false,
+            int completedLoops = 0)
         {
             _runLogExportNotice = null;
             _runLogExportFailed = false;
@@ -26,7 +34,7 @@ namespace DeepDungeon.Fsd.Dalamud
                 return false;
             }
 
-            if (!TryAuthorizeOutsideDutyOperation(OutsideDutyOperation.StartOrEnter, out error))
+            if (!TryAuthorizeOutsideDutyOperation(OutsideDutyOperation.StartOrEnter, out error, resumePausedProgression))
                 return false;
 
             if (!TryValidateRotation(out error))
@@ -54,34 +62,24 @@ namespace DeepDungeon.Fsd.Dalamud
             try
             {
                 _executionLease.Acquire();
-                ClearPendingPassageFollowup();
-                manualNavigator.CancelAll();
-                Coord.NavDebug.StopAuto("FSD starting");
-                Coord.NavDebug.StopGoto("FSD starting");
-                Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(true, false);
-                Runtime.Navigation.MovementCoordinator.Shared.RevokeDirect();
-                Runtime.Navigation.MovementCoordinator.Shared.QuiesceVNav();
                 _ddHost ??= new RunHost(
                     _configuration,
+                    _encounters,
                     _dutyState,
                     _logMessageSource,
                     _floorEvidenceObserver,
                     _runTelemetryObserver,
-                    _spinBossMovementFactory)
-                {
-                    HoardStatistics = _hoardStatistics
-                };
+                    _spinBossMovementFactory) { HoardStatistics = _hoardStatistics };
                 _ddHost.FloorController.DiagnosticSink = RecordDiagnosticEvent;
                 _ddHost.StartFsd(
                     scenarioFactory,
                     targetLoops,
                     infinite,
-                    detailedMapSnapshot);
+                    detailedMapSnapshot,
+                    completedLoops);
             }
             catch (Exception ex)
             {
-                try { Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(_ddHost?.FsdActive == true, false); }
-                catch (Exception cleanupError) { RecordDiagnosticFailure("fsd-start-rollback-movement", cleanupError); }
                 _detailedMapCatalogManager.ReleaseRunSnapshot();
                 if (_executionLease.IsHeld)
                     _executionLease.Release();
@@ -98,8 +96,6 @@ namespace DeepDungeon.Fsd.Dalamud
             }
 
             error = _farmingError ?? "Deep Dungeon FSD did not start.";
-            try { Runtime.Navigation.MovementCoordinator.Shared.SetAutomatic(false, false); }
-            catch (Exception cleanupError) { RecordDiagnosticFailure("fsd-start-rejected-movement", cleanupError); }
             _detailedMapCatalogManager.ReleaseRunSnapshot();
             if (_executionLease.IsHeld)
                 _executionLease.Release();
@@ -107,8 +103,14 @@ namespace DeepDungeon.Fsd.Dalamud
             return false;
         }
 
-        private bool TryAuthorizeOutsideDutyOperation(OutsideDutyOperation requestedOperation, out string error)
+        private bool TryAuthorizeOutsideDutyOperation(OutsideDutyOperation requestedOperation, out string error,
+            bool resumePausedProgression = false)
         {
+            if (ProgressionPauseLocked && !resumePausedProgression)
+            {
+                error = _checkpointIssue?.Message ?? "死靈術士任務已要求暫停，請由「繼續」接回任務。";
+                return false;
+            }
             var decision = GetOutsideDutyOperationDecision(requestedOperation);
             if (decision.Allowed)
             {

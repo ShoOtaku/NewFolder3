@@ -30,6 +30,7 @@ internal readonly record struct ChestTargetVerb(ulong TargetId, Vector3 Position
 public readonly record struct GoToVerb(Vector3 Dest, float Radius) : IClaimVerb
 {
     public NavigationPath? Path { get; init; }
+    internal ulong EncounterId { get; init; }
     public string Describe() => $"goto({Dest.X:F1},{Dest.Z:F1}) r{Radius:F1}";
 }
 

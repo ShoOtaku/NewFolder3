@@ -3,20 +3,16 @@
   "engineVersion": "3.0.1",
   "files": [
     {
+      "path": "Core/BossApproachPosition.cs",
+      "sha256": "e65241dbbedb610be5be11d5d25b0c5415f17b19794fdb7edceb315add890c21"
+    },
+    {
       "path": "Core/BossTargetPriority.cs",
       "sha256": "adb177abb6e8dc85a988e88b6ab447a57818e000c0c47687081a19c9f75d0c28"
     },
     {
       "path": "Core/CombatPositionPolicy.cs",
-      "sha256": "b7ce6799883a19069093cb9130f3af6a2c46b373f3d691fcca866cd424c182fb"
-    },
-    {
-      "path": "Core/ControlledPtSurveyPolicy.cs",
-      "sha256": "f4cca2158071fe1fc03e4bf072163fbc83e6170fa814a1b2ac7e726d9e02016a"
-    },
-    {
-      "path": "Core/CurrentIntuitionResolutionPlanner.cs",
-      "sha256": "4499cf07bc12c32769e6b3024cf7b056d165009239581e5859ecf0c677bdaf75"
+      "sha256": "f1616bd39159d1a50b205bd0f45f4cb299ead4788f30deee7c1fef614d2fe5b1"
     },
     {
       "path": "Core/DeepDungeon.Fsd.Core.csproj",
@@ -64,15 +60,19 @@
     },
     {
       "path": "Core/EntryUiPolicy.cs",
-      "sha256": "484a6ecd77edb9ffc44ab1348e47c73bf5626e7f50f784ea6132667d1173988d"
+      "sha256": "917682b008f4d9436cea126af959e5db991261f792e0c1d83ca9a8dbf11382ce"
     },
     {
       "path": "Core/ExitUiPolicy.cs",
       "sha256": "eea34c3ee4184f991353f00b4a9de64f80f8d5129220e9199eca5b606a5c999f"
     },
     {
+      "path": "Core/FarmingDeathPolicy.cs",
+      "sha256": "352ca72e857d4f693e2192a9f13aac53d66846fd3cdee54e43dc7c082b00f25c"
+    },
+    {
       "path": "Core/FarmingEntryPolicy.cs",
-      "sha256": "f89a1c5261db96b81304b534cc3b84b1c98d522ae7b41d733b6a7ec06a46e05f"
+      "sha256": "8dc830662619a37ad88cb9953c6d35ab388b9c8b377c06cd884649917b954a13"
     },
     {
       "path": "Core/FarmingHarvestPolicy.cs",
@@ -80,19 +80,19 @@
     },
     {
       "path": "Core/FarmingItemPolicy.cs",
-      "sha256": "3f4e981d616c04b8051c4d29d3a24af465197c1e67c67039a90fc615f3b8def6"
+      "sha256": "b997ac55994e24db01da54eebd68a8b709c8eb7ea4453156dbe76ea7c837691d"
     },
     {
       "path": "Core/FarmingPlan.cs",
-      "sha256": "8823007ac57f3a665ccc739ff49f30cdd3543ac772ac2294de6e4b10ce896060"
+      "sha256": "66869aab88c90cbf3dc7bd165abb29190b442f05cb9fab0def8c90d0711517ab"
     },
     {
       "path": "Core/FarmingSessionPolicy.cs",
-      "sha256": "af78b64d1d6a6408a35119f17b8762869cefe487202fa8007d7c1d3fa13ab9a4"
+      "sha256": "8516b5930969cf9954e77270760e110578fc9a535563ee1702a472998eb1bb59"
     },
     {
       "path": "Core/FloorEvidenceJournalContracts.cs",
-      "sha256": "c40eaf351c3e1d5f3e8477eb26141c219767f06d7f75224aefc4673a90ffdf69"
+      "sha256": "a639f9ddf838b9318ffa28a320a3d50dc458dda04e6c2363ea1b7b3b2cbdc8f4"
     },
     {
       "path": "Core/FloorInitPlanner.cs",
@@ -115,20 +115,20 @@
       "sha256": "d642c9d64d706802aa26667e382f148ceb6b60ca916edb6150e5f3fdc9263426"
     },
     {
-      "path": "Core/FloorPlanSnapshot.cs",
-      "sha256": "4cb1f19759e4d08e20d44fbb0f3b3f6020d288e597b756e13bd4eec1179b5a25"
-    },
-    {
-      "path": "Core/FloorPlanTrace.cs",
-      "sha256": "ffccc688887a6337a696947340843e1856bc47fb6c91114623b932fad8ce0a0e"
-    },
-    {
       "path": "Core/FloorsetHoardDistributionPolicy.cs",
       "sha256": "74425b7a8d9ae78731d220cb218b1456338ce85a8e2f7cbb585d058e34af1fe0"
     },
     {
       "path": "Core/FloorTerrainProfile.cs",
       "sha256": "1f6fce93009be7a10630e22373ce2a610b747da8348ed7befba298d50cb39eb3"
+    },
+    {
+      "path": "Core/FsdDiagnosticJournal.cs",
+      "sha256": "2c305477c04d960fd6c4eb141d45c4fb7ce2924d998478040d3e7eed41ebba36"
+    },
+    {
+      "path": "Core/FsdDiagnosticSample.cs",
+      "sha256": "a44ba7683ffd00c27139b50d62232e95b92872025d9e3385572195cbf39430cf"
     },
     {
       "path": "Core/GeneralAutoPomanderPlanner.cs",
@@ -139,12 +139,12 @@
       "sha256": "88a99fa5e2dec08d521157bb621739d3899d325f5d33ba5eb79e816775de00a3"
     },
     {
-      "path": "Core/HoardIndicatorLifecyclePlanner.cs",
-      "sha256": "8b1e0db419a7daec3e5f949e71605785deaac0e522a4432b0f73d2c7b34f30ea"
+      "path": "Core/HoardEvidencePolicy.cs",
+      "sha256": "3ad9355bcd3e21839a993baad7ec389da7eb58fcb42e319280fbc6c97ea3a9ac"
     },
     {
-      "path": "Core/HoardWorkInvalidationPlanner.cs",
-      "sha256": "46d2cd6c1c581a4a241f8670e19b4da51905fb5e77a7cf97cf14bceee2087574"
+      "path": "Core/HoardIndicatorLifecyclePlanner.cs",
+      "sha256": "8b1e0db419a7daec3e5f949e71605785deaac0e522a4432b0f73d2c7b34f30ea"
     },
     {
       "path": "Core/HoardYieldCatalogContracts.cs",
@@ -167,16 +167,12 @@
       "sha256": "4e3a2c07aa96ec9c54f93669b781861a1f6b514466edd62392efccd985eecbc0"
     },
     {
-      "path": "Core/IntuitionEvidenceAcceptancePlanner.cs",
-      "sha256": "bda1f6899a2d1d8e65eeb0e1a80f9b8f399d97a1be3be170b49dbe63e70d13d3"
-    },
-    {
       "path": "Core/LateHoardEvidencePlanner.cs",
-      "sha256": "d3291df14cb0a88b7fde1ee838133a9b38483db202e792541956b86051fed39c"
+      "sha256": "efe8cefe1eff95ee0f3f2a221cf5619bd3bfc4a6a48630512fbf2479592fb7e2"
     },
     {
       "path": "Core/MobPullPolicy.cs",
-      "sha256": "65eba347c23bc872c2432f87d09b51bc4841bfba4356f6b25376076c62fe0c93"
+      "sha256": "08b60e6f91fc2ee9503735457112401f3956fc4a08f0ba66b98dc2373b00143b"
     },
     {
       "path": "Core/NativePassageAvailability.cs",
@@ -188,7 +184,7 @@
     },
     {
       "path": "Core/NaturalPassageAccelerationPolicy.cs",
-      "sha256": "302c8f75d511f9653137ef50cb07d16f21cab76af580b65f1894c75bb529f508"
+      "sha256": "185269d304cd7de06c99b0402b89e297a107e8de05e8dc553d183696fa06ce3a"
     },
     {
       "path": "Core/NaturalRevealInventoryPolicy.cs",
@@ -200,7 +196,7 @@
     },
     {
       "path": "Core/ObjectiveArbiter.cs",
-      "sha256": "829936a215ad49973f2e342cda7423edefa42685dddfbb3aac05de7b9dc4ae3b"
+      "sha256": "8413f93a2b1e4dc15daad2e577fcd74d8c7dcbe7545c22e457d689734bad832d"
     },
     {
       "path": "Core/OutsideDutyOperationConflictPlanner.cs",
@@ -215,20 +211,20 @@
       "sha256": "071dcd29a07601e65bf80cf0085ca958222098ac36cc6158db80676a42ee0f20"
     },
     {
+      "path": "Core/PassageGoalPolicy.cs",
+      "sha256": "1949d691531380f8258bd5acdde46bf27e3b7032fced2e7857f589e77148c188"
+    },
+    {
       "path": "Core/PassageNavigationPolicy.cs",
       "sha256": "e0be2878f92cd4c9cc53670f781089f45908d5accc61a623a0093d91ea736870"
     },
     {
-      "path": "Core/PassageWorkPlanner.cs",
-      "sha256": "76f67a940dff8cca1484d22fc2da80a42fc187d9d583d928c46008927365e233"
-    },
-    {
-      "path": "Core/PlanGenerator.cs",
-      "sha256": "f4feb7ac37ed5cf549ebdf76a8aa64d7631ccaf6fe0e2c91a2b2f77789628f60"
-    },
-    {
       "path": "Core/Potd200RewardPolicy.cs",
       "sha256": "96a63cf3993633864dafebc3734fb100dcbaa06f07cce0d04960c13fa8af1a56"
+    },
+    {
+      "path": "Core/PromeRadarMovementState.cs",
+      "sha256": "256b5d9e7cb44704f6768076a77b5a47e3587c2923a6129f7a2f32ecfddbfe45"
     },
     {
       "path": "Core/Pt100AltarPolicy.cs",
@@ -247,10 +243,6 @@
       "sha256": "4f3478a6aaa59b4d877171c34b16d7591422a51565d11c98f70bb339a8160eec"
     },
     {
-      "path": "Core/ReadyFloorIntuitionPlanner.cs",
-      "sha256": "e81f20af93547452404f75ae108ce5fe35bc2ed88ee0b99a34b20d5af59a6ee9"
-    },
-    {
       "path": "Core/ResultAltarPolicy.cs",
       "sha256": "409cbb815a4e357187bf8ea84b0a6932d7667368e362b6c843ad319446b739c3"
     },
@@ -267,24 +259,20 @@
       "sha256": "6d631881f349628d387cd8dbf188f3aa899e50ee54953d9ed130ab9355ac70bb"
     },
     {
-      "path": "Core/RoomSearchBuilder.cs",
-      "sha256": "084d6c92551b618957063169c863e15cb2ff16b4f85256ff9181ef23bcf97b61"
-    },
-    {
-      "path": "Core/RoomSearchResult.cs",
-      "sha256": "38b6a1b59fbe188c63aa62f6f72dd9b974d9ab9b45784abf11ef435aee08f7cf"
-    },
-    {
-      "path": "Core/RoomSearchSnapshot.cs",
-      "sha256": "e521337bd7b3794b89d3710e8470b52b3618c183d212792bf688806372074611"
+      "path": "Core/SaveSlotResetPolicy.cs",
+      "sha256": "890181de569e0f939d12f736b2c0358dbe2074e147e511df8b94c4c35a785bfc"
     },
     {
       "path": "Core/ScenarioPostDutyPlanner.cs",
       "sha256": "33c797decd1ee90997882a999670f043ad269327e7e559589fb4de299ce6732e"
     },
     {
+      "path": "Core/SelectedProgressionSavePolicy.cs",
+      "sha256": "c2c03f3c23ff0018dd2f91386080a78555707d7bf6295add5c33ca8ff64b0dc2"
+    },
+    {
       "path": "Core/SightResearchPolicy.cs",
-      "sha256": "31adf67c7c4597b36d89a52fe2722e51ced745b4298314aca6067117c68007a0"
+      "sha256": "ca3835919f869f526c8e7f80920be0ea86c40060fa96e3ec0e13294900590dc1"
     },
     {
       "path": "Core/SightUseState.cs",
@@ -304,11 +292,67 @@
     },
     {
       "path": "Dalamud/DeepDungeon.Fsd.Dalamud.csproj",
-      "sha256": "ff24b6032dbb1209273c0bb0c9622427e4d98013ed4321607390e762bb2550e8"
+      "sha256": "fbb22653cb3ab3230cde60522cf8e106776e20cf16a19006ebbaddc96870ebea"
     },
     {
       "path": "Dalamud/DetailedMapHostOptions.cs",
-      "sha256": "97a0a494f2f071d8672f47b4ae19fe4d816e0931fa26871ea9e847123d65abdd"
+      "sha256": "3bb6d92aa81acbc2fd51d8d8d9c0becfb5690082e05d364653b6133519d481f8"
+    },
+    {
+      "path": "Dalamud/Encounter/CombatActionEvidence.cs",
+      "sha256": "1beaf18b20f41a961bc7de43dd6d9eaabecb438ce46fe03bf996863e4cc21241"
+    },
+    {
+      "path": "Dalamud/Encounter/EncounterMechanicHost.cs",
+      "sha256": "f90d9f129721f114f7e8ca18dc5ad0467648ac061228ed60e018e4cf0c7bd5a3"
+    },
+    {
+      "path": "Dalamud/Encounter/EncounterMechanicHost.Events.cs",
+      "sha256": "37d99579dfdb78a39a22b15b630ca0b07a6363397f3f86bb518b51fc163c8a72"
+    },
+    {
+      "path": "Dalamud/Encounter/EncounterMechanicHost.Execution.cs",
+      "sha256": "dd0d427cc8c694f17973c4f19e2e78a6c8aad7160a39d3e18221b7e2495e727b"
+    },
+    {
+      "path": "Dalamud/Encounter/EncounterMechanicHost.Planning.cs",
+      "sha256": "12202b9e87c85ded2af0838b109ec2f3b0fb9e4fcfc7bfe939068637c7fb4a36"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicActionGate.cs",
+      "sha256": "8dca26e6387599dbcdb00108482b4ca0f1f573121e36b84815d106652d270a4d"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicCastLocationCache.cs",
+      "sha256": "050e58fb79536cfb4bdfe696c1136884373d4c76337ec9fda1c3ec8b3c04dce2"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicDrawOverlay.cs",
+      "sha256": "be06a0fb3abfa01049d5c5434253b9ec7ce05ef84a6b685f618dd56753716bcd"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicExecutionController.cs",
+      "sha256": "0dee37bf2826de5b17d46814389c6edbc533c38505904dca0d110c10b1c536fb"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicMapEffectCapture.cs",
+      "sha256": "4b0e2c02a7788aa60b844574ba0383a012b5eca9ead9357afe37b0478861a56e"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicTimelineReader.cs",
+      "sha256": "d7f8e972709f5f0c017b3b2e0ed89e8bd527280839b3be2444169822fb50da6a"
+    },
+    {
+      "path": "Dalamud/Encounter/MechanicWorldSampler.cs",
+      "sha256": "4fa4112ff3d94c82e88771aae1b38755fe1940be2fb4b63e968f026db882d711"
+    },
+    {
+      "path": "Dalamud/Encounter/NativeEncounterEvents.cs",
+      "sha256": "c7623d1de91170e286197044f77b9546de9f997653a5b8666c08ee54808a74e4"
+    },
+    {
+      "path": "Dalamud/Encounter/Potd180EncounterAdapter.cs",
+      "sha256": "234cb7e64b6c8beeb1dd22869d7d53536f744444687d66a5efdf86b06e3c184d"
     },
     {
       "path": "Dalamud/Fsd/Coord/ActorPose.cs",
@@ -320,15 +364,15 @@
     },
     {
       "path": "Dalamud/Fsd/Coord/ClaimVerb.cs",
-      "sha256": "6b99d500773040b19c9012fdaac426adf62d5d302d0fc0910fec35fcd28e5fde"
+      "sha256": "8c84125e9e67d5dd43a294aefe155c8019324e68e9aa9248721eaadb6722defc"
     },
     {
       "path": "Dalamud/Fsd/Coord/CoordNativeBoundary.cs",
-      "sha256": "0c81eae01dd2aa28095a7722e0ed1c067fad2c14c178c837f4154a9eff75403b"
+      "sha256": "a5022b5eba8318fd0b6a53efedbf130d5ad61f96ed535c2c3aafbf07338bdebb"
     },
     {
       "path": "Dalamud/Fsd/Coord/CoordPipeline.cs",
-      "sha256": "75afac417156cf7310d2728808f7f9ff6b35a398d7d601d49fdb70efd1b0c8d2"
+      "sha256": "7823e90da41f4a22664b581b52f8fdc8c7811901b8452eba7ce35200fa27a2c1"
     },
     {
       "path": "Dalamud/Fsd/Coord/CoverageSet.cs",
@@ -336,23 +380,19 @@
     },
     {
       "path": "Dalamud/Fsd/Coord/EngageBossOp.cs",
-      "sha256": "0ea54d46cf13e01427bb19847c448b2b0f0fecdf856bdaa215d720c697008aa8"
+      "sha256": "1e7c547eb15751b44b31fb67804baa1e428400133c7d47311dd53b1f149a3448"
     },
     {
       "path": "Dalamud/Fsd/Coord/ExitPassageOp.cs",
-      "sha256": "a56fe9e06b3245536d6d82a9ab32b45eefdcf79bbda41787940b5c43d10f0592"
-    },
-    {
-      "path": "Dalamud/Fsd/Coord/ExploreRoomOp.cs",
-      "sha256": "2bf1097c9af4f5029359ba2de02957ea434c7b2f42b519d830878f58cc25fae6"
+      "sha256": "9199357cebd4ae5d98828de0b86be9c08e56ce42e5e0a612ac1ed195b0086283"
     },
     {
       "path": "Dalamud/Fsd/Coord/FloorFacts.cs",
-      "sha256": "fc9045d5f79f847f7509f98b5635c50b15c99806f73c15ca1c1842d7c3d0ad69"
+      "sha256": "76a746e8749315c22c2b24d262bfe6bbd6bb51a6d0cd0e1e09160976bd71f30b"
     },
     {
       "path": "Dalamud/Fsd/Coord/FloorOperation.cs",
-      "sha256": "1f3edf24c2fb5e07869e5281d4d572590e255c8d85ccc10f19c8898b7b8b2cfd"
+      "sha256": "e79c9c9b5d6c0e4ab15fd15e7ac4fab6ee4788cfde5efa7927c20161068c6b7d"
     },
     {
       "path": "Dalamud/Fsd/Coord/INavSurface.cs",
@@ -363,40 +403,48 @@
       "sha256": "1335e3e87fc263bd86abfdc707ba9066e2cd9fb828647d22ca4c6622ec3c9fa9"
     },
     {
+      "path": "Dalamud/Fsd/Coord/NativeDisplacementReader.cs",
+      "sha256": "eff0f71374d3eb43800f93b5afb02c48e7bc464624974940a12021119caaf360"
+    },
+    {
       "path": "Dalamud/Fsd/Coord/NativeNavigationObservation.cs",
-      "sha256": "af4cb3e0bcec50cd908c77ccf1761d22bc04e8b8cbb87e400a4b6f724561ba55"
+      "sha256": "f46e82c3465d18baae8b8c11b0ef9a01d66716d03891f9184056fa34b1dbbef1"
     },
     {
       "path": "Dalamud/Fsd/Coord/NavBitmap.cs",
-      "sha256": "6082b8bc8d001df7e401fbf4e177a57943f2996b83c1f25f4b4b153592e61786"
+      "sha256": "27ba162e5b96dbd0d8e13432031fee4637466f7324a0f674c45cb1b6e5363893"
     },
     {
       "path": "Dalamud/Fsd/Coord/NavDebug.cs",
-      "sha256": "43b1bfae76804a17c66ca5f59934a900164ec0cfd4abb92eb863439b0fe510ff"
+      "sha256": "0b33773b1c7e02cb75807f344b1903aa322996ec1e4046733731a2a01bcd8a5d"
     },
     {
       "path": "Dalamud/Fsd/Coord/NavigateOp.cs",
-      "sha256": "be0a67c89b1173c63fd562b4fbda2a1f9a1c05a0df4a17eabfeb559c31c7debf"
+      "sha256": "0f9520447ac23a9480b0c79ef4c618b614ab3223b8660ab86f1bbbabfb38c695"
     },
     {
       "path": "Dalamud/Fsd/Coord/NavigationSurface.cs",
-      "sha256": "191590422454b39a15166ec77934ff8c5da01b709454416112881327da2fe15e"
+      "sha256": "359468bc9b0df703bf2f1d7238dd8f0fa5ed43d49b38de47ab94f97854dee010"
     },
     {
       "path": "Dalamud/Fsd/Coord/NavigationSurface.Diagnostics.cs",
-      "sha256": "da2538232d6326fb1d80362d4d03e2153239231ab9e8a159946ccf96bc44ee96"
+      "sha256": "96dbe6c694eb3211819cfcbb120e0dbb061a0a6ce5c805b1d9f815b0f47053c3"
+    },
+    {
+      "path": "Dalamud/Fsd/Coord/NavigationSurface.Planning.cs",
+      "sha256": "f986681fe7adfb0fe85a393bd7418ddb6d93ad1855580c5ffddfbea1d327ef1e"
     },
     {
       "path": "Dalamud/Fsd/Coord/ObjectiveSite.cs",
-      "sha256": "7d46dd143d1f63b7b96595c73d4e34418290dc9d80f450f0ce282f90f0e68a1b"
+      "sha256": "6290a984dc1ee571b842c9987ed4cd2d43e7e79f998825873d2e4e5745725ad9"
     },
     {
       "path": "Dalamud/Fsd/Coord/ObjectiveSiteDriver.cs",
-      "sha256": "6980dee0ffa867c10d6bb200684c6d5d340e54d5fa18103fd4bef386c4f8bcbd"
+      "sha256": "b289889b9426edbb2a94c95baeaa83c94a2d78c8307cf043ef76adaf560b5823"
     },
     {
       "path": "Dalamud/Fsd/Coord/ObjectiveSiteSource.cs",
-      "sha256": "cb9c29ef64b8c93496b6191cb3ff7d915cebba8cb5927eae034c41691f7e8374"
+      "sha256": "acdc3e5200c1bd9c108c0cb45da229fb7e2bf7ad68d9bf2162d18fddb0f3fd36"
     },
     {
       "path": "Dalamud/Fsd/Coord/Observation.cs",
@@ -404,7 +452,7 @@
     },
     {
       "path": "Dalamud/Fsd/Coord/OpenChestOp.cs",
-      "sha256": "435adb2b256892b0e400a306cd7e7f4fc6787e99fb0746043716573fb97028d0"
+      "sha256": "199c75b2fa5ba6ba029361af23cc98e4da8c54ced0a613175d69f2518fe40cc2"
     },
     {
       "path": "Dalamud/Fsd/Coord/RoomSitePlanner.cs",
@@ -412,11 +460,11 @@
     },
     {
       "path": "Dalamud/Fsd/Coord/SiteSearchBoundary.cs",
-      "sha256": "5b841aa6e8bab00e5140e25c0026e171611f40417f0947f3bfe7e4df9b88cdf7"
+      "sha256": "26b13fa0cd02be7da926c5e5e27292986095b3971065a2b8ee95a2679904e264"
     },
     {
       "path": "Dalamud/Fsd/Coord/SiteWorkOp.cs",
-      "sha256": "af8d53910a6b0bd846d5c3d06ed952e1f67da3d0cf692d148f89f571f2938c15"
+      "sha256": "aea8af79210ab03fdc8b715373db22f9fd2bb051facb3d0b4a113c12f4516047"
     },
     {
       "path": "Dalamud/Fsd/Debug/BgCollision/BgCollisionDebugOverlay.cs",
@@ -424,7 +472,7 @@
     },
     {
       "path": "Dalamud/Fsd/DeepDungeon-Fsd.md",
-      "sha256": "febbf5abe71bd907cca8893ed915eb6d36bd928b160ef76d595b4c4bd7a0fe67"
+      "sha256": "d3189f45e8cd47738f94d395e0f8c04a53baee0a7169a5c661bf4d71491c4078"
     },
     {
       "path": "Dalamud/Fsd/DeepDungeonHelper.cs",
@@ -432,31 +480,39 @@
     },
     {
       "path": "Dalamud/Fsd/FsdChestInteraction.cs",
-      "sha256": "f9ea4e96ccd1838309800f9c008fdcbcf0f7155cc33de9d6df9cc40a685a9599"
+      "sha256": "1b03a30408e6d9d2c14d2db1ca2f04103fc028cf7b1f2f73a4ecc682a6d6a88b"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Bridge.cs",
-      "sha256": "f60a2363b27200068221b3ec5cae7959b602c9b3c87192d4787bd4bed5a3e86b"
+      "sha256": "1b929082c225a113ec7d0283d0653da0ed1a51e1985baa8c779a736872bb7675"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Companions.cs",
-      "sha256": "94ae30a78e5ecedf0da3ea7fc1632945c770b6c3b879ee3ccd1586c94976e889"
+      "sha256": "8a53faef19f4e2ebd504e6e000a2f65fa6947741d64ff633e95c8e576275e8c7"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.cs",
-      "sha256": "db389c4fd2aa338fd3781310e5bab64073fc0e44b74de8a3a3d89beef06857f1"
+      "sha256": "e097f363d6e97c3e9db5292c4307aadab2ce61ecb2ebc850000a38011bdfc436"
+    },
+    {
+      "path": "Dalamud/Fsd/FsdEngine.Diagnostics.cs",
+      "sha256": "bc55bc38b96fd7a63fd8a29b4c4ee679cc7e3498a42ceeaf80a9d4a94d8d11fa"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Farming.cs",
-      "sha256": "20cc6745b8fe8e54967921a6721f89d88cd23fae20cf0f119d1308eef2023404"
+      "sha256": "0843d5e9a566171acad881d0aa40676696ee89680003d7a88e6e5a6c37f3037c"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.OutsideDuty.cs",
-      "sha256": "a112c9312181aaf282f4df46aac1e621c84d421b1127935a67b0c36ba3bc43c4"
+      "sha256": "3dff7a2b59908338a37bc8aa7c1c3bf6b121b479efa4b8f851a7e7e25f26aea1"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Overlay.cs",
-      "sha256": "50fd648286d1dba4301bea38be2c0830aeeb07529c2909065ede10eab823e836"
+      "sha256": "3995f0f98da7215308cc9a59cea93771e5d131d4f9c32f6ac2312ed6924aee8f"
+    },
+    {
+      "path": "Dalamud/Fsd/FsdEngine.Pause.cs",
+      "sha256": "f872a46b998165b6f2e541737e3480d3a56002ec578e2fb5f5d2cf7bcb47855f"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.RoomPresentation.cs",
@@ -464,11 +520,11 @@
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Rotation.cs",
-      "sha256": "6e166a461c0140a9a61129d9d5ae33fff954b87ba3fda8f545ea02bf40d09e16"
+      "sha256": "e14ef13303601d7420b494f13de5c9961890827b6b97a1ab14933109e36f2e9d"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.cs",
-      "sha256": "ce844fcaa990e9ee59dcae63f5821118e1add5f74b85de19bfa7b1df20aca0ba"
+      "sha256": "2e2d998e8862e5e951fc290f9d1f633ba6c7055328886f596d0b53127ee7bc03"
     },
     {
       "path": "Dalamud/Fsd/FsdEngine.Ui.DebugStarts.cs",
@@ -488,11 +544,11 @@
     },
     {
       "path": "Dalamud/Fsd/GameState/DeepDungeonUi.cs",
-      "sha256": "47a2b1a77aad4923e8d6cb5e8383333e846ffcf2ba873451ba54d267dcf4aefc"
+      "sha256": "cb34044b9023647395daaeaebf4261d97638004dc17c1badc8555b427aa00883"
     },
     {
       "path": "Dalamud/Fsd/GameState/DetailedMapCatalogManager.cs",
-      "sha256": "12a23c1d9d3592b7a9fdd9446c0d4d9dc73bf56fa7d808d1172f8b22cb0a0e5f"
+      "sha256": "7334764acd35a47fd61a3ca0d68ae428dc7b16b79119e7db246b2077a6d5a24a"
     },
     {
       "path": "Dalamud/Fsd/GameState/DungeonCatalog.cs",
@@ -504,7 +560,7 @@
     },
     {
       "path": "Dalamud/Fsd/GameState/DutyState.cs",
-      "sha256": "ca27bc2d4a7cc778016540e3e8de97a0c3b3671a0fc3b918dac718580a1b2b44"
+      "sha256": "0325abff64bf88a4cab2c51ddcf7e250a456625a289ad59bde00387c1bd58835"
     },
     {
       "path": "Dalamud/Fsd/GameState/NormalFloorGraphSnapshot.cs",
@@ -516,7 +572,7 @@
     },
     {
       "path": "Dalamud/Fsd/GameState/PassageLocator.cs",
-      "sha256": "464403c7cb3f3a027fffb099dc4ce5be5f2154e778e51e33311df50f1454a628"
+      "sha256": "79c395da34aa437ad550d22468d0bcc9297e744f7d8f2c06da9c8a7999e7724f"
     },
     {
       "path": "Dalamud/Fsd/GameState/RoomGraph.cs",
@@ -528,11 +584,11 @@
     },
     {
       "path": "Dalamud/Fsd/Map/FloorMap.cs",
-      "sha256": "8bf4abe681ee70456ef0e355861e3eb4c1d69969dd939f36b1b5917d6bafa6c1"
+      "sha256": "a113898dcf8b1d04a855ae535463c2f7d6fbdf150749b6bea1d310bddc14ae96"
     },
     {
-      "path": "Dalamud/Fsd/Map/LiveTerrainCapture.cs",
-      "sha256": "6d97890548fbaec42fbdc752e214107f0b0fc3d450a0d370364ebe39bdb99331"
+      "path": "Dalamud/Fsd/Map/FloorMapSource.cs",
+      "sha256": "cdd51b7d7947e80a780b44e0866584a734d8fbdc8a91d3bb13405e86aaaba837"
     },
     {
       "path": "Dalamud/Fsd/Map/MapPos.cs",
@@ -544,11 +600,15 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Combat/CombatAssistPolicy.cs",
-      "sha256": "67d5646f4bfd2bdb9e8e343e9beb446cb587b10cde0d9b73652fbfe3b6231f9c"
+      "sha256": "2e474da0663f0b1d234f52241085247c9137b88d70761f1f1a9b192adaf1c761"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Combat/CombatTargetProviders.cs",
-      "sha256": "87bd97191b0134d3bcafdb70237a6a9d21de25e0911b02df803bd0e68c334449"
+      "sha256": "ca255f163c32aac86d94a200a14cc37f0b98bf225f42b33005c89e2c873c1d09"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Combat/PromeRadarTargetProvider.cs",
+      "sha256": "5c8032a4f686529e7c50b7ba6203a6f42018e465b91b89eb604e37206259288c"
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunLogExporter.cs",
@@ -556,35 +616,27 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/DeepDungeonRunRecorder.cs",
-      "sha256": "c4f008e23e5f47e87f57a72cc615330dfee77678e84a3f127691ee5efc21a6aa"
-    },
-    {
-      "path": "Dalamud/Fsd/Runtime/Entry/ControlledPtOccupiedEntryFlow.cs",
-      "sha256": "64fa5b1967b7d6a5e5e4b7d796e80f48c992a08f48d86e91a2d87d48882abc25"
-    },
-    {
-      "path": "Dalamud/Fsd/Runtime/Entry/ControlledPtSaveVerificationFlow.cs",
-      "sha256": "150df085ad0e3193dd0b34fdf0bdbc204015a5cfe7582dcf3ebff1883f0fce20"
+      "sha256": "3df0a3435d2f64fcd346e13306a187a10d3e6a177b36503bc1321ccae5705650"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/DungeonEntryController.cs",
-      "sha256": "8d57da3ff28520c6e9f71f6d15b94812f60a9e6da0b6a4662eccc28848966275"
+      "sha256": "86cdcab6d356845d0f51b6a595454b537c43ebaeb4a2aa0e11f5cf1d446c375b"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/DungeonExitController.cs",
-      "sha256": "7c00c0d5bec2ee1964a6548264755a136f6b27de3ffea9f9a116a0e3c74dd3f7"
+      "sha256": "7ca29d363ae9592ab99aad437a9812862db856781cff4be4dc20b95c08695e4e"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/EntranceWindowCleanup.cs",
-      "sha256": "070a22823362d5062a6393ccb31c552b039487b55555ddb15f3228132a15ca48"
+      "sha256": "52ad51c1b94baa87284d37a4ef18487cfacf1dc203963d8518bcec931697aca2"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/EntryUiObservation.cs",
-      "sha256": "0d89b367e94aba86180bf7743cef2f0820f2357572a58476eb6ce46e9aaf02b5"
+      "sha256": "7e1da40eda7f73725814040f1b2b7274454e896d5c7e565743aab9abb81727b2"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/GenericDeleteSaveFlow.cs",
-      "sha256": "198461c688f6e9b08b51afa3acb9dcd02fd9132f3fd11e3491c127a8ee6920a8"
+      "sha256": "c88fa447b0f7fbf5d6d9d9344313b98777b24075be77444838eb1cc4e5c75b44"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Entry/LeaveDutyFlow.cs",
@@ -600,11 +652,11 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/CombatPositionRecoveryController.cs",
-      "sha256": "eb58e95057d92b2fcecf6706f0340fdafb6c2fa20cdd8f9a4d776068324430fc"
+      "sha256": "461fff0fccbdbb7d2993e685d102a9590da050dd597292f96c3f0955cc4b94cd"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/EnemyChaseHelper.cs",
-      "sha256": "6319b01b66d8e458f4c007dda9d42f9dca7fda047a6f1a6ec545e6f1fbf8aa99"
+      "sha256": "081e3ada65a63c8b7a033f55fa533caa1fd25a4cc33e0be62a7244d494b4d0cc"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/ExitPolicyController.cs",
@@ -612,39 +664,51 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorBossController.cs",
-      "sha256": "073ec346e01eb19c59191aef5af86ef4e059f1bd06487c1212b4cce21be15194"
+      "sha256": "54cf72f5b758c4ac4851b937ee2299c59913c708b4b3c4be6118b577f2601132"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorEvidenceJournal.cs",
-      "sha256": "a9880cb751210f60b3c7e987f7dd72fd803a1fd3fd24dc5706802198d714e8f6"
+      "sha256": "5d6b53fa8f3d3a9a47041162413536b2c492f5746b93abd32c83fbad9750eaac"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.cs",
-      "sha256": "d57a53ca894d303a509af9012d263fbc8ddb1bc8260b0c8bf969c45f613e7b68"
+      "sha256": "52c90339950305595a4575b93bbaa5cfd251e0c83c01eb878c45b3127dee7796"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.Debug.cs",
+      "sha256": "d9a2a335a816cd5489a5ea29d83d53a0d835c4a504cc31fa97cedd686b5aecb2"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.Diagnostics.cs",
+      "sha256": "e4bff10d1eead855acd43276949f86d76fd1169be98fc71098077e8d213dc04b"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.Farming.cs",
-      "sha256": "962d27f3ed270034be7d5155571abf84c3a717ae4a05e9f9ccee24fe2b07dfcb"
+      "sha256": "22cf715d2dd2c3a971d5eae4921162189cfd5fe46ba35e79d62cff1a8d6ea639"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.Magicite.cs",
-      "sha256": "633c6f5e9e14cfa6603e1d239e2c7907bb7c72ac75b11f07c1f74c12fa151052"
+      "sha256": "5ece847be37151dbf5527e504b53ca7f142b81a6b04cb9a5590dc9455a365751"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.Passage.cs",
       "sha256": "7ccf2a8f50fd4de8c477a122d688366803130c990e51354e9c1d508e8d10889e"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.RoomEscape.cs",
+      "sha256": "6c129df2c28d40ee6f6dbbb0096904cf9f7406d042e3e46b525b0a3a1e497fb5"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorExplorationController.RunFloorState.cs",
-      "sha256": "58cfa494a7d82cde618cd07254de717165553dd811459e8e61aad9c021c769dd"
+      "sha256": "68ae9f8a0b2cbb21241a4fa575f537fcda2d1120895205771930a4744cb583c4"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorItemExecutor.cs",
-      "sha256": "88347d33b4370f1961c60d62f0eb8e82172f90462189c9a333eb7ed3b48ca742"
+      "sha256": "b0e7b2dd6f54c369cf3e3b5971623ec07d80ded177ea71e9a6b03bcf2120eef2"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorObjectEvidenceTracker.cs",
-      "sha256": "821d6d9f5ea709cf73c25daf6fc45662fb77076b8da25d442866295935544d5f"
+      "sha256": "273312328f92d72725a161bc916306abb982945d1ff7dc21c55ec29016fbb348"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhase.cs",
@@ -656,59 +720,63 @@
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.cs",
-      "sha256": "9d763ef4f209ab1d4e227fe6361007ec933bb557dd59cccae887182dfb300f09"
+      "sha256": "e502c9fc51725aa389ffaccadbd1499104e08bb2c02fecefc91b9a9dd18f2a4c"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.Diagnostics.cs",
+      "sha256": "c15bbb62b02393edfdb4243fb0255c5a42b664c70a4e3e7135bc5ef6db9c6f32"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorPhaseController.RunTelemetry.cs",
-      "sha256": "2e69239a55056ae0c820d26f0a195de231a570f39d5e4f54c00908110c3f011b"
+      "sha256": "771551138f9ab3da109ea498d96be50e6f63e7eaea194493c35c710d9f30d156"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/FloorSurveyController.cs",
-      "sha256": "560a66fea00e68e99e7216f9012adff8ddae15e10b0cfd6045a8fed5c13a8b2f"
+      "sha256": "0d5a75624d2c0a4486e0ac6a5af2921316dadd11c3e0ed8559336aad43a1f7f9"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/NormalBossMovementStrategy.cs",
-      "sha256": "aa4777b42e53426b6fbb4c906c06692681979b90fb179ea9a75376ab38b53c3b"
+      "sha256": "7cc3049f40a314ccd75afd33c7321c77fa376e9eec487803ebfc4cf9c446c361"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/PassageDestinationResolver.cs",
       "sha256": "96728487e01157ad77f60d28991ff16805f45c0f54658c59759727003d132e29"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Floor/PromeRadarBossMovementStrategy.cs",
+      "sha256": "4527d140025aa3a80a2b8b62fd7513d73e3f638782c0104e6b767d0f0f056ff9"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Floor/RunFloorTelemetryTrace.cs",
       "sha256": "687f6acba44908e2fe90f360b25822546e34965ab9581da3c8388d237d9e7144"
     },
     {
-      "path": "Dalamud/Fsd/Runtime/Floor/RunWaypointTelemetryTrace.cs",
-      "sha256": "85d844dd4fdb5c1eccc431898b9ac5cc4d502b2a80f9f445dc070bc556ba499c"
-    },
-    {
       "path": "Dalamud/Fsd/Runtime/Floor/TerminalRoomController.cs",
-      "sha256": "a3ed3d6542ae58e3e7dc0dd5fa4b19fc7d7aadff9f0f51adfd9c5796d9098bf7"
+      "sha256": "ac8c81a42d2f074f93fdf48363498ac29b39f27d6cfdb5a88d9bc9e21cdad5a2"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/TerminalRoomController.Potd200.cs",
-      "sha256": "523a187c22af66e12b424d914ee61f58b224687d16b1a00c50b3ad2478b78e57"
+      "sha256": "f9fb50e266c3179c6dd00528a0d8a317d5df1a50220de78bded367bc14162db4"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Floor/TerminalRoomController.Transfer.cs",
       "sha256": "71887131921ee3a006f9e22810a164a9d5be18c47e0e9245b2e69f0ec930d571"
     },
     {
-      "path": "Dalamud/Fsd/Runtime/Floor/WaypointTaskRunner.cs",
-      "sha256": "d39ea915f5a0f43238f0035417b92d850a04ddf3b8b84c321f3fd0caa11d62ef"
-    },
-    {
       "path": "Dalamud/Fsd/Runtime/FloorWorkPolicy.cs",
       "sha256": "a5d0d0fe5f42d7dcf098d8e286b8410906aeea421f4bb37cfc20be5f255b90c3"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/FsdHoardStatistics.cs",
+      "sha256": "77e077b1f2c62325cc03e899c8d28b1f773db8c574169829157cd10891d0a6aa"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Helpers/ChatWatchers.cs",
-      "sha256": "510622318a154a8822c16b1e7ec3503110945f2cebbe06fbf46cffdc9603db40"
+      "sha256": "36aef999dcbd8a835f16ac177b3159e089057281a243fc157f4f6b8feec163fc"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Helpers/CombatTargetingHelpers.cs",
-      "sha256": "2523fccd1fca7d84a0e936e3fca9af6a5fd12d48018b5bb376eb5ff3a8fc88af"
+      "sha256": "feec4749a2e82f1241fb2b09ce513a95ad6ff516ff52f338f32daad4ac8e5583"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Helpers/DutyTransitionUtil.cs",
@@ -727,6 +795,10 @@
       "sha256": "5e4f58f8f7185d22db22a1713a40a36e0e8f02f501bddfa1ff2e38e8df651942"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Helpers/PromeRadarFarmingMovement.cs",
+      "sha256": "d1acbfbd1b3ecb158b246e0986b3a3723437639d63f95e6a1b63fd5c13f8c74f"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/Helpers/RecoveryPotionHelper.cs",
       "sha256": "6ce604124d0cb2db10a567888378e54e2add4528319e0671df65c87201192b82"
     },
@@ -737,6 +809,10 @@
     {
       "path": "Dalamud/Fsd/Runtime/IScenario.cs",
       "sha256": "ce008b37c2d19badcb2408e9246bc997b49f17dcc81eb0d4b4e16ed8229e65bf"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Navigation/CastMovementGuard.cs",
+      "sha256": "a94ff62c74222f1776e59d465e1fd789ccaad34efa9332de0033dc3cbca0304a"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/CombatPositionNavigation.cs",
@@ -755,56 +831,60 @@
       "sha256": "48eb552262dffacc6e2fce09b0273613bd55a8c52c9024516ce278d348e9d162"
     },
     {
-      "path": "Dalamud/Fsd/Runtime/Navigation/NavigationDriver.cs",
-      "sha256": "7b123c99ff0277df68bc4284723f6ba45310a21e1b716fb87a070d3a05e1dbc6"
+      "path": "Dalamud/Fsd/Runtime/Navigation/MovementCoordinator.cs",
+      "sha256": "60791dfd6c7fc150d6597f4c35efe111a7f11909e7a119e00d4cc4dae9ef6c33"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/NavigationHelper.cs",
-      "sha256": "5e9ecd4777df111cc9141480c8997536f3d986e00ea276bb054bd3cf9a703a8a"
+      "sha256": "a4f7a06bf52c9ac146a7cd812aea19b98833181efd7ee2b5c9c09e6d6a739ccb"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/NavigatorVNavAdapter.cs",
-      "sha256": "d2ced60747c92c41512d44a20bb53971f9b65a131c39e25cb03044bead2ea05d"
+      "sha256": "3f1f55ddeb7ade506c69291daf69dd9726c473251cc0ad201f0c59a1350cc9a7"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Navigation/ProgressiveRoomNavigator.cs",
       "sha256": "c5a60e31d7024eab8275e14987590c61fa27f6038fd8bc85afda9a6a5eb84ea4"
     },
     {
+      "path": "Dalamud/Fsd/Runtime/Navigation/PromeRadarMovementGate.cs",
+      "sha256": "f49993558b5d793918fd24455e7cdab8d305500a189fcc90e5d22f53f6a8d450"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Navigation/PromeRadarMovementIpc.cs",
+      "sha256": "48be72556a2cbc8c71e6625172f9608a63765e90256c7983a246459aa2d6fcf6"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/Navigation/RoomEscapeRecovery.cs",
+      "sha256": "ead9ddc1077641403359a5605a7433da3d02f9faa7a520a3d4bb78dd435cac08"
+    },
+    {
       "path": "Dalamud/Fsd/Runtime/RunContext.cs",
-      "sha256": "ca544ca8c857342cf8258dd4617a1f6a25acbe951f5508e3bfbac139fb0ee7c7"
+      "sha256": "e8c5f5f9641ed5aef7919229413903051571d9af53429d37cdcad12186b4c4a9"
     },
     {
       "path": "Dalamud/Fsd/Runtime/RunHost.cs",
-      "sha256": "61acc851b30fecb860cd83d07c0b565f43880034a0fe0d2971f370dcd733db54"
+      "sha256": "c3319aea95a2b24339a21de9d059a043abd9e227720c3184c88fdc2abe430e22"
+    },
+    {
+      "path": "Dalamud/Fsd/Runtime/RunHost.Diagnostics.cs",
+      "sha256": "9f9ef3ab79b46712ae586ac7a2d462470b2c96bca95b30fd31403003a4c0014a"
     },
     {
       "path": "Dalamud/Fsd/Runtime/RunKnowledge.cs",
-      "sha256": "47e6d227dce14610a5dcd8b17e2c4a50265ba23422452fd1faa76d64a1b3228e"
+      "sha256": "cc689c694f85c39101406f22aba691411669fc851013fa43edff54cfac8254ff"
     },
     {
       "path": "Dalamud/Fsd/Runtime/RunTelemetryContracts.cs",
       "sha256": "6938c9a12a2ab669f2d0b2829291b5156cf1abe6633914779e177e89e9ba6cf2"
     },
     {
-      "path": "Dalamud/Fsd/Runtime/Scenarios/ControlledPt21To30Scenario.cs",
-      "sha256": "0b5b09b3f4b1a1537d9c85b13fd0a9c38342bc3d31e0e422e629d7bb663148fc"
-    },
-    {
-      "path": "Dalamud/Fsd/Runtime/Scenarios/ControlledPtSurveySession.cs",
-      "sha256": "52188b8378d84ebb3b86560acbc664023e2f079a77589b97963cf5fed9161bcc"
-    },
-    {
       "path": "Dalamud/Fsd/Runtime/Scenarios/FarmingScenario.cs",
-      "sha256": "a3549fee5343a54055998b4866082ef75a083f88505d76a337478b76368718a9"
+      "sha256": "ed9193261072dec96a4d6e486e8250f25594eccbc1c6b374ba6427d2c3e4cff7"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Scenarios/GenericDungeonScenario.cs",
       "sha256": "c1875a67a82ad8b5d5e1df041ca587d4837bede0faeeb995f5c7e51583d0880e"
-    },
-    {
-      "path": "Dalamud/Fsd/Runtime/Search/AutoPilotExecutor.cs",
-      "sha256": "c0c93c615b79f2747f0ce9aa2d21ca4f983d7d6cc1c2797b3b6972feabc532c0"
     },
     {
       "path": "Dalamud/Fsd/Runtime/Search/BandedChestLocator.cs",
@@ -815,16 +895,16 @@
       "sha256": "214a3663939a7bd363baa7383dddaeaee2f68bc57643ce0776562c1127b38da4"
     },
     {
-      "path": "Dalamud/Fsd/Runtime/Search/RoomSearchContext.cs",
-      "sha256": "9c71778bed14979e29cd7fa4edc1a05cf49e10fb9b539b331c993f8fabdca055"
-    },
-    {
       "path": "Dalamud/FsdApplication.Commands.cs",
-      "sha256": "7331f281869b04e16e7dbf12c9fa282da42428c1d46b7736c3376ffa42ea1e52"
+      "sha256": "6603aca6505221e7d2b57c7076ca0ca2f65c0966d09d2616aeb4581fbac6bd91"
     },
     {
       "path": "Dalamud/FsdApplication.cs",
-      "sha256": "f642674b8bcbd25562e5c229e0db258abf7380b890cd1852791526567a79ec84"
+      "sha256": "4195b25730bbc3b8fcb2e183d6b54d87f15c534cbe7263dde2c14d8690b0e978"
+    },
+    {
+      "path": "Dalamud/FsdApplication.Diagnostics.cs",
+      "sha256": "94a82f37ce8e466ce8326fa86d2096fee50433a565bb7a826df6328df3825271"
     },
     {
       "path": "Dalamud/FsdSkillCatalog.cs",
@@ -855,68 +935,112 @@
       "sha256": "b34fb8005aa54aad253514cf0e93a11e60ce3597931f3d180de5a280c62c6a88"
     },
     {
+      "path": "Dalamud/Movement/SpinBossMovementStrategy.cs",
+      "sha256": "dd6fe763ddf707c4fde7368465abf85f56ef160d3b4f3b94c60e7421dd6fe408"
+    },
+    {
+      "path": "Dalamud/Movement/SpinningMob.cs",
+      "sha256": "63f715e3165f1e26bbd7ff2a48a1715e894c641b283f861b8912d42f7a2fd472"
+    },
+    {
+      "path": "Dalamud/Movement/UserMovementInput.cs",
+      "sha256": "f22b24d9830033798b60c0841780e15422158c1f169190124f569a84c23db7db"
+    },
+    {
       "path": "Dalamud/Navigation/VNav.cs",
-      "sha256": "76941e0722bfaa1293dc7c12b4518f7a177b7e53385b02e68dd4a3073817d245"
+      "sha256": "3a6cedddabf0635d3174947c8b29e4d9dd234ba35d00b781a3b0f3f83a90c2aa"
     },
     {
       "path": "Dalamud/Properties/AssemblyInfo.cs",
       "sha256": "4b6ba7ac6e5ab3390de95c9e40fb600bc3dc5e52119ae05a5921717242bf76ce"
     },
     {
+      "path": "Dalamud/Resources/DetailedMaps/pt-21-30/catalog.json",
+      "sha256": "d4f73fd38332ebc25791a24f53b9a244a56631ad7afd256a62565a47e01defca"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-21-30/catalog.sig.json",
+      "sha256": "7b40d6cd1ab023a2f31a972b71010346cecf3f7e3f8f05bd5b097c2d85ef1cff"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-21-30/hoard-yield-catalog.json",
+      "sha256": "d26799624cf919eeddd26d66ce5deba8d8b4a09b69d160353e2bd2588ca54932"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-21-30/latest.json",
+      "sha256": "433b8408b7bda7e893d8847525e05e59e9346c1ac983cd402accf93c36f7ab19"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-31-40/catalog.json",
+      "sha256": "29954ca4f75232057a1a495527d853ecfd0e89948d64cde68c87c5cdd9b59e98"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-31-40/catalog.sig.json",
+      "sha256": "c9418bb01ca24dc24f3de1b0e19d99a7cb84bc4fb079050264a17a1052b90fd0"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-31-40/hoard-yield-catalog.json",
+      "sha256": "37f53df0468a63bad41eda1cf044bf07be2dfc4d528ef25b8dc7e9c03e0a956c"
+    },
+    {
+      "path": "Dalamud/Resources/DetailedMaps/pt-31-40/latest.json",
+      "sha256": "17d1b4a42e4c2c0bd68ab93d45d49b070799c5fd0e8069114e79df11f7c0964f"
+    },
+    {
       "path": "Dalamud/Resources/FloorMaps/1-1-561-0.map.gz",
-      "sha256": "5721f187e787325d24bd0d03f21581471e93e865199e11056b0f797ddf237fb8"
+      "sha256": "17e23292d585a499e5a6b40167cc0b54356d9479e2231bb2803abe453ed55029"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-1-561-1.map.gz",
-      "sha256": "d1ab7bb6504fd745af7b03d34d16b2278943b6fe7339e598da5cf969f8265aac"
+      "sha256": "ac927c1ff58ace6da24e0985999c344785d3e45b0920830b9dd416c8ef986f9e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-10-597-0.map.gz",
-      "sha256": "74312762b2a0d79e10e5db8a7b47b0abdf85f2dfd8f4cda3119c4dfdd990ee7a"
+      "sha256": "e0eb4fa78e75a9536abb64eb50ccaa0bbcb8b4ef2d34f243025e62deb681b8fe"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-10-597-1.map.gz",
-      "sha256": "214827a52a71be82ca0a90786ecb75fe922d55e3828303c02b7ed066100f7189"
+      "sha256": "695002324f6fd88b07e98464c4dc9263f316d60058f714a6cf423a3be56db36d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-11-598-0.map.gz",
-      "sha256": "214827a52a71be82ca0a90786ecb75fe922d55e3828303c02b7ed066100f7189"
+      "sha256": "695002324f6fd88b07e98464c4dc9263f316d60058f714a6cf423a3be56db36d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-11-598-1.map.gz",
-      "sha256": "74312762b2a0d79e10e5db8a7b47b0abdf85f2dfd8f4cda3119c4dfdd990ee7a"
+      "sha256": "e0eb4fa78e75a9536abb64eb50ccaa0bbcb8b4ef2d34f243025e62deb681b8fe"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-12-599-0.map.gz",
-      "sha256": "c14a250cb5f1afedae25245d305bb2b1e29db76467f41524d336a8025f2d7194"
+      "sha256": "6f4c8d5c22c96e7e510bc6f2c9d66711c6463052011e22310956c33363c3444a"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-12-599-1.map.gz",
-      "sha256": "3615b4d86fa6673d86bba8badc94a6dda3acd571df0200eceb469dbe29c850bd"
+      "sha256": "77c0f8425c174420082f90fe7ac381266638f5b17e11928224283902468dd670"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-13-600-0.map.gz",
-      "sha256": "3615b4d86fa6673d86bba8badc94a6dda3acd571df0200eceb469dbe29c850bd"
+      "sha256": "77c0f8425c174420082f90fe7ac381266638f5b17e11928224283902468dd670"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-13-600-1.map.gz",
-      "sha256": "8c02f50560ba8e9d165435a1680523e3e4d1787673826ab464450c4b3e4673de"
+      "sha256": "6f4c8d5c22c96e7e510bc6f2c9d66711c6463052011e22310956c33363c3444a"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-14-601-0.map.gz",
-      "sha256": "608d78eb5246cf3a7827fe5b6078f85effd5f5c1e1283e04926036e1e7984ff5"
+      "sha256": "d9585c28221c2afc8844456c27e71de1522dc9259afe7315ca6b40c6f78a3a3e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-14-601-1.map.gz",
-      "sha256": "8edad5a5e9b54d1d187d75cb2923e8222745a940264aa40e071c27b04f8672f1"
+      "sha256": "18130fb4c7391764cf2da9754df6b78ddc20f3df8be2320d26b05f94d1d9690d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-15-602-0.map.gz",
-      "sha256": "8edad5a5e9b54d1d187d75cb2923e8222745a940264aa40e071c27b04f8672f1"
+      "sha256": "18130fb4c7391764cf2da9754df6b78ddc20f3df8be2320d26b05f94d1d9690d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-15-602-1.map.gz",
-      "sha256": "608d78eb5246cf3a7827fe5b6078f85effd5f5c1e1283e04926036e1e7984ff5"
+      "sha256": "d9585c28221c2afc8844456c27e71de1522dc9259afe7315ca6b40c6f78a3a3e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-16-603-0.map.gz",
@@ -952,195 +1076,291 @@
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-2-562-0.map.gz",
-      "sha256": "49eb0227f3fb71c307cab2eb958a8049f92429285801b011fb2cc97197ba096d"
+      "sha256": "2b248bf004eed722e43e47b9b70302f3edbca5617efaff202f369a92f16093d6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-2-562-1.map.gz",
-      "sha256": "af10c0fb6299d2aececd6c6d4a4b6f5416e7eb5657f71f2905cda09ddcefdb21"
+      "sha256": "9dd0133b16923a2d5c5ca8d7ca7d4d623138781bcdb0cfa17bbbd27ddb015bf8"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/1-20-607-0.map.gz",
+      "sha256": "b7447f39e75742fa97022da1b42e7c05a1ac82201b7352a24d269f36f44f132a"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/1-20-607-1.map.gz",
+      "sha256": "a3a4a9d3289dc2254d3805bd0c7b1f83ebab5d13b59a141827baef98e353ff6a"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/1-20-607-4.map.gz",
+      "sha256": "5ecaf391477c8fc19386fb14c232e0dfe802c0c46c407a7c844e1f2cee242efb"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-3-563-0.map.gz",
-      "sha256": "b50c64b6f53b63dd9e9b9662895f3d0a0c5cc2424ae3fe48a1eabb0db18c9f19"
+      "sha256": "4bdd85f5b3047f83f8f5213559e59745133b19bc402479c84d1df8a1f20ac884"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-3-563-1.map.gz",
-      "sha256": "4dc61cc57c20f10279b0b38ee348a49a5dd024b5c9f32bdcb4362d70abb2c797"
+      "sha256": "c0c217403f9111e708ec71861e2965d51b852c481a1c8ec3d7ca1c9b86047003"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-4-564-0.map.gz",
-      "sha256": "f260c2fb0726680bb31aad98cdcec09e84a46d1bea0b3c83e89b0b8aab19f0ac"
+      "sha256": "6f998a4d19fb1a5edb313ef73d8f1929a12e5d10bbca6b6052a31d2cb3830427"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-4-564-1.map.gz",
-      "sha256": "930d22701a6e40a07728a72f9fb10b2b34955ae7a62fbeaae29eb125b77ff563"
+      "sha256": "24a96d966b14e4cc21076398cfff88d9b46e1f0d504dcd6a5a25f9ac19967a94"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-5-565-0.map.gz",
-      "sha256": "930d22701a6e40a07728a72f9fb10b2b34955ae7a62fbeaae29eb125b77ff563"
+      "sha256": "24a96d966b14e4cc21076398cfff88d9b46e1f0d504dcd6a5a25f9ac19967a94"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-5-565-1.map.gz",
-      "sha256": "f260c2fb0726680bb31aad98cdcec09e84a46d1bea0b3c83e89b0b8aab19f0ac"
+      "sha256": "6f998a4d19fb1a5edb313ef73d8f1929a12e5d10bbca6b6052a31d2cb3830427"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-6-593-0.map.gz",
-      "sha256": "8e11bf81b71fc139b0ad1c9c8cde18d07274f2239df489a2c5cbea5d04277fde"
+      "sha256": "a1c876b1df5566a42c8bc1481ade0b5bfc64e999f72494ba4b56d1cc8310dba6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-6-593-1.map.gz",
-      "sha256": "98aebd2f2cc8b4da3fba3235041265d33538060845ba0922cdc472ccfac56878"
+      "sha256": "1c0d763d35be08a0b94d504cb2279115ac1a81203297787a8cb9b7895027bb6d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-7-594-0.map.gz",
-      "sha256": "98aebd2f2cc8b4da3fba3235041265d33538060845ba0922cdc472ccfac56878"
+      "sha256": "1c0d763d35be08a0b94d504cb2279115ac1a81203297787a8cb9b7895027bb6d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-7-594-1.map.gz",
-      "sha256": "8e11bf81b71fc139b0ad1c9c8cde18d07274f2239df489a2c5cbea5d04277fde"
+      "sha256": "a1c876b1df5566a42c8bc1481ade0b5bfc64e999f72494ba4b56d1cc8310dba6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-8-595-0.map.gz",
-      "sha256": "8e11bf81b71fc139b0ad1c9c8cde18d07274f2239df489a2c5cbea5d04277fde"
+      "sha256": "a1c876b1df5566a42c8bc1481ade0b5bfc64e999f72494ba4b56d1cc8310dba6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-8-595-1.map.gz",
-      "sha256": "98aebd2f2cc8b4da3fba3235041265d33538060845ba0922cdc472ccfac56878"
+      "sha256": "1c0d763d35be08a0b94d504cb2279115ac1a81203297787a8cb9b7895027bb6d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-9-596-0.map.gz",
-      "sha256": "214827a52a71be82ca0a90786ecb75fe922d55e3828303c02b7ed066100f7189"
+      "sha256": "695002324f6fd88b07e98464c4dc9263f316d60058f714a6cf423a3be56db36d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/1-9-596-1.map.gz",
-      "sha256": "e8920a110d240e84c0d5908342c7bb5ae257581df2d7354c28f18017d0cb1ba8"
+      "sha256": "78c5d34a957416db8c75aadde29fc54500d563f0eb4bda84ee997fb225cf53f6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-1-770-0.map.gz",
-      "sha256": "42f69a759e8bf23bf9f60589baab52d8140617f338ccf3857065fea93d757cc5"
+      "sha256": "61343f3c3e5ab75cfab178ff487dc671d4b3701f4f7b54f085da7f3fc138d868"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-1-770-1.map.gz",
-      "sha256": "6f7807fd5478d15c9dc2976707aef0c645198be9fe82a26118930fe6b69e7569"
+      "sha256": "b40c1b62a9a2c2f050276c30189b71e4a0dec1ec1343214c461741acdbdcec8e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-1-770-2.map.gz",
-      "sha256": "18b452470f8f19e285a7981fda26dc49d640869fe3d7309d4163e4dc3def00e8"
+      "sha256": "2b8ae9a7bf83bef84c211e20629da8e6e80bf04c1146ffe56b21fe20f814a998"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-10-785-0.map.gz",
-      "sha256": "dda42c520c040a32a196d9a7e0a849ac9951021848a6421e978ceb6e7e014c99"
+      "sha256": "d3e4bd38f5c0a195ced1e8f0c8efc0980cd674df14e2534b9bd7b313c824b94c"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-10-785-1.map.gz",
-      "sha256": "ab6d036e82f4079e3487f0acddaf0190de469732b2baa7d1d7a260aa3a669cbd"
+      "sha256": "30ea94a6dc80370fbfb543eaf7a638ad73b5d66ea34547beec60d3463dce2e62"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-10-785-2.map.gz",
-      "sha256": "e66312c7d301755db53164c693b2a6003f2dcd01245d5d3c5e2ca74802989341"
+      "sha256": "f82b161648d47ba0d6a5481f9b801edb02bca13253a49c4c130868e5ff4bbd94"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-10-785-4.map.gz",
-      "sha256": "4939b2b6e305ff24bc10b9641fdfe296259dcde0634b4c7c14da42971f737235"
+      "sha256": "88b3497dcc537ebb84b4cc334eb51079957ce84c74a09e57c083b8f398ad5f3e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-2-771-0.map.gz",
-      "sha256": "320c3dceb9cc3db9ba9760591258494ef03b13f2828a2573df854c953354218a"
+      "sha256": "755cb789562f98760478e69e77b0d311dbd3ac36a524d01caddba11951327e3d"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-2-771-1.map.gz",
-      "sha256": "bb7b4b34de57891c864bfb531c1c7faf27acc94febc72300dcc5d26485c83f51"
+      "sha256": "f4f6856f055f3092dbfda0c0a1b2642775b1dbb5355fec6ed0553879b9ca7c33"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-2-771-2.map.gz",
-      "sha256": "0fa50ee61fe35f6705784534685244c626c88bb20f0aa40cb8ffe6b9ab03c1fc"
+      "sha256": "9be70c3caeef86d15e65b269cbaebf802ba279d1b333d821440a6f67e5bb0f4f"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-3-772-0.map.gz",
-      "sha256": "505e21fc5c9a3b6564d7d0f1c33cda5215a73a1b21df760222a827be06de32ab"
+      "sha256": "e59d0946739abf82eb55d176cd6bf906bc94f381d8229e4648ddcb25fcbe3c92"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-3-772-1.map.gz",
-      "sha256": "109c6fd0bffaa96520641d4760dba31ee30696b189a7fa091980e5988de667bc"
+      "sha256": "e5dfd2267b8d7a29dc285dee5844daab44098ff1cdc002b1cb444d4a91062089"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-3-772-2.map.gz",
-      "sha256": "2945aa1505da9a4052289344acc83cbc9859da966ea075e5f2f345f16964e887"
+      "sha256": "1c303318ae835a956fe0bd9afc9532db5c3ac249390b0bf108c4c7ac772eaf9e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-4-782-0.map.gz",
-      "sha256": "505e21fc5c9a3b6564d7d0f1c33cda5215a73a1b21df760222a827be06de32ab"
+      "sha256": "e59d0946739abf82eb55d176cd6bf906bc94f381d8229e4648ddcb25fcbe3c92"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-4-782-1.map.gz",
-      "sha256": "109c6fd0bffaa96520641d4760dba31ee30696b189a7fa091980e5988de667bc"
+      "sha256": "e5dfd2267b8d7a29dc285dee5844daab44098ff1cdc002b1cb444d4a91062089"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-4-782-2.map.gz",
-      "sha256": "2945aa1505da9a4052289344acc83cbc9859da966ea075e5f2f345f16964e887"
+      "sha256": "1c303318ae835a956fe0bd9afc9532db5c3ac249390b0bf108c4c7ac772eaf9e"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-5-773-0.map.gz",
-      "sha256": "d0e502e6fe8223e8c392d964a7efc115564edba99983060c15af0d01c09211e8"
+      "sha256": "69599970b28706faad96d1e9d441e9cfdc439cc82c53376bc2fea61c9ebb5ec6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-5-773-1.map.gz",
-      "sha256": "0efa158387645deeb4082311d2815401e4bd1d2e5b5aca4adfedd3b5ff99e392"
+      "sha256": "9e155c945b39ab8181fa62b5e4c37ec84e0618ccb3296c309a988b1e4d835c9c"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-5-773-2.map.gz",
-      "sha256": "d0829ff5a8a727bb7254dedc0024aff708d9548ef1c5ae7723fe2e8092a95039"
+      "sha256": "0098e4466daeaaa8a0c97cedf188a928da68b44ba9c0679b0bd85c49552b8f07"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-6-783-0.map.gz",
-      "sha256": "d0e502e6fe8223e8c392d964a7efc115564edba99983060c15af0d01c09211e8"
+      "sha256": "69599970b28706faad96d1e9d441e9cfdc439cc82c53376bc2fea61c9ebb5ec6"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-6-783-1.map.gz",
-      "sha256": "0efa158387645deeb4082311d2815401e4bd1d2e5b5aca4adfedd3b5ff99e392"
+      "sha256": "9e155c945b39ab8181fa62b5e4c37ec84e0618ccb3296c309a988b1e4d835c9c"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-6-783-2.map.gz",
-      "sha256": "d0829ff5a8a727bb7254dedc0024aff708d9548ef1c5ae7723fe2e8092a95039"
+      "sha256": "0098e4466daeaaa8a0c97cedf188a928da68b44ba9c0679b0bd85c49552b8f07"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-7-774-0.map.gz",
-      "sha256": "dd8314e1b6d7c88435e882b51778406de18e2685d42e43e51ba5135ba2b685e8"
+      "sha256": "242a81df4c2ca2d9c66fcca7668afe63719d3f7e6dc039e62ede7c050869f051"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-7-774-1.map.gz",
-      "sha256": "f45d1c5fadf86c8d48394d786c50f4eaadfb4418c3b68453d6f0e1fb07f26cb6"
+      "sha256": "63cbbc7bc4fb7be7326cd4848232799e89acd414b7de70a49116c99a070a2948"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-7-774-2.map.gz",
-      "sha256": "61b94a67261ad8ff1b72a3359816aae63da5fc179c406b2696adaacda15dc075"
+      "sha256": "30a8b1f393a9a300f9a1407d41e3a1c70af88b47491853fba98f85680b420221"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-8-784-0.map.gz",
-      "sha256": "dd8314e1b6d7c88435e882b51778406de18e2685d42e43e51ba5135ba2b685e8"
+      "sha256": "242a81df4c2ca2d9c66fcca7668afe63719d3f7e6dc039e62ede7c050869f051"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-8-784-1.map.gz",
-      "sha256": "f45d1c5fadf86c8d48394d786c50f4eaadfb4418c3b68453d6f0e1fb07f26cb6"
+      "sha256": "63cbbc7bc4fb7be7326cd4848232799e89acd414b7de70a49116c99a070a2948"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-8-784-2.map.gz",
-      "sha256": "61b94a67261ad8ff1b72a3359816aae63da5fc179c406b2696adaacda15dc075"
+      "sha256": "30a8b1f393a9a300f9a1407d41e3a1c70af88b47491853fba98f85680b420221"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-9-775-0.map.gz",
-      "sha256": "dda42c520c040a32a196d9a7e0a849ac9951021848a6421e978ceb6e7e014c99"
+      "sha256": "d3e4bd38f5c0a195ced1e8f0c8efc0980cd674df14e2534b9bd7b313c824b94c"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-9-775-1.map.gz",
-      "sha256": "ab6d036e82f4079e3487f0acddaf0190de469732b2baa7d1d7a260aa3a669cbd"
+      "sha256": "30ea94a6dc80370fbfb543eaf7a638ad73b5d66ea34547beec60d3463dce2e62"
     },
     {
       "path": "Dalamud/Resources/FloorMaps/2-9-775-2.map.gz",
-      "sha256": "e66312c7d301755db53164c693b2a6003f2dcd01245d5d3c5e2ca74802989341"
+      "sha256": "f82b161648d47ba0d6a5481f9b801edb02bca13253a49c4c130868e5ff4bbd94"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-1-1281-0.map.gz",
+      "sha256": "a97b841c806068b9930b44785d130942fea7889fc0164258d2d91951235478bb"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-1-1281-1.map.gz",
+      "sha256": "bc33bf56848b3bef7f9bf628d93affaa2b968cc86e943f01a2efb9f7e09d3da7"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-10-1290-0.map.gz",
+      "sha256": "a5a5a52c725a3112ea12e6f7ec664dfacaa2f15823fba020c5f208b2dece4222"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-10-1290-1.map.gz",
+      "sha256": "e0b8627f2953d7da97593e6e63ee83f02e4bbb874a9eb0da0c880140a43ec0d7"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-10-1290-4.map.gz",
+      "sha256": "ade0e167b9932030486bd1e6898f6bee6491356d1f767bdca6e1094e31557210"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-2-1282-0.map.gz",
+      "sha256": "a8fef1a0ba4dbcc8261a0487e755bc14ec5915bf6f66cac1d1d445728cc7935a"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-2-1282-1.map.gz",
+      "sha256": "ec0a6566c6ed0766dc1a4bf9746dcbd957bc8772408b380e0044276ab35b2b02"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-3-1283-0.map.gz",
+      "sha256": "3d2357e1818009c0b2cc303a8b4c03486d2b6a212491db8e1df70c06df63d27b"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-3-1283-1.map.gz",
+      "sha256": "77a676dcb93c273617abdd8dd1a3c3f7c2dedf0b862408702ad59e4eee88c40f"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-4-1284-0.map.gz",
+      "sha256": "3d2357e1818009c0b2cc303a8b4c03486d2b6a212491db8e1df70c06df63d27b"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-4-1284-1.map.gz",
+      "sha256": "77a676dcb93c273617abdd8dd1a3c3f7c2dedf0b862408702ad59e4eee88c40f"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-5-1285-0.map.gz",
+      "sha256": "197067b98ba9c1765b397eddc06ab4fdf393bac33d85bbc2b90fab59de87d613"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-5-1285-1.map.gz",
+      "sha256": "bd13f05b29dd048d5e7f93afe866aa119d85ae57295da3028fae847a3b85a20a"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-6-1286-0.map.gz",
+      "sha256": "197067b98ba9c1765b397eddc06ab4fdf393bac33d85bbc2b90fab59de87d613"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-6-1286-1.map.gz",
+      "sha256": "bd13f05b29dd048d5e7f93afe866aa119d85ae57295da3028fae847a3b85a20a"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-7-1287-0.map.gz",
+      "sha256": "7570917864cb45a15d95a4a83f02dfd3409064ff96dab027130efcda03f5e72c"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-7-1287-1.map.gz",
+      "sha256": "0e2635b04889d7a24ef1c3559b36fed6296f33a84652f741ca98789df3b1d834"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-8-1288-0.map.gz",
+      "sha256": "7570917864cb45a15d95a4a83f02dfd3409064ff96dab027130efcda03f5e72c"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-8-1288-1.map.gz",
+      "sha256": "0e2635b04889d7a24ef1c3559b36fed6296f33a84652f741ca98789df3b1d834"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-9-1289-0.map.gz",
+      "sha256": "a5a5a52c725a3112ea12e6f7ec664dfacaa2f15823fba020c5f208b2dece4222"
+    },
+    {
+      "path": "Dalamud/Resources/FloorMaps/4-9-1289-1.map.gz",
+      "sha256": "e0b8627f2953d7da97593e6e63ee83f02e4bbb874a9eb0da0c880140a43ec0d7"
     },
     {
       "path": "Dalamud/Service.cs",
-      "sha256": "38c27180c9f1c50b6a77a89c3a4b2b126d9949adb6eddbf4244d81d5d770c658"
+      "sha256": "d71b6fdf865539db87a83ab9e5441d3eb34d622bb607c124d92ccab47e87a904"
     },
     {
       "path": "Dalamud/Utilities/DirectJumpObservation.cs",
@@ -1156,7 +1376,7 @@
     },
     {
       "path": "Dalamud/Utilities/DirectMovementController.cs",
-      "sha256": "bcd05ef975f3400c1ab55b2d8f9f96c2695bf1611ea31a686b537af324aa7293"
+      "sha256": "21043905792bf90c67fd4e51cc4cc664fd1b3c177398a9581f227c6d5d98f396"
     },
     {
       "path": "Dalamud/Utilities/GameInteraction.cs",
@@ -1187,12 +1407,24 @@
       "sha256": "a1e777c11fc938e75cfeeedb74d41d606c2a95c7b242716b6481654ae03c4e9d"
     },
     {
+      "path": "MechanicRuntime/Hosting/CastMovementPolicy.cs",
+      "sha256": "26308576cd1db58f749f528352064b3da0170ec9c57e6fbbe000d1453c53ccbf"
+    },
+    {
       "path": "MechanicRuntime/Hosting/CastStatusRestriction.cs",
       "sha256": "efcdfda27b1592065a131a692cca6a7ea0cd4c5cfbc13f1868505024a4ef756f"
     },
     {
+      "path": "MechanicRuntime/Hosting/DendainsonneComponentAccess.cs",
+      "sha256": "517d59f5983503b7bc0df1e9dacf764f4baf17c570b2b595158559e927a9d84f"
+    },
+    {
+      "path": "MechanicRuntime/Hosting/DisplacementTimingTracker.cs",
+      "sha256": "ff5efa14d629177a4af2a61fb5f864359da345fbd8af7becd4e970b564962076"
+    },
+    {
       "path": "MechanicRuntime/Hosting/EncounterCandidateValidator.cs",
-      "sha256": "4ad0880c8c0e16caa2f1277d9a84a961c590e112866c6ab2f0fe50e9de0e1443"
+      "sha256": "6ab87ff517cc3d680d187333ce9ec1c32d4ad713b4cb3fc2dcf1b094b5b43fd2"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterChaseRules.cs",
@@ -1200,15 +1432,19 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterDisplacement.cs",
-      "sha256": "f96982802b534dbe3b45ac4a03593007302f2eff8d7fa2bccb0b8893a4e00d61"
+      "sha256": "113a049b034faaae3506231b7118a946f425c5b52860d9bf36c1f3cd86c4a795"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterDutyAdapters.cs",
       "sha256": "be0b32e5085cfa2a2fd4eb6e797dcb022579c760ef3a9603c34859708c77a027"
     },
     {
+      "path": "MechanicRuntime/Hosting/EncounterEventSearch.cs",
+      "sha256": "e1660a7f81ba908ba98b15a2c6e7d6287d826f068ad5f22bf4dc7b90e8e58e04"
+    },
+    {
       "path": "MechanicRuntime/Hosting/EncounterForwardProblem.cs",
-      "sha256": "338c04cddd4f35a21fa87ea42f479edd2090784f4a64e4eafc9874b19cfae6a3"
+      "sha256": "b7fe0a45db96ed9fc64311ce796d82e04aacae6f2b29e07c781feca70a623c60"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterGeometry.cs",
@@ -1216,11 +1452,11 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHazardRules.cs",
-      "sha256": "9a38d0f501fa18197ee4c67ee15088370add98e07793225b4f5782f66fbcf484"
+      "sha256": "b30104918a60cf551ab17add18f2fb08a5ffd1b38219c5ff95a22e70ecd25ca2"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintEvaluator.cs",
-      "sha256": "c01474df1d70f5f76916d1f9d7b18aa74eb52a9e8430a26570a1f3f17cab3759"
+      "sha256": "cde867dbe6652564ee7a311e54d7191f200a0f6a966e5ea7e57efcbcfba76b65"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.Candidates.cs",
@@ -1228,35 +1464,35 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.cs",
-      "sha256": "3608271e25744ccccc7490f4e708e1bced9f66ae902053376358df6941971da1"
+      "sha256": "7ae9f3f06bee0767edaca82b51722b2506489db0d0a1671d99dd9fedf83e30e2"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.Forward.cs",
-      "sha256": "30bd237ee47a231c689ea9b41d5972adcc3c4abcc317b7f80fcce12f1d87a45e"
+      "sha256": "a2f16dfe111ff5163909503de0643f95795f20e19c564e1d2192f4b6074acd9b"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.Intervals.cs",
-      "sha256": "aaa5ea345fdaf5f47af6e04e986ed58eaa341653437251c88856af22007b9be6"
+      "sha256": "58e5c135fd4768542ff0cf0057eb6b6f6e023c60f0f699106493158da2dc16c0"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.Knockbacks.cs",
-      "sha256": "977de57b8ec04585252414a0bdc4bd7cac657cd1141197bddb5a9e9d1db4d35a"
+      "sha256": "474a7cbd6c00757ffac9036940ae6f146cc6dee87fbc3eb9bafe26e374d84129"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintPlanner.Recovery.cs",
-      "sha256": "910797ba3380596d0b01bb5bae848d28d2da9d379b61be5b62e463c7254b0eaa"
+      "sha256": "bc21611b4362aad78c255559ff967217ce64d8b8a6c68b22c7273d5d078d2ee8"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintSnapshotBuilder.cs",
-      "sha256": "51376afcf4e0adda6cbbeed21a3d10877da43d1f34e1519b13ce9a6497533f86"
+      "sha256": "f17728eb8a673217debaa6178bb4cf3c1fe5ee27e0094de7cc972f61e98c49ce"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterHintState.cs",
-      "sha256": "d03dc1b1657118761add4e8431d72d9a18226df51eeea566aa5358727b510e4f"
+      "sha256": "d9ed9a220658f3cd210df07c88b1316c94bb5bfb59d9af1de5836fe42d373b21"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterPathMechanic.cs",
-      "sha256": "47bd9a4832527573b968df27609fb305dcc0ad4c3b726781a167b79463b7e835"
+      "sha256": "7d13955475b45d6d7a3ff0a6f60a24b172cecf7e038552abd9861a6d28fd5931"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterPlannerMethod.cs",
@@ -1264,19 +1500,23 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterPlanningHorizon.cs",
-      "sha256": "3acd2837015c4cc5c0e6e6dae2dad8d1468673f8c0ef67d57a4e8cf48af1332c"
+      "sha256": "b2bc00a3a8e613ee5f7212b0d0aa7a74d88ba5296f376175c506a0e58f00806a"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterPlanningSnapshot.cs",
-      "sha256": "d0b08c364813c471ad7e824fcfda018461258e7f20cb2a543e499057eb3eb265"
+      "sha256": "552ae26d1c12f13cecaf3650fdc21897e94af3b0a12d2b823d15d1630d260f60"
+    },
+    {
+      "path": "MechanicRuntime/Hosting/EncounterReadiness.cs",
+      "sha256": "4f8aa0b35c14e3347a80d5972844ed184e2ab0165acb9ae6f4e18acb42fd3284"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterResidenceRules.cs",
-      "sha256": "5d18e8a57ba2b4a13b95367a3cf22023c2cc2a7d4db9d1c1d37380e77a080494"
+      "sha256": "bf6a75cd9e57f53ac9ce4cc523ac7a9c9aef96134ad82900f0806e1db95eec2c"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterRoute.cs",
-      "sha256": "ab12702758ef675faf5fe4a2d47a3e66fbb97139cea44f69e488c9ae10671db7"
+      "sha256": "f7230a4fa7fb2012e7284bef5a6acb9c58f8629379eedc7a3c3e82799b161e13"
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterRouteProgress.cs",
@@ -1288,7 +1528,7 @@
     },
     {
       "path": "MechanicRuntime/Hosting/EncounterSimulation.cs",
-      "sha256": "a52f1db3fa9d9cd9650b3bbb2c5a9fca0975cb0d980fff66de315367a9093272"
+      "sha256": "feea298e350eb43652361ad28011e52791cd102c7d13ccb35c990cfb1d32b3e5"
     },
     {
       "path": "MechanicRuntime/Hosting/ExecutionRestrictions.cs",
@@ -1296,23 +1536,27 @@
     },
     {
       "path": "MechanicRuntime/Hosting/GridAStar.cs",
-      "sha256": "d9fe7a6224d8fa4fd39b1d90d243b5c13eab8d7de15b2319281ff1115186e279"
+      "sha256": "a91ed64297b1552dbf176ae4f3e244a4bf9d5952e1d3099dd4c5e77addf9a96d"
     },
     {
       "path": "MechanicRuntime/Hosting/HydaelynLightwave.cs",
       "sha256": "97b4e355580a2e4cfbcf4f4f15a5350661889386bd09ab97ce4aa48412343a52"
     },
     {
+      "path": "MechanicRuntime/Hosting/IEncounterSource.cs",
+      "sha256": "32dd8a36adac6a8559aeb8a0bfa62397c068bd8243dc9bcb82792ec3dd93f177"
+    },
+    {
       "path": "MechanicRuntime/Hosting/INavigationTerrain.cs",
       "sha256": "6adafce2138d7a94a84dfb07cb860782dcb99a74519cc04f153ce0b93c7a1578"
     },
     {
-      "path": "MechanicRuntime/Hosting/MechanicDrawSink.cs",
-      "sha256": "b5693642c33d77b17eda6e67e83147f94c03f08c00279047cfe121dca0c7bdfa"
+      "path": "MechanicRuntime/Hosting/KnockbackMotionData.cs",
+      "sha256": "1f79676f0244edad3756c591e82d06cdde2b0a20b4cd470c2260ea59a96f2f06"
     },
     {
-      "path": "MechanicRuntime/Hosting/MechanicRouteSelection.cs",
-      "sha256": "4e2a7f4edead1ae8c6298f393ce5b1b05c7c392eb734850addbb58d1a84fa7f1"
+      "path": "MechanicRuntime/Hosting/MechanicDrawSink.cs",
+      "sha256": "b5693642c33d77b17eda6e67e83147f94c03f08c00279047cfe121dca0c7bdfa"
     },
     {
       "path": "MechanicRuntime/Hosting/MechanicRuntimeEnvironment.cs",
@@ -1320,7 +1564,7 @@
     },
     {
       "path": "MechanicRuntime/Hosting/MechanicSession.cs",
-      "sha256": "17f740cc204ed7f0973004cdd1bd32eb88ce700dd1e35e8d89166b90cf08f332"
+      "sha256": "536c271fbe3d5548ef05e8ccdba8ccb7afe6566606a1f4bb92bfd63d133fec0b"
     },
     {
       "path": "MechanicRuntime/Hosting/MechanicTimeline.cs",
@@ -1328,23 +1572,23 @@
     },
     {
       "path": "MechanicRuntime/Hosting/MechanicWorldFeed.cs",
-      "sha256": "af4bc122b5fd3ae1789d3c5ca73d527346316f14d13f55e0a4cbd94d0671e48e"
+      "sha256": "2a4b95a8568e5c1c627b36ae27b4416feb5505eeee0e4f77049019d7e331be62"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationFollower.cs",
-      "sha256": "ed4266694f9c98da9fcec8197295f867a0a1d027920277416fc00bd148577849"
+      "sha256": "1bf0c9babda482d1f9d7c2b8ff645728d9ede75c2178f1fc3d1da065880dceb7"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationMotion.cs",
-      "sha256": "0f98c1dc0c55a74879eafdbdccf9dc5b32b34e03d52f416a72465ad4504fa8d8"
+      "sha256": "c90ed7ad34aa16cd01a180d5fac4f5829a5611895ac4e4cb4234113a5dc82cd5"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationPlanner.cs",
-      "sha256": "5fafc686f07e759b76bbefe51e20b5a8fe4fe0d2643ca8cd591cd2efba451fb1"
+      "sha256": "22143dcf5d7ff31ad437c6b0c1b06075533f28476957179acce2a00c841f7cdb"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationRegionGoal.cs",
-      "sha256": "97e2fb5e2d16ce18f541d5942beba4cddc0e3ee640bb3603a4879313892dafed"
+      "sha256": "0be4ed6d3cb132199e3d396201c5f3047002e74b76c18e4b33f3ba6a04a1dffe"
     },
     {
       "path": "MechanicRuntime/Hosting/NavigationTerrain.cs",
@@ -1353,10 +1597,6 @@
     {
       "path": "MechanicRuntime/Hosting/Planning/AutomaticPlanner.cs",
       "sha256": "008e878a7d4ffca0dce71e18ee6b950c7a61632672e8dcefbc2f7d14b69f6e7c"
-    },
-    {
-      "path": "MechanicRuntime/Hosting/Planning/HybridTreePlanner.cs",
-      "sha256": "d758ee880831f6beee54852d9e21dab71ccf18fee23a4d02771c089c154405a6"
     },
     {
       "path": "MechanicRuntime/Hosting/Planning/ICemPlanner.cs",
@@ -1368,7 +1608,7 @@
     },
     {
       "path": "MechanicRuntime/Hosting/Planning/PlanningProblem.cs",
-      "sha256": "e350299a6cc109a0476c425bf3ea378060475d0cac7c5bfc3a567744c3b5afb1"
+      "sha256": "cb5ef0faa40f7e57538a69938c4eded8e90c2c813e6d585b5d7814ed2594ffaf"
     },
     {
       "path": "MechanicRuntime/Hosting/Planning/ReusePlanner.cs",
@@ -1388,19 +1628,15 @@
     },
     {
       "path": "MechanicRuntime/Hosting/Pt50/Pt50HintAdapter.cs",
-      "sha256": "71ee2775d9552e488a320a6c4a7c334160f4465141be731bf7ed855894c59a29"
+      "sha256": "9e413c71514a648e289cba82918fb7201c0e272057097378dc3132eb2c7f34e8"
     },
     {
       "path": "MechanicRuntime/Hosting/Pt50/Pt50PathMechanic.cs",
-      "sha256": "ba4fbfa9bfe0cb4de47719d169284ed8766e870589ec45b2de1e32bd5cf872fe"
-    },
-    {
-      "path": "MechanicRuntime/Hosting/Pt50/Pt50WindReturn.cs",
-      "sha256": "141db1940b688e82cea03c3e70dd6a6f40752246d4b0bc34686e0ce96e4af2c3"
+      "sha256": "e41a30cb8e10a8ce6a2694956df821bc61cda6413d304af76a850ebe3b6842cc"
     },
     {
       "path": "MechanicRuntime/Hosting/Pt80HintAdapter.cs",
-      "sha256": "20698ab216a6d82a1a78d9bc3f0ad0367a5d47d499f4d1131b958551a59514c4"
+      "sha256": "8f039547a5614f8316820c80f154f8f39cb1ffa68db3baff0d92504527d34d86"
     },
     {
       "path": "MechanicRuntime/Hosting/StackPositionGoal.cs",
@@ -1412,15 +1648,15 @@
     },
     {
       "path": "MechanicRuntime/PROVENANCE.md",
-      "sha256": "64401e83f3238fa4b246e3354b8d4398d3057a45530861bcad5d290c10f1cd69"
+      "sha256": "e95b9394541c37cd0a0105b551d28767ab8b725241dfde8b7622b6ba9f73075f"
     },
     {
       "path": "MechanicRuntime/README.md",
-      "sha256": "fae27b0ae7c508ee9f97eb3fd9db74c234c28c1df6861cff2186fb51f9752ae1"
+      "sha256": "7a0a3680af2b9f345eec9d3499ca3b04c218f47b14b1db0101d51b0f1494b7bb"
     },
     {
       "path": "MechanicRuntime/SourceChanges.json",
-      "sha256": "b0ab0aba118cdb62ee41f6b3021aa8d64dbfd0f26a6a74af5362e4d22b4c63ef"
+      "sha256": "386ab5a97dd412d7c98768d596ba9a7d86af229473f3104a8f3b55ff07674908"
     },
     {
       "path": "MechanicRuntime/Upstream/ActionQueue/ActionDefinition.cs",
@@ -2016,7 +2252,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/AIHints.cs",
-      "sha256": "08ef3d3d86237ce6f1b8fbb2188fb43120b1ad89a9066c3bd29638488e5081ce"
+      "sha256": "c2559d60f2c7383f7b5c6eea3a72f568999d5b3df38f56ae20a8d428828068e6"
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/AIHintsBuilder.cs",
@@ -2036,7 +2272,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/BossModule.cs",
-      "sha256": "223939e066f03a32428686a400d7fd2012ccd937cc65f0205bb417d2d09bda67"
+      "sha256": "fe6884dea9f4bd61bfd6eb3eacf5ad2b6a776ea5efda5c0b28f44d214149a007"
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/BossModuleConfig.cs",
@@ -2060,7 +2296,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/BossModuleManager.cs",
-      "sha256": "96da0ec6207685f272e4d249a1aaf4040705ea14a2fe378bea17abb483714786"
+      "sha256": "8067c769d29082a82e925fd449e1a3d614348cd9050437b48591b36d480860c2"
     },
     {
       "path": "MechanicRuntime/Upstream/BossModule/BossModuleRegistry.cs",
@@ -2196,7 +2432,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/Components/Knockback.cs",
-      "sha256": "37cb58308438c3bdd1b24493488452ec37174c0f351779e2d0723964058df05a"
+      "sha256": "9ba6bba8a870882a94319dd85be0c541687e4240eb161dd6b39696df5b4be341"
     },
     {
       "path": "MechanicRuntime/Upstream/Components/LineOfSightAOE.cs",
@@ -3004,7 +3240,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/Modules/Dawntrail/DeepDungeon/PilgrimsTraverse/DD70ForgivenZeal.cs",
-      "sha256": "70b949968c53eef120c4b8d81b9982321c2e590a1c36625a065570e0cf8b501c"
+      "sha256": "b35b19685cb1ec4af5a0a1a11ccc3530e180182d95d03b240bc7947518701d48"
     },
     {
       "path": "MechanicRuntime/Upstream/Modules/Dawntrail/DeepDungeon/PilgrimsTraverse/DD80ForgivenProfanity.cs",
@@ -16120,7 +16356,7 @@
     },
     {
       "path": "MechanicRuntime/Upstream/Util/ShapeDistance/KnockbackInSquare.cs",
-      "sha256": "599b2b76edf898c331e8d36b16ed90352f9183db4b3e7d33a58cd6128d77c40d"
+      "sha256": "8c714fed5995c756eade5627c87aaef5e2de068dd3847da9a36bdcc726003671"
     },
     {
       "path": "MechanicRuntime/Upstream/Util/ShapeDistance/Misc.cs",
@@ -16879,10 +17115,6 @@
       "sha256": "cde3b848a165bfebe0a8ac6a2a8488f5c0f63c189909bbc3a074fc3bc0844303"
     },
     {
-      "path": "Native/FFXIVClientStructs.Expansion/packages.lock.json",
-      "sha256": "5cc1f6caad02f19b7b03143c9e0237c4dae8b8a81e27f1c48c0b530a4b30462c"
-    },
-    {
       "path": "Native/LICENSE",
       "sha256": "f16228c48cadc47db0b8378bf6d2a6726c22bd0c9ca8a4210b50aef54c980d4f"
     },
@@ -16904,23 +17136,19 @@
     },
     {
       "path": "Runtime/FarmingSession.cs",
-      "sha256": "e85cbfe8c6dee4c42ecedf4df386b91eb3edaa14522c0035bfed6aff3619366f"
+      "sha256": "dd78336a371dcafc8edf594920bd40f8d1912971c527d4096bba27901fd8a315"
     },
     {
       "path": "Runtime/FarmingSettings.cs",
-      "sha256": "a66e996dfe7d4b89d358f5945c99f14c4aa9c526fab2a6b544eeaa931c411357"
+      "sha256": "7fe3dafe19e1ffc2c2a281bf95b448e8999b8e1c700becb25a7143a84a9b78f3"
     },
     {
       "path": "Runtime/FloorItemUseSession.cs",
-      "sha256": "0ed422cbe2c4844cb7a00658bf90fc89bd5ea013fff9959ea3e37b9238e17c59"
+      "sha256": "86ef59714131a198bf06dbf662759deeb558b5fdcb97c5dfd1a73f287a29b242"
     },
     {
       "path": "Runtime/FloorObjectiveSession.cs",
       "sha256": "3857f9386a60a5744964a43d882a0c0bd7007551a905b974b86de3698d896b47"
-    },
-    {
-      "path": "Runtime/FloorPlanningSession.cs",
-      "sha256": "9a19a334e02b0684e2d330a781768dd9816e56c8cddb89f23895dc729e1fb614"
     },
     {
       "path": "Runtime/FsdApplicationSnapshot.cs",
@@ -16943,6 +17171,10 @@
       "sha256": "f2898fb154e9d709775015724887fd92d1e57a805edee19c65dea2dd582a2a1c"
     },
     {
+      "path": "Runtime/FsdHoardPickupCounter.cs",
+      "sha256": "ec5d3e47c232dce3730c8dbfb0c0e4b33decabffbca568f8a31234d2894e00cf"
+    },
+    {
       "path": "Runtime/FsdRotationController.cs",
       "sha256": "7cb1c9db30fcfce511eb74117f488741beb07fb2094851c775da429a3500b408"
     },
@@ -16952,11 +17184,11 @@
     },
     {
       "path": "Runtime/FsdSettings.cs",
-      "sha256": "87b6148b02de325547fee4e4f890fa1048e9c8903b18972e42f5fd21ac661fdd"
+      "sha256": "e0ab2755d8aae723cdc4d46ab6fd1d2176dd1651c85419f87357f81c20447e53"
     },
     {
       "path": "Runtime/FsdSettingsValidator.cs",
-      "sha256": "a88c12c4252553d9c289bc55d43fea603d8a7b5b740957721c8d7e4fce24bdc2"
+      "sha256": "a847a6d6e6209fe18a03823adc1389e747fff5d52808d07777aca6794ecf5231"
     },
     {
       "path": "Runtime/FsdStartAuthorizationCallback.cs",
@@ -16972,7 +17204,7 @@
     },
     {
       "path": "Runtime/MultiLoopDriver.cs",
-      "sha256": "bfec09027748c6aa0ebc246af7aeb3d57c4464d791aced9ee4544e954a1f1ad2"
+      "sha256": "d7d19a638ee2f519e725f2f9e38763172e81567b9e95d6821d13fa1529af21e6"
     },
     {
       "path": "Runtime/PendingIntuitionState.cs",
@@ -16985,1098 +17217,6 @@
     {
       "path": "Runtime/RunOptions.cs",
       "sha256": "9df1f3bac79cbd487cd54c817401e33d0863a1dc830dc1b641dd0af3b10d7ddd"
-    },
-    {
-      "path": "Terrain/AssemblyInfo.cs",
-      "sha256": "aa616e5f37ad33d85a2e65f4095aa7382a3e1a881887c8a9c8c227f5c4fb4f90"
-    },
-    {
-      "path": "Terrain/CapturedTerrainScene.cs",
-      "sha256": "ddcc5e99240fefd20f107fea2dfb755dc2bcf4a1ffba1a678ea45aade287ff36"
-    },
-    {
-      "path": "Terrain/DeepDungeon.Fsd.Terrain.csproj",
-      "sha256": "c7a55daebeff891171da57aa9e6897e243f9ca200c8d1599bfd9d514c43d30c3"
-    },
-    {
-      "path": "Terrain/TerrainBaker.cs",
-      "sha256": "c45459294abb0d80c42df6c5e05b7f2bc2a58a659916c2f09def77913a1f4c54"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Buffers/RcCyclicBuffer.cs",
-      "sha256": "e9895c49102fcf23bc15ffa857dd1e1dd62a589f8bd80355e6945e5acf35a68d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Buffers/RcCyclicBuffers.cs",
-      "sha256": "82ca83a9021e12bfaacfe0ccfb328dda64bc11bc1c3b2ad736e77f4ee6f2ed1d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Buffers/RcObjectPool.cs",
-      "sha256": "c4c86ce6fc166dee617432923fd9e11faa3814140730e744966c73569d57a772"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Buffers/RcRentedArray.cs",
-      "sha256": "0a23c6e80f3a67ced924a63564f97fd6d3e092ed858d83a34878348655909328"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/Extensions/RcCollectionExtensions.cs",
-      "sha256": "eff30fcb7b73759fb41cd0e3e49fd3ab3baaefce3c2443b1624842aaa5430e65"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcBinaryMinHeap.cs",
-      "sha256": "82086e1c347aa258209226ecb7adfa170c9debbca3c96b51e5faf6c8dad9ec95"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray1.cs",
-      "sha256": "3f92769000521631840741225b524b34e1e28a2c2f0fe2cea3c48e6b82ee54c9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray1024.cs",
-      "sha256": "daa61236c2eabfef0a1c62d4933b3068231bd7f5804ccedee04bed09ec1f3d9c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray128.cs",
-      "sha256": "395bce66b3ad54c60de2f79ebaed8c62838282b47ebc9e67c887a571c0509e30"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray16.cs",
-      "sha256": "7b13b0f959c85be16ca6cfc1a63a9d3bae4bf9a5ec14e996f462f733240c8907"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray2.cs",
-      "sha256": "7fd500b93f8edbf6d540508c2d94ef1e08be270b25dc2ba8baa3ef69281d733f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray256.cs",
-      "sha256": "125356d2e78ebc957748ff0cffda1c7f00d0fcd91af35b4cacbed155d4a8daa5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray32.cs",
-      "sha256": "a5b9bdf05c455ab218cf50218a98ed065ad39468599c80006998184c21b601d4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray4.cs",
-      "sha256": "4fc652a0894461dcaf0088a069cb61585098b648ee6103b611bc55771ed13976"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray512.cs",
-      "sha256": "95772fa7691d02b527efa367f4e309400c5302567d02ebcf364f380bc9faafa8"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray64.cs",
-      "sha256": "e30d3aa94ad8994830124a2844dac68e986e37ee1d50f79326a4b5c275a0cf75"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcFixedArray8.cs",
-      "sha256": "0f80550b8ed5ce8196d355881938283ab67a7c3a477d31922f49cbc883c53e9a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcImmutableArray.cs",
-      "sha256": "3962f60ce1d0f9f29238951d509d915e64bdd57d0038aa0502770a6ca7904f9b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcImmutableArray.Enumerable.cs",
-      "sha256": "ebf7684a13829d97607afd8a29b721d7e8e9269e3cc61c1dfe41d0008027ecd7"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcImmutableArray.Listable.cs",
-      "sha256": "3b30a05c58f11c68fde38cb0e6e4ff9ce39691d156d238d3bb378ffe8b5f5d7a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcImmutableArray.Minimal.cs",
-      "sha256": "4d3f2e1ccd3d0c1f26b16e9493e90f658c65f49487491e685f53750e0c425c7f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Collections/RcSortedQueue.cs",
-      "sha256": "346fcbd808e5de3de337c139797a332e79a67eab8eea68becd3994d179f3a24e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Compression/FastLZ.cs",
-      "sha256": "205d852cb07dc5c89871c466c685726a70eff5e76856b6580f236cdfcc330318"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/IRcCompressor.cs",
-      "sha256": "1e03336003c96723d9404736fbc704c120b71c8a3af87adb5f239cf81e963f71"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/IRcRand.cs",
-      "sha256": "3086a677c1ba033eb6029fbc2dc8235914a4b9b5d3cdcf036ca62594cef04728"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcMatrix4x4f.cs",
-      "sha256": "052dbd7561f289c90fdf956d0ea2eaeec3fbe52d5c0174391ed5a2f2cda7c6d6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcVec.cs",
-      "sha256": "a1af073cbae35baec689d32c7f989f48fc6165009956414be40d88b060c67cfa"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcVec2f.cs",
-      "sha256": "22095908543ab1ac7aafdd7671528ff0f3b68a9687a5b4631afa7f6817a5a2c4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcVec2i.cs",
-      "sha256": "a127d898f9281db9996a53918eddd34eb4944b8ae3500deb7cb3ad0ffd4602ee"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcVec3f.cs",
-      "sha256": "df5f92bf33d745e15486977a811ce45fb27831c8a01c0a7bfdb8dc0d4998186e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/Numerics/RcVec3i.cs",
-      "sha256": "9dfe2bf1e82d971c30070deead64d4d828776294daf25426f2646102a4d600af"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcArrays.cs",
-      "sha256": "48d3b84d165fb81a554290b2ed6c29cc2e3ac7856d324e7c0f5b2fb122ebb98c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcAtomicBoolean.cs",
-      "sha256": "fd71490188897015d9a73efcc401f7498d43efc96e63b451fbe5cf6ce4b14a63"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcAtomicFloat.cs",
-      "sha256": "0a2c03189161c1dbb196180fb48628e3a708ed49e523df090af034236ad4faad"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcAtomicInteger.cs",
-      "sha256": "6732d4e05e56ed61c51ff76ca1dbbc31a69f7d1532c24496c1523343c301f037"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcAtomicLong.cs",
-      "sha256": "6b73f9d96c1818c016784cbd50fea4af09d6008600915957485353e0aae50202"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcByteBuffer.cs",
-      "sha256": "4ca85ac1c449e3b8b170cb6bfc467cb93c86af3adb6d2008de4cb31138d2103e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcByteOrder.cs",
-      "sha256": "fb75b91ff92c57a67e7ad077422a273765a0d3fc2c8b1705f3643e594ff920b2"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcByteUtils.cs",
-      "sha256": "934cea848fda3f05bfc1ca6d23df6a42cc435e4490fed039f175c423e563341a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcContext.cs",
-      "sha256": "e259752add0baa7b21d019ab112c381118c01fc6414428e82a793aa54c3b4821"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcConvexUtils.cs",
-      "sha256": "6a5ebcd674f345c684882ccc9ba82bd464f6038993c060f26acb501e23d0fc4d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcDebug.cs",
-      "sha256": "e33ba6fb818e0b179e2be50800cda2b4094dbaf1497681770ee2c0338a2f07b4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcDirectory.cs",
-      "sha256": "61a405c99cb80d9c0e9e177b45161f3fcdce51a7de7510eb13f634f002379f29"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcEdge.cs",
-      "sha256": "6dbd6966970d9084007e59c961e3a2312cf424893eda05f737231fbfd0c1fe0a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcFrequency.cs",
-      "sha256": "c0fde69dc6d0a91554443da5683830d29a8ce4f9aea0f99795e29c3622cc35e1"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcHashCodes.cs",
-      "sha256": "510904dcb2a2713d2c099d505188fbb4146422b776e08b65cf2572667e4627f4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcIntersections.cs",
-      "sha256": "39c5d0ac4615b8028055ffe0cc8dedbeddb2b4c835d8f485e67a4a2ce6a42153"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcIO.cs",
-      "sha256": "2cf634f8f225af80d7e96532482dcd7225ed51d028267aa176a3df4b4ec230bc"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcLogCategory.cs",
-      "sha256": "96aa724b8bd5b580ce55da928d63ae59e89de352db8d401fb465396fc28bf475"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcMath.cs",
-      "sha256": "e4e7bf4b8d75fc3af4eea31fa9c3e8735ba107ba9d8515b343012f8a8bdf3093"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcObjImporter.cs",
-      "sha256": "e8fa15e11e4d7c2d80f145de8498322e991c9643d20a7b837c2c2686eb943208"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcObjImporterContext.cs",
-      "sha256": "6fbb17fea70a6f446e0033f8e7fe16c26847f706eec57a4c9d557a7b110f5c1e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcProcess.cs",
-      "sha256": "30fd730d182e5d9a9ecddfa219111af93556d77d58eb35286eec86a9dfd5fede"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcRand.cs",
-      "sha256": "41e5a6308805196ef23f49253df76efab150a184aecc2c7784ee78d150404efe"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcScopedTimer.cs",
-      "sha256": "b96c9ebc8369094286e2ff5728e011b184eeef1e4ce5a570e680d6ff59c85ae3"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcSegmentVert.cs",
-      "sha256": "514183e1ad7888c6fd5f23f7434ba425cb5bc4880b1f674be610c63005836ca7"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcSpans.cs",
-      "sha256": "9fa8e022239dc65cb27a4cf70e69fcb3d90790da6d4c72b4c71122e5979c0216"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcTelemetryTick.cs",
-      "sha256": "9f47fc1991c9f72d923308c28a95e328e9ab7c21ab0404eeecb5bbc6c48c58b7"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcThrowHelper.cs",
-      "sha256": "893957d0e77439d6f8b788608ab2e5f27a74344f26ecff4768556d3d7d23e3e1"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Core/RcTimerLabel.cs",
-      "sha256": "85695f5604557993d304c5edfde5499b508f91ee155d545411d5c22779bfd0aa"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/DtBVTreeBuilder.cs",
-      "sha256": "5fa07fa740cbe77e30ead4e56d1510ed9b68226d22d728aed7401a4f37c0538b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/DtPolyUtils.cs",
-      "sha256": "28386bb2d8c7aed485ee37678bacd0a84a8b2079a5241fd7f32ad71fc6050f06"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtAbstractGroundSampler.cs",
-      "sha256": "d3ace0a56a50a19d1564d6a344aada87effad135046606fb11525ce363def951"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtBallisticTrajectory.cs",
-      "sha256": "077ff5be4dc30ee4d5007a0a582576587630f78d6f59e13339b0859900ac9139"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtEdgeExtractor.cs",
-      "sha256": "79a2d7b2b6540b8ffbd05e3252d9a4741011a413ff42d4a0b3bdead2831e2ed4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtEdgeSampler.cs",
-      "sha256": "e67e0daac6c36a5e0f2cfd470bf52cd0e04dc99b218ca378cd5e3771798375a2"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtEdgeSamplerFactory.cs",
-      "sha256": "669f215522fbfde850991fc969184cecd74e8d336ea92748e6acc04807ea6240"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtGroundSample.cs",
-      "sha256": "b60103e9acd1fbcbf453a08da2d4d8beb0251a77aa445a72366441d13135d02d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtGroundSegment.cs",
-      "sha256": "7ac75c956a61a63665f740fbe81d8b9ef20b82e55b2c9fd245215c1d77495a1b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpEdge.cs",
-      "sha256": "3ada150a159850361f17f4cde1db382e775f8ef22656b592283391b56e2db832"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpLink.cs",
-      "sha256": "fb7eca3c004dc89c59d8e6ffaf753d1b4556fc4e1ca8f165fbb8649e8daa43c9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpLinkBuilder.cs",
-      "sha256": "bb0c6ad14765cbc09713b304bb1138df5a8ff531171100819148c92c0e6d2a3d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpLinkBuilderConfig.cs",
-      "sha256": "10617fb189a993dcf9cb5214ec1d6c58716c45fc186d935608a6d6e96df143d5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpLinkType.cs",
-      "sha256": "efd602c05d8882aa83d63ec57ce863302062886a95362907714717ee10cd3638"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpSegment.cs",
-      "sha256": "5e0c5d76d49b6a359b64e4f10c487d67b0b85a251b4aefe4108cd15d73a99857"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtJumpSegmentBuilder.cs",
-      "sha256": "60891b3b38f985f486ddde3a3dd41a5e6778b3f02ce1f5b62492222c5c7945f5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtNavMeshGroundSampler.cs",
-      "sha256": "0fc6ad39d827a06a34d1257fff7fe4a4cd29a511d0d708a13fcb0e3e2c536e22"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/DtTrajectorySampler.cs",
-      "sha256": "ce97a309797112816e22d0ec233c7a82befbfaeee7756ff154889746cffcc296"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/IDtGroundSampler.cs",
-      "sha256": "a212dda682752299caca1f7056ed996b5bc3fdb0adb84ee62b9ad4e58f312d60"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Jumplink/IDtTrajectory.cs",
-      "sha256": "f36156330f5e496820a44fb1b350a6b442edbdfc4b70b99dcd332a7c95332cce"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtBVTreeCreator.cs",
-      "sha256": "a2b8276dd4c95bcc9db8a3be2f90b87104169916b69eb168a1fcdc065460f4ca"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphConnectionReader.cs",
-      "sha256": "333dd08f5fe56491ecc851df5bc3cd80a608db8ca87041fb2d667d94f052a363"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphData.cs",
-      "sha256": "21d0d1f83599841b38a56bd9bf981f4cdceb5cc0db133534cf2f9630b0cb601c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphMeshData.cs",
-      "sha256": "696b5728446ef09359d02f17d3f0bf9a5afb7f2d9297e52dd6e20ae9e19782ba"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphMeshDataReader.cs",
-      "sha256": "6dd3f1c11e9bebdde4035130baab683760e16ca4e0b6454f22f9a8e2191a9f69"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphMeta.cs",
-      "sha256": "a2b19aaf9975602c5e9a486f13cd051044ef1efc9146114aa2874371dc87dec8"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtGraphMetaReader.cs",
-      "sha256": "b628432e840aae1940841eb81531f4f257f930e5e2ea492a153b73e65e773d7b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtLinkBuilder.cs",
-      "sha256": "6c4c7b768f1fe09e2d03e59d1f087ae7f1524736b9db6b19e02724964edcd46c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtNodeIndexReader.cs",
-      "sha256": "750446b63f6b3be64a64d3eff15a29e5c2e4e519b775a25eb137bc4c363ff45b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtNodeLink2.cs",
-      "sha256": "b5caf822235c4d3698508383810b7c3732864f04ffae6e033f6cd5b367a5c13c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtNodeLink2Reader.cs",
-      "sha256": "14eac69796d5a6286d857f14bd0336bf3f0549ec3039cb941b667942d8beb4ac"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtOffMeshLinkCreator.cs",
-      "sha256": "aa7b4cfa8c2cad4aa67e288c696569f7fb421fe54eacdd701b0442e198157e59"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtPathfindingRecastGraphMeta.cs",
-      "sha256": "1c8214de798af5fe26e93e70b6728dde656c5c787323af5be3b71c74c0780533"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtPathfindingRecastGraphMetaReader.cs",
-      "sha256": "da217f58d44efe9e26a1fd5a88ed0ee7c4f28c5e188f378a6d13d5b5065264c5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtUnityAStarPathfindingImporter.cs",
-      "sha256": "0ceafe673b4459746ccbbbb24d2618da92e74e1430c988e642227ef58418455a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtUnityAStarPathfindingReader.cs",
-      "sha256": "56f9af8ad5521be022cbcb311072e9a163e5d0e179865799a2b7a3024727756c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtUnityVector3f.cs",
-      "sha256": "0a894cfee7afe154593d60567f9eb9f0ee5531aa4f6ddb2a0b696c959cf28ec6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour.Extras/Unity/Astar/DtZipBinaryReader.cs",
-      "sha256": "44d355307e3bfb8805e4809922827c50f81f2d24ea15ae847256758791611dfa"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtBVItem.cs",
-      "sha256": "1dc4689ee8490b9ab5a97dc3d02630e28e8ec244afcadecbeebad30d4c91fc48"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtBVItemXComparer.cs",
-      "sha256": "26a5033f64379a33d36ddf3fdba673bf70e88804ea558f242590875b87040f6d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtBVItemYComparer.cs",
-      "sha256": "83e0fd04fe4610d2bc4554c4f6739a5fd0f18fff2480796b910ffdba9f39d409"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtBVItemZComparer.cs",
-      "sha256": "e10a442514bbd8920973aaed2473c266a32f786b3642109b1ba30ebdeaf987af"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtBVNode.cs",
-      "sha256": "eaa4709f19c16d7f0c19b874c8ea67ded9389be1bcd1eab199f23337cc4c1699"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtCallbackPolyQuery.cs",
-      "sha256": "3aa36f169e6457b1a2ffe0291f83d0911006503f5394c6094851228b2a61881a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtCollectPolysQuery.cs",
-      "sha256": "4a7b55e07de888b95eccba2096c0e0182c7ed0ce16909812596b96eaa12c15c6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtConnectPoly.cs",
-      "sha256": "1478acd532ccab982c8a7506851ff1f98f61a2bc10b01be38845f6698edc61b9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtConvexConvexInFlag.cs",
-      "sha256": "9082fbf40955ba23d6e7f144b61e4e8b3debb1ebdec4e1f8863487d6a7dda898"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtConvexConvexIntersection.cs",
-      "sha256": "f0e7c765a3c2d3469c668f1022e652050307a057e7dc5e5959786c9273620206"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtConvexConvexIntersections.cs",
-      "sha256": "c659ed24a342bcdc8f326bc22cfe7abc974f6545718e19fb0a651c8a3a9af4af"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtDefaultQueryHeuristic.cs",
-      "sha256": "3813e0dbe1bdbf940a806f5ee925fe3a73411dde335066917f45a4fd49e42a8d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtDetailTriEdgeFlags.cs",
-      "sha256": "edb287c424dd88e8694442212459c6fa61d1e6a73792cd1496f10e26616514e0"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtDetour.cs",
-      "sha256": "772042164e2c6932bbff6f9d1ef66c23b11c66b479bd53d3aa90a54cb484d2c0"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtDetourBuilder.cs",
-      "sha256": "affe4785e7278cd4c05ae3b7d4a1164e63c0172c388f23c995174085249baf54"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtFindNearestPolyQuery.cs",
-      "sha256": "16bd884f0e0617f2b3005bbe3bee81987503c9e0207ffa612a48f06195d82cfc"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtFindPathOption.cs",
-      "sha256": "5bf527e08301d8911d4ecb79df94cd03f3f4c304bce766e52226b8731b1ab34c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtFindPathOptions.cs",
-      "sha256": "39b88eb701dd6b07faa1048831bd713379b0a6ea94b145b68da633de62728c2f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtLink.cs",
-      "sha256": "d8c67b63af69c6c7c644ab8f9e3a0e2f5b0426d3c8009a9015ef99aad46ea736"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtMeshData.cs",
-      "sha256": "c617beb534b7a526660c0eb028457e92dd0591507947d8b736da5d935cd6d75f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtMeshHeader.cs",
-      "sha256": "7a0b68cf4170ccd72676a31aa9d9691f3ea631ddcf20325ba50f19a2a7f30306"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtMeshTile.cs",
-      "sha256": "facb24bb523ac5489bf64a4d358c703ce2c46ba00bf70a4490d776a3361775ae"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMesh.cs",
-      "sha256": "8ad1a1ffb788a0c4236bbda4ba92ec5da30acccb536e9f0fe00ef03db6286706"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshBuilder.cs",
-      "sha256": "7d3af04bf234c35b7115b651414e5b57de2f092a1b0b87316f54b670b8d3d31e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshCreateParams.cs",
-      "sha256": "f96efd9b27f9faaf1df9a44d0389ffec783b56ddb16b2b3b3aa64f02ccff9885"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshParams.cs",
-      "sha256": "a16927371e7ae0716d29a316a5c2c9a0d0f2b228d1beb6399d2a9965730f86c9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshQuery.cs",
-      "sha256": "e86a4e29abb5c9d4e857f432cfff333b9c6d1b8f5c2f2d6807881257b62bf786"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshQueryMock.cs",
-      "sha256": "ac5abbcd9a29e4d157fcf3cc1a8e251b925af1e19fe595015c5f25dc171ce6df"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNavMeshRaycast.cs",
-      "sha256": "5862796dc505b2422c86110c27e13daeed0d39e505d6399e1cafbb1c5d75e569"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNode.cs",
-      "sha256": "84b6421ee9b6775bd8e5947e0296fe74cc946129f7136220e178b6065bb8b9fb"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNodeFlags.cs",
-      "sha256": "47cddc898f90257f4d0363ed28eb2d2d43eea079461638cf33c186bdd512960f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNodePool.cs",
-      "sha256": "4667b72e0e48b34f79dd6f38a212adb4bd43ca0081cd7a1c7c22c51185f0e3a4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNodeQueue.cs",
-      "sha256": "3a8696d71fca2ab62031323fe8d609d607ceda5b7de51798472cd00b3a3a509a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtNoOpDtPolygonByCircleConstraint.cs",
-      "sha256": "1b1452a80cff298e2f6042e50bd23127c803ed941ee1d26ab3c963c4d64da2bd"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtOffMeshConnection.cs",
-      "sha256": "da7380c55fdf21673dc99205f60be4723f8edb7daeeea50a982168f10bc45086"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtPathUtils.cs",
-      "sha256": "22c2587e2f41d55e319c1ae264ff8218919f8756fb9ab64047e9c8bf578a9316"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtPoly.cs",
-      "sha256": "1d0a0aaaa56ebc5aa94e72a411060c9848b29d9df9c44f8f1fe503cb5fba40a0"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtPolyDetail.cs",
-      "sha256": "acc1a6f9582529febd280a9cd5d1e8b17b0a812f1b151d72505da07694c1e0ee"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtPolyPoint.cs",
-      "sha256": "65ec80e86079c95247cb3133064477fd3bb52c1552588d58f7ed763ba7bee084"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtPolyTypes.cs",
-      "sha256": "c9cf65cd08881d869fb52ecda50c8a85656b2dbf2b14c99fae6d14443671da91"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtQueryData.cs",
-      "sha256": "f409aa16ff7a1a830317e7cf1f2091d837797e2e40bb5db5ad9dcddc84dd45c0"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtQueryDefaultFilter.cs",
-      "sha256": "7e0ef325d35b7a3406fc37c16e22d5da85d93e1964f8b52684e0b66cdd2506a5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtQueryEmptyFilter.cs",
-      "sha256": "a0cf0a9c0ebce51e260095356e9df21e5b86fe9ada7df4e78f701e0084ad078e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtQueryNoOpFilter.cs",
-      "sha256": "46451457a4f7b644aaceb8bcc00325096d3c649cafffedfff9d6e50cafd2731c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtRaycastHit.cs",
-      "sha256": "f7a3e144d379de3d185939443e70801dce7313e4b210d6f477956c2dd233e876"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtRaycastOptions.cs",
-      "sha256": "dbaad1e9d61590287d3ea8133db97ffe1766b1d28181de252a10f98b3ba63794"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtSegInterval.cs",
-      "sha256": "ad3e24c22f7e4772e02185247503aaa81a6c7a7d31878118275a66a05af9cf16"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStatus.cs",
-      "sha256": "d48c1091e3cbf5236a3a5b0096f50aa4202c2c5b740cdf130ab85a91dade5938"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStraightPath.cs",
-      "sha256": "88ffc31524a42ef7664f52b399bf217c37fca39863c382ee199f927064a25300"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStraightPathFlags.cs",
-      "sha256": "f3bda370a38464aeab68a970d475d9d3d7bdc3aceb6ee9b4b17b2093f4a62048"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStraightPathOption.cs",
-      "sha256": "40cc42310bc96e20fcff431e946efcffd0a69e23a041d2a49417e5200c52fecb"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStraightPathOptions.cs",
-      "sha256": "86ec29ee2380c2d764387160e0a19d648d272d11b05718ee981abdd13f8c8780"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtStrictDtPolygonByCircleConstraint.cs",
-      "sha256": "9fb863e1eb9ef9d726ed3d35279bbeb1252df8e860ca2fa2dbed77f1fc64655d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtTileFlags.cs",
-      "sha256": "fd6bf9ac21ad371059f758d931fada5ddae0e03c1b475eafc65532afa2531d25"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/DtUtils.cs",
-      "sha256": "09e3d9e597981cc58a06fc13328fa5020f7154960218dac26059833f1bad5771"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/IDtPolygonByCircleConstraint.cs",
-      "sha256": "f8421cd76eb11d112fd361a5c08674c4e96cd89649a8ee778e39210d57ccbfdd"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/IDtPolyQuery.cs",
-      "sha256": "8ae0b4ab7c2a394f75cf681488086b6231c0c03c1867bb66b4afcc385bd57ba6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/IDtQueryFilter.cs",
-      "sha256": "1c8e8e23c5d9940dfd045f6538aa8871022b3538bf825b7923aabd130daf44a9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/IDtQueryHeuristic.cs",
-      "sha256": "f821599e64120d1e53a20bb6efa7ef63205f55630decf11a9f508027fd70668f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtMeshDataReader.cs",
-      "sha256": "eeb3f71bc857a5c47516050833af02003e3f60e2b8c71428c60e4a0f825b366c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtMeshDataWriter.cs",
-      "sha256": "6d1b5597c2893dea347ddd5720909798a2cf9c3c5728d5f5a5e2a337212d3e14"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtMeshSetReader.cs",
-      "sha256": "b23d900536a2dccbdf5f6dd3313fe1addcf81e51f35e06faa399fda145e4686f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtMeshSetWriter.cs",
-      "sha256": "62b2109434927c44079e4fff0bfa3fc820adfaa2c3ab7ece463848432a960811"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtNavMeshParamsReader.cs",
-      "sha256": "a83e2af76fd2d3d7d52b5b9ccc061e80842dd268e22fd02b6ad7558ba54bae1e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/DtNavMeshParamWriter.cs",
-      "sha256": "5ebce83e44fcdfb3decf3d7690b3094d258581f38f197d15eb3bb177771827d6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/NavMeshSetHeader.cs",
-      "sha256": "4bbd4dbfb07c202946e03573d2409130049d098949101b57160797b2a35bb5c5"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Detour/Io/NavMeshTileHeader.cs",
-      "sha256": "21afa24a58d6e52abf37bf18e27b602ec199bec103dad2f8b51585bac249de82"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/IRcInputGeomProvider.cs",
-      "sha256": "9b05b1b65900f523d6c40ce3fbe19254077d232699c76a050a99ec45b142c1ce"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcBoundsItem.cs",
-      "sha256": "abbb8996c3ac3b6b96d48f17b10a1f17642f6e2f995d5530fe9e04ae5297aaee"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcBoundsItemXComparer.cs",
-      "sha256": "6fc1ddd3e0fa7daac45b6a7f4332701ff05e488742e5afd4338ce64a3df0357e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcBoundsItemYComparer.cs",
-      "sha256": "a4c59d22a7ad25b63403cbae22c9105d6a329bda071e2f61d022f1230ac45a7b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcChunkyTriMesh.cs",
-      "sha256": "f0d2493bed6ede2f074b05e9bb0998860311afc6e8e5005d7c114e1d8da057d1"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcChunkyTriMeshNode.cs",
-      "sha256": "87f12092a1e6473daa8f96c1321f67abb8c20a43f6da497ff111fcf49c15f92c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcChunkyTriMeshs.cs",
-      "sha256": "0e128638eb508196f84cda26aca923e6674ad79f0e86e0b4b11b7368d8a32320"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcOffMeshConnection.cs",
-      "sha256": "1ab73e2831a3b3d786cc76ba8e50897e960bb2403bae1a29d48dddc17f04036e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcSampleInputGeomProvider.cs",
-      "sha256": "a1beb42899a2ee492756b855ccdb1ca92f27cbe86083e0659a929a1838218715"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/Geom/RcTriMesh.cs",
-      "sha256": "eb5295dd408b59d614d7e5ab8c68d8b937199e8ea18f723b1fa9043564155a0b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/IRcBuilderProgressListener.cs",
-      "sha256": "de06351ca8501d0b05d4eba64f502d694bdf0adc22da1fd567b3d6d12d588bd9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcAreaModification.cs",
-      "sha256": "67235cd19608c721b2d4d1d993d744fabc0bae8d791f8311a896b884d7ce0a9e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcAreas.cs",
-      "sha256": "df9184999c8e961fce06db8da75661b1afcec591dba17c7e53e12830014e85ef"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcAxis.cs",
-      "sha256": "45cd3c17315638181f4003c1a7dc983bca6c225ded575592de1c1bc588841c70"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcBuildContoursFlags.cs",
-      "sha256": "824ef091426239f5e456640c5d682f6ad0d4d519a9bd4884797764b32f826bf9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcBuilder.cs",
-      "sha256": "f47edd297979ed933f78ac21c54731843036f5232b5e4f0c049fd70ecb10bbdb"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcBuilderConfig.cs",
-      "sha256": "977b1d2c64b46e1cf0cd5d0097db2c5edb0e3f38e80c50750476ebdafc70ac14"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcBuilderResult.cs",
-      "sha256": "bb60999ad53c9bdee5cfad430c18a92fff6064f3806c601c7089d08c806a87ff"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcCompactCell.cs",
-      "sha256": "3a60a9746cde777a085c5abd03210d40773a099c110704db52121504131af3d3"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcCompactHeightfield.cs",
-      "sha256": "ee0b7dfff38f4fda2d08bc5cd02b27f7853c16eca7c0017ac15f583b061d9858"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcCompacts.cs",
-      "sha256": "05b4f2d7a47f700ef3514077d5380b5e5535c7a8a20402d44a4a793cc23e99f6"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcCompactSpan.cs",
-      "sha256": "3d19cf7920e2863038687238b37d61dff4850064d9b182476d604fac300402f9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcCompactSpanBuilder.cs",
-      "sha256": "b5c3dd20bd0ea1ee909ec253da49aa807121fc464a2737cd2cb112d09091bb0e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcConfig.cs",
-      "sha256": "cd10187966796d9c50b4c80d08ca6758fca637d846dea643105f91af4d2bd695"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContour.cs",
-      "sha256": "c2fa9bb42bfa824a536fe58a53782c3cc73219f63134d84943fbd435ff422c82"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContourHole.cs",
-      "sha256": "136a440e72ce0667ff11d5c9f3123a99ca22a62316eb5599e9b1cd16d134ee4e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContourHoleComparer.cs",
-      "sha256": "719e64d81c6177dab83bcff910674c8489eae7a44288ffab52483ad6e7c06308"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContourRegion.cs",
-      "sha256": "994ee51ad6fa6925e6d1b05486a9505bf7ff99608ec23d3d4adb074b324ec049"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContours.cs",
-      "sha256": "6dfc71339fc190b096ea87d6ce7b2936f4a0f63c633f7051bfc29a6dbdc22baf"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcContourSet.cs",
-      "sha256": "3f0857b4a28ac3ad4f318cc409d1620071037da4fd5f4d8d2ad294a1755e3827"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcConvexVolume.cs",
-      "sha256": "8345010e97e9e3cbf4fb8ea489d359bf96a0d5de0c1797ad036cba2449f0a728"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcDirtyEntry.cs",
-      "sha256": "5d2a1dc4af09591d9f99d2926ec37eebf18016d75214d65cf3c38aeeed343832"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcEdgeValues.cs",
-      "sha256": "b5f5412e93e6b619af76206b7abe567d0a86a5645b26f0c1317fab8831813eed"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcFilledVolumeRasterization.cs",
-      "sha256": "36c2a81587651f518d1c53ae186601f0d1e87f3eeb8df00f2b2aa76d4b0fa736"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcFilters.cs",
-      "sha256": "d5d72839877da135b30bb4b2826660d7f57ca9ea25ef65c513fc942f607d3b06"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcHeightfield.cs",
-      "sha256": "dba2bd959afd45f119abbf12c555c85b6a9a3f00a797650b8ad9b7abfdfc0079"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcHeightfieldLayer.cs",
-      "sha256": "9efb5d574307c3c8edf690a9b71a8ac8625e6f321b439bb0e32c0c64da8cb98c"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcHeightfieldLayerSet.cs",
-      "sha256": "cbeed4542e4014b85d434be3d319b2ca3275653868247e4ba4a76dd4118880b0"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcHeightPatch.cs",
-      "sha256": "ad72375bd29e0386df7db8aab36b10701a90933ee58b5839b53d112769b3dca8"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcLayerRegion.cs",
-      "sha256": "410340e51608a4e6461fdb5343229ffea4220d56d4d3912b9de7e6fe0f458c3a"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcLayers.cs",
-      "sha256": "6bafbf50780a10e6d4c1573edec3d82da1598be4c0d0aca1f96722cdc7ecbb6b"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcLayerSweepSpan.cs",
-      "sha256": "4599ee040f78d5b4d4018cc12d03b6685d45a54cf5dc4c9eedfab87c0e0828bc"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcLevelStackEntry.cs",
-      "sha256": "94328b981c0954fcecfc0c50cd5b0a3969355e36a87df60574b7ec0235533298"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcMeshDetails.cs",
-      "sha256": "c1a30b06feef17f69d259d68e41d964880fda131342e42085c2cdd6f6fe30df2"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcMeshs.cs",
-      "sha256": "f7131bb2677a359b3b148917c1f69246b4a0075f2e8e180ed71cd25eaa04478f"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPartition.cs",
-      "sha256": "49770d423934c2902ffb0956103267903798fb6efd4b9b30c54b9fe74e407785"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPartitionType.cs",
-      "sha256": "5a8bae3e2b0929bb470638103a0370a5983a6152801ff7c44bc57cb2f634c9b2"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPolyMesh.cs",
-      "sha256": "fd382ecb6a83fa3b6be071bf4147dc0d21cd1350924afbd0e04fabd2db3e93ad"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPolyMeshDetail.cs",
-      "sha256": "65e2d3f2da4ad17cb92b807460a8517938942a2f513009093b9aa83f1a3d9afd"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPolyMeshRaycast.cs",
-      "sha256": "9300ae92b71c26a32f5497a108cd61fee28ed7d66f1ba70a55281590fc5a1f3e"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPotentialDiagonal.cs",
-      "sha256": "b1c531b503ea34e75f6c662e64d90cf6c2e7161eddbdb635a2160fe92379d05d"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcPotentialDiagonalComparer.cs",
-      "sha256": "dbc3dbafd8cb9918e6da1d2fa9460f72ffc7c0c9fb4bfcaddd6a3967d4d4ad00"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcRasterizations.cs",
-      "sha256": "e633a9d549270279f9e06c97b43fc8dbb3059801c8080e635b614bdfad83f5c9"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcRecast.cs",
-      "sha256": "90ae204293a99c699e9747a1c3512c16095aa16aab54bb56f70b721508499174"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcRegion.cs",
-      "sha256": "6372143a2ba1795a12d0192973e14b51708133b3843c2fe30b1f8909e3418328"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcRegions.cs",
-      "sha256": "03e503c3ce6ca77fd70e345824170dc494da0f637fdfff2650d9fcdb3ab36674"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcSpan.cs",
-      "sha256": "0ea5e7f63abdaa5a9ce1e9f6bd1137d4f7af08f1a46996361d1b2fb4bf7559d4"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcSpanPool.cs",
-      "sha256": "df646a479bb11534c95ea7f392006dc0a8c6c1effbae1ca2fbdba0d77f6e32f8"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcSweepSpan.cs",
-      "sha256": "5234c7b5c69ef3a991291fd135b911f6192a0d9152118ce3fff56b6426116c15"
-    },
-    {
-      "path": "Terrain/Upstream/DotRecast/src/DotRecast.Recast/RcVoxelizations.cs",
-      "sha256": "6f51fc95a74e5138510933548691aa72b4e255b942a7a37cde6267ed9e3c0fcb"
-    },
-    {
-      "path": "Terrain/Upstream/LICENSE.DotRecast.txt",
-      "sha256": "dddd160c04e2c236583e7a3a4448838f07eb4c5baec7753e4e51a150bb6792d8"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/BuildScene.cs",
-      "sha256": "eb3d4defa8947aaf8d058871ecaf1958e74c6aa6736037f8878361d8928246fc"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/CharacterPhysics.cs",
-      "sha256": "d1c5be2aaee19eec059a746fee0514f91d5b0975083a8812895d64b9a772163c"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/CollisionMaterial.cs",
-      "sha256": "30770b5bc88b358eea69de0dbe3d64df76763f663ace20429245c75be0b371a8"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Enums/MeshType.cs",
-      "sha256": "624c9a6ea99bbb11897ee9951ef04f7b880917a73a41f38a4d1bd2dfe61ef678"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Enums/PrimitiveFlags.cs",
-      "sha256": "94abd5b68f18e21f651a420de5d6ce0dbbeae1558f6c663dad9e837d19395260"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VolumeLevel.cs",
-      "sha256": "bf53359725014f5c53fdc48332207a8e171bccf44e498bd8f291a747c5dc86ff"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VolumePackedCellState.cs",
-      "sha256": "970847ae5c82dab91b0560176fd3fb14229382319d428de2f8ac4c4c177a3120"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VolumeRootColumnBuildResult.cs",
-      "sha256": "196b62e9f5771089cb9c0a9209f3083abcbe93a685688ba8f87faebed4916e4c"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VolumeTile.cs",
-      "sha256": "3ab3fa2e0ee0fdad19a85ac0539040500301b6faff55028934addcd0e67b9171"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VolumeTileStorageKind.cs",
-      "sha256": "342424d4b21e3ffaaa2e73d8f18a4faad403443bc73f885bac6ae13d963efcdb"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/Voxelizer.cs",
-      "sha256": "b219291e1e6f766fccd51e56883b0f49e04a15bd080f693c3fe9c9e975da7529"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Flight/VoxelMap.cs",
-      "sha256": "bf90b9db49bf3b24f6082bacaa5803e3dcce0281a25ca97f67b466efe987ee33"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/DtOffMeshConnectionTileClassifier.cs",
-      "sha256": "6b28dcc03e539c248eec7d6d0ed4f3b06b92a637d7821d7f48b47c76e6ba0e1d"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Enums/NavmeshArea.cs",
-      "sha256": "5c209df007984aa6a4e0fffd68b8c2773ce391b78a8bd6a62b9ee207bd8bf02f"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Enums/NavmeshFilter.cs",
-      "sha256": "cfadd54abaab3f77a6877c70ebcf0262f4e44e2f94517bb6a89c745c2fec606c"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Enums/NavmeshOffMeshKind.cs",
-      "sha256": "515eaf011f4aa163ff56102a4ecb886ff98e2a241b319b2a461eaff86e4e0783"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Enums/NavmeshPolyFlags.cs",
-      "sha256": "640ece801be453d3d68fcd48e040bcccc84a1008b2ed975b73408653c3f9a5f3"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Models/NavmeshLink.cs",
-      "sha256": "9a686f5f53c1966c1a628bcc6e5689e87da9fcdc505cecef246a1c1de009985a"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Models/NavmeshLinkTraversalProfile.cs",
-      "sha256": "db4029ea1cee5a6b6b596d738659b73f46f23e422234b6b9ef95631496fdea1d"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/Models/NavmeshLinkTraversalProfiles.cs",
-      "sha256": "e5b3f65cbabb1b6b36d98ff2c7f34806504fe45fee850c6c8d5ca9ee8e996899"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Ground/NavmeshRasterizer.cs",
-      "sha256": "28ac1bd732e23612afa746b155f50cf15adbfb91bb335f8e20e7b7d12d80e043"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/Mesh.cs",
-      "sha256": "9ce5cba29bccffb3c4cb3e2ef5132eac6d6b141a2ba9326f42ecb961784a811e"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/MeshInstance.cs",
-      "sha256": "4edc2781da1d690a383ceae003ee49df9837920ad67bf6d8c80c34fb3c63b9fd"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/MeshPart.cs",
-      "sha256": "d2e00a9970bb4ee5a160dafb5d14c421eb45c8d75dd2d1bb6db92c9fddc47fbf"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/NavmeshBuildManifest.cs",
-      "sha256": "733890b41e76b28bff6782fbe311eabe26e926f9ddb359bb578e554b1c22b740"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/OffMeshConnection.cs",
-      "sha256": "5591b088399c007948111f97b13537ac50eace29ebf8c4bf3a4cbdd913d84574"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Models/Primitive.cs",
-      "sha256": "93b84931d3e093c45bc90dd1f0d2c59b44d4f5f98bbaeaa9baedead8c285d330"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/Navmesh.cs",
-      "sha256": "f71f0b5d430e64857761848257b87f5b3eabd85bb110e790bf3f631d59f89b83"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/NavmeshBuilder.cs",
-      "sha256": "817eab90cadd002eee9e52b8000edb312332d1a0b8e198876d86e9308979776c"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/NavmeshBuildLog.cs",
-      "sha256": "cf65affc1a71c556c221218c3e6ec29e55357022210f179aee5a2d941ac9b921"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Build/NavmeshSettings.cs",
-      "sha256": "ee677f9ac2d497e82b1f7606ca9c020fcca38d9cbad58c8b67e1b30b129a4df0"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Extensions/AngleExtension.cs",
-      "sha256": "6ae3812778953661044382e0f3074b83d3d1046365f3ee08cefe6a2f47eb652a"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Extensions/DtNavMeshCreateParamsExtension.cs",
-      "sha256": "1f83b5ff169c82e76dc32836972cf2e18c9da072884916bf6d02153c132df519"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Extensions/InterlockedExtension.cs",
-      "sha256": "a9958eb6599d40648b485fa15a3402ec7a7a5430433c607024967bd5b524e386"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Extensions/Vector3Extension.cs",
-      "sha256": "61cc23fee3eb62ec20f3bcbb7219cbbd6776166c778fbe87f78c7fd44a1a8127"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Models/AABB.cs",
-      "sha256": "946f2ef537aed5fb1d539ea3b9df28f477ded321c4ad213aa85bdebac49cc274"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Models/Angle.cs",
-      "sha256": "9ede9381e0c8354f34b16aaf09b1c5038aaeebeb82fdf1306cd59ea05a7736a6"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Models/Matrix4x3.cs",
-      "sha256": "6aedf37e112d9656bc61cfd22b8f6c6575e5ba5aa7d04a571276b9b725a03635"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Utils/OnDispose.cs",
-      "sha256": "49c732f45fa35caca64cd73f353b7340533e938640599738c2adc759c97c938e"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh.Common/Utils/StopWatchTimer.cs",
-      "sha256": "087826d0fd971e66d4f2abdd9b3133bae5f03caebf68e7fecdd42e2b4de6f060"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh/Build/Ground/NavmeshBitmap.cs",
-      "sha256": "cb8cceb5640be6a6a4a992efbd3f52675dc18b521a9e0a0889f20e61c1c63cec"
-    },
-    {
-      "path": "Terrain/Upstream/vnavmesh/Build/Scene/SceneExtractor.cs",
-      "sha256": "9e9e2fb3955cd83592ab912d7dc0ec29738f5727b5aa501b9dd7cff758e32034"
-    },
-    {
-      "path": "Terrain/VnavOffline.cs",
-      "sha256": "5805a5f08f09f7dc0ec25b6193eccf00822955967782f3e578d9d6a489852ec3"
     }
   ]
 }

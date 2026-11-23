@@ -34,7 +34,7 @@ public sealed record EncounterHintState(
         && (ModeFinish == default || now <= ModeFinish);
 
     public bool HoldMovement(DateTime now) =>
-        PendingKnockback || (Mode is AIHints.SpecialMode.NoMovement or AIHints.SpecialMode.Pyretic && ModeActive(now));
+        Mode is AIHints.SpecialMode.NoMovement or AIHints.SpecialMode.Pyretic && ModeActive(now);
 
     public bool RequireMovement(DateTime now) =>
         KeepMoving || Mode == AIHints.SpecialMode.Freezing && ModeActive(now);

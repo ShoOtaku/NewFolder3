@@ -16,6 +16,7 @@ internal sealed unsafe class EntranceWindowCleanup
     private bool _complete;
     private long _nextRead;
     private (string Name, nint Address, ushort Id) _closing;
+    private long _closeSentAt;
 
     public bool Ready(RunContext context)
     {
@@ -35,7 +36,9 @@ internal sealed unsafe class EntranceWindowCleanup
             var addon = Visible(name);
             if (addon == null) continue;
             var key = (name, (nint)addon, addon->Id);
-            if (!addon->IsAddonAndNodesReady() || key == _closing) return false;
+            if (!addon->IsAddonAndNodesReady()) return false;
+            if (key == _closing && now - _closeSentAt < InteractionTiming.GetRetryMilliseconds())
+                return false;
             if (!IsEntranceWindow(name, addon))
             {
                 context.StatusLine = $"等待其他對話結束：{name}。";
@@ -53,6 +56,7 @@ internal sealed unsafe class EntranceWindowCleanup
             else if (!addon->Close(true))
             { _nextRead = now + InteractionTiming.GetRetryMilliseconds(); return false; }
             _closing = key;
+            _closeSentAt = now;
             context.StatusLine = $"等待入口視窗關閉：{name}。";
             return false;
         }

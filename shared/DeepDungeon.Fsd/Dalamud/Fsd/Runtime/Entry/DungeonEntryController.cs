@@ -1,3 +1,4 @@
+using FFXIVClientStructs.FFXIV.Client.Enums;
 using System.Diagnostics;
 using System.Numerics;
 using DeepDungeon.Fsd.Core;
@@ -8,7 +9,7 @@ using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace DeepDungeon.Fsd.Dalamud.Runtime.Entry;
 
-internal enum EntryOutcome { Pending, Entered, SourceVerified, ResetRequired, Conflict }
+internal enum EntryOutcome { Pending, Entered, SourceVerified, ResetRequired, Conflict, SourceConflict }
 internal readonly record struct EntryResult(EntryOutcome Outcome, int Slot, int Floor, string Reason);
 
 /// <summary>One goal, observed UI content, one guarded command. No remembered UI steps.</summary>
@@ -20,9 +21,9 @@ internal sealed class DungeonEntryController : IDisposable
     private readonly bool _verifyOnly;
     private readonly bool _resetWhenFull;
     private readonly int? _selectedProgressionSlot;
+    private readonly int? _requiredEmptySlot;
     private EntranceWindowCleanup _cleanup = new();
-    private bool _commenced;
-    private readonly EntryDispatchGate _dispatch = new();
+    private EntryDispatchGate _dispatch = new();
     private RunContext? _context;
     private PtEntryText? _text;
     private NavigationHelper? _navigation;
@@ -41,7 +42,7 @@ internal sealed class DungeonEntryController : IDisposable
 
     public DungeonEntryController(DungeonData dungeon, int floor, int preferredSlot = 0,
         PreparedSaveBinding? prepared = null, bool verifyOnly = false, bool resetWhenFull = false,
-        int? selectedProgressionSlot = null)
+        int? selectedProgressionSlot = null, int? requiredEmptySlot = null)
     {
         _dungeon = dungeon;
         _requestedFloor = floor;
@@ -50,6 +51,7 @@ internal sealed class DungeonEntryController : IDisposable
         _verifyOnly = verifyOnly;
         _resetWhenFull = resetWhenFull && prepared == null && !verifyOnly;
         _selectedProgressionSlot = selectedProgressionSlot;
+        _requiredEmptySlot = requiredEmptySlot;
     }
 
     public void Prepare(RunContext context)
@@ -62,7 +64,7 @@ internal sealed class DungeonEntryController : IDisposable
             _text = PtEntryText.ForDungeon(_dungeon.DutyDungeonId);
             if (_prepared == null && !_selectedProgressionSlot.HasValue) _ = _text.FloorLabel(_requestedFloor);
             _cleanup = new();
-            _commenced = false;
+            _dispatch = new();
             _panelsAbsentSince = 0;
             SetStatus("等待可識別的入口 UI。");
         }
@@ -81,12 +83,27 @@ internal sealed class DungeonEntryController : IDisposable
 
         if (!ctx.Duty.IsInDuty)
         {
-            if (_commenced) { SetStatus("已確認入場，等待進本。"); return Result; }
             if (!_cleanup.Ready(ctx)) return Result;
         }
 
         var ui = EntryUiReader.Read(_text, SourceFloor);
-        _dispatch.Observe(ui.Revision, now);
+        if (_dispatch.Pending is { Action: nameof(EntryAction.Commence) } &&
+            (ctx.Duty.IsInDuty || !ui.QueuePending &&
+                (ui.Kind is EntryUiKind.EntranceMenu or EntryUiKind.ReadSaves ||
+                 ui.Kind == EntryUiKind.None && ui.QueueState == ContentsFinderQueueState.None &&
+                 _dispatch.ResultStillUnconfirmed(now))))
+            _dispatch.ClearReceipt();
+        bool waitingForEntry = _dispatch.Pending is { Action: nameof(EntryAction.Commence) };
+        if (waitingForEntry && ui.Kind == EntryUiKind.None && !ui.QueuePending)
+        {
+            SetStatus("已送出入場確認，等待可識別的任務狀態或過圖。");
+            return Result;
+        }
+        // Loading and unrelated modals do not acknowledge a sent operation.
+        if (ui.ConfirmDisabled)
+            _dispatch.ObserveDisabledControl(ui.Revision);
+        else if (ui.Kind is not (EntryUiKind.Incomplete or EntryUiKind.Unknown))
+            _dispatch.Observe(ui.Revision, now, preservePending: waitingForEntry);
         if (ui.Kind != EntryUiKind.None) _navigation?.Cancel();
         if (!ctx.Duty.IsInDuty && ui.QueuePending && ui.QueueMatches)
             DeepDungeonUi.CloseSaveAndMenuIfNoModal();
@@ -121,6 +138,11 @@ internal sealed class DungeonEntryController : IDisposable
         }
         if (decision.Action == EntryAction.Wait)
         { SetStatus(decision.Reason + (ui.Detail.Length > 0 ? $" [{ui.Addon}: {ui.Detail}]" : "")); return Result; }
+        if (waitingForEntry && decision.Action != EntryAction.Commence)
+        {
+            SetStatus("已送出入場確認，等待原任務的結果。");
+            return Result;
+        }
 
         // Between server-driven dialogs the parent list can briefly be exposed.
         // Do not submit a second slot request before the next modal arrives.
@@ -130,10 +152,11 @@ internal sealed class DungeonEntryController : IDisposable
 
         if (decision.Action == EntryAction.SelectSave)
         {
-            if (ui.Slots == null) return Result;
+            if (ui.Slots == null || !_dispatch.IsStable(now)) return Result;
             if (_prepared != null)
             {
-                if (!BindPrepared(ui.Slots, out string error)) { SetStatus(error); return Result; }
+                if (!BindPrepared(ui.Slots, out string error))
+                    return Fail(error, sourceConflict: true);
                 if (_verifyOnly) { _verifiedSource = true; return Result; }
             }
             else if (_selectedProgressionSlot is { } selectedSlot && _bound == null)
@@ -141,14 +164,17 @@ internal sealed class DungeonEntryController : IDisposable
                 int maxFloor = _dungeon.DungeonId == 1 ? 200 : 100;
                 if (!SelectedProgressionSavePolicy.TrySelect(ui.Slots, selectedSlot, maxFloor, out var source, out var error))
                 {
-                    SetStatus(error);
-                    return Result;
+                    return Fail(error, sourceConflict: true);
                 }
                 _bound = source;
             }
             else if (_bound == null)
             {
-                var candidates = ui.Slots.Where(slot => slot.Empty && slot.Enterable).ToArray();
+                if (_requiredEmptySlot is { } requiredSlot &&
+                    ui.Slots.Any(slot => slot.Index == requiredSlot && !slot.Empty))
+                    return Fail("重置後的指定槽已被佔用；停止，不改選其他存檔。", sourceConflict: true);
+                var candidates = ui.Slots.Where(slot => slot.Empty && slot.Enterable &&
+                    (!_requiredEmptySlot.HasValue || slot.Index == _requiredEmptySlot.Value)).ToArray();
                 if (candidates.Length == 0)
                 {
                     if (!_resetWhenFull)
@@ -169,8 +195,9 @@ internal sealed class DungeonEntryController : IDisposable
                 }
                 _bound = candidates.FirstOrDefault(slot => slot.Index == _preferredSlot, candidates[0]);
             }
-            if (!ui.Slots.Any(slot => SameSource(_bound!.Value, slot) && slot.Enterable))
-                return Fail("綁定的來源存檔已變更；不改選其他槽位。");
+            if (!ui.Slots.Any(slot => SameSource(_bound!.Value, slot) && slot.Enterable &&
+                (_prepared?.RequireCheckpointMatch != true || slot == _bound.Value)))
+                return Fail("綁定的來源存檔已變更，無法確認入場來源。", sourceConflict: true);
         }
         if (decision.Action == EntryAction.InteractNpc)
         {
@@ -178,15 +205,27 @@ internal sealed class DungeonEntryController : IDisposable
             ApproachNpc(now);
             return Result;
         }
-        if (!_dispatch.CanDispatch(now))
+        bool canRetry = decision.Action switch
         {
-            if (_dispatch.Exhausted) SetStatus("同一視窗操作尚未生效；停止重送，等待內容變更。");
+            EntryAction.SelectSave or EntryAction.SelectFixedParty or EntryAction.AdvanceExplanation or
+                EntryAction.SelectFloor or EntryAction.Confirm =>
+                !ui.ConfirmDisabled && !ui.QueuePending && ui.QueueState == ContentsFinderQueueState.None,
+            EntryAction.Commence => !ui.ConfirmDisabled && ui.QueueState == ContentsFinderQueueState.Ready,
+            _ => false,
+        };
+        if (!_dispatch.CanDispatch(now, canRetry))
+        {
+            if (_dispatch.Pending is { } pending)
+                SetStatus(_dispatch.ResultStillUnconfirmed(now) ? $"已送出 {pending.Action}，尚未觀測到{pending.Expected}，目前畫面未提供可重送的證據。"
+                    : $"已送出 {pending.Action}，等待{pending.Expected}。");
             return Result;
         }
 
         // Re-resolve the live addon and exact content in the same framework callback.
         var current = EntryUiReader.Read(_text, SourceFloor);
-        if (current.Revision != ui.Revision || current.QueuePending != ui.QueuePending || current.QueueMatches != ui.QueueMatches)
+        if (current.Kind != ui.Kind || current.Revision != ui.Revision ||
+            current.ConfirmDisabled || current.QueueState != ui.QueueState ||
+            current.QueuePending != ui.QueuePending || current.QueueMatches != ui.QueueMatches)
             return Result;
         bool sent = decision.Action switch
         {
@@ -199,9 +238,17 @@ internal sealed class DungeonEntryController : IDisposable
             EntryAction.Commence => DeepDungeonUi.ClickCommenceButton(),
             _ => false
         };
-        _dispatch.Dispatched(now);
+        string confirmation = decision.Action switch
+        {
+            EntryAction.OpenSaves => "讀取存檔列表",
+            EntryAction.SelectSave => "入場對話或任務申請",
+            EntryAction.Commence => "任務入場結果",
+            _ => "下一個入場畫面或任務申請"
+        };
+        // Opening the read-only list is safe on a still-matching entrance menu.
+        _dispatch.RecordDispatch(now, sent && decision.Action != EntryAction.OpenSaves
+            ? new(decision.Action.ToString(), confirmation) : null);
         if (sent) _lastNativeRequestAt = now;
-        if (sent && decision.Action == EntryAction.Commence) _commenced = true;
         SetStatus(sent ? decision.Reason : "原生操作未送出；等待重試。");
         ctx.RecordDiagnostic?.Invoke("entry-action", new { action = decision.Action.ToString(), ui.Kind,
             ui.Addon, ui.AddonId, sourceSlot = SourceSlot, floor = SourceFloor, sent });
@@ -234,16 +281,22 @@ internal sealed class DungeonEntryController : IDisposable
             return;
         }
         _navigation?.Cancel();
-        if (!_dispatch.CanDispatch(now)) return;
+        if (!_dispatch.CanDispatch(now))
+        {
+            if (_dispatch.Pending is { } pending) SetStatus($"已與入口 NPC 互動，等待{pending.Expected}。");
+            return;
+        }
         bool sent = NpcInteractionGuard.TryInteract(_dungeon.NpcDataId, "PT entry", out var status);
-        _dispatch.Dispatched(now);
+        // Opening the NPC dialog is safe to retry when the game still
+        // presents a targetable NPC and no active entry UI or queue.
+        _dispatch.RecordDispatch(now);
         if (sent) _lastNativeRequestAt = now;
         SetStatus(status);
     }
 
-    private EntryResult Fail(string reason)
+    private EntryResult Fail(string reason, bool sourceConflict = false)
     {
-        Result = new(EntryOutcome.Conflict, SourceSlot, SourceFloor, reason);
+        Result = new(sourceConflict ? EntryOutcome.SourceConflict : EntryOutcome.Conflict, SourceSlot, SourceFloor, reason);
         if (_context != null) _context.StatusIsError = true;
         SetStatus(reason);
         _navigation?.Cancel();

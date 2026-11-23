@@ -64,28 +64,51 @@ public static class EntryUiPolicy
     private static EntryDecision Conflict(string reason) => new(EntryAction.Conflict, reason);
 }
 
-/// <summary>One pending operation per exact UI revision. A changed screen is new evidence,
-/// not a reason to replay the old operation. Uses monotonic elapsed milliseconds.</summary>
+public readonly record struct EntryDispatchReceipt(string Action, string Expected, string? Scope = null, string? Prompt = null);
+
+/// <summary>Debounces a live UI revision and remembers the operation sent to it.
+/// Uses monotonic elapsed milliseconds.</summary>
 public sealed class EntryDispatchGate
 {
     private string _revision = string.Empty;
     private long _seenAt;
     private long _lastDispatchAt = long.MinValue;
-    private int _attempts;
+    public EntryDispatchReceipt? Pending { get; private set; }
+    private bool _controlWasDisabled;
 
-    public void Observe(string revision, long now)
+    public void ObserveDisabledControl(string revision)
     {
-        if (revision == _revision) return;
-        _revision = revision;
-        _seenAt = now;
-        _lastDispatchAt = long.MinValue;
-        _attempts = 0;
+        if (Pending != null && revision == _revision) _controlWasDisabled = true;
     }
 
-    public bool CanDispatch(long now) => now - _seenAt >= 150 && _attempts < 3 &&
+    public void Observe(string revision, long now, bool preservePending = false)
+    {
+        if (revision == _revision && !_controlWasDisabled) return;
+        _revision = revision;
+        _controlWasDisabled = false;
+        _seenAt = now;
+        if (!preservePending)
+        {
+            _lastDispatchAt = long.MinValue;
+            Pending = null;
+        }
+    }
+
+    public bool ResultStillUnconfirmed(long now) => Pending != null &&
+        now - _lastDispatchAt >= InteractionTiming.GetRetryMilliseconds();
+
+    public void ClearReceipt() => Pending = null;
+
+    public bool IsStable(long now) => now - _seenAt >= 150;
+
+    public bool CanDispatch(long now, bool sameActionStillOffered = false) => (Pending == null || sameActionStillOffered) && IsStable(now) &&
         (_lastDispatchAt == long.MinValue || now - _lastDispatchAt >= InteractionTiming.GetRetryMilliseconds());
-    public bool Exhausted => _attempts >= 3;
-    public void Dispatched(long now) { _lastDispatchAt = now; _attempts++; }
+
+    public void RecordDispatch(long now, EntryDispatchReceipt? receipt = null)
+    {
+        _lastDispatchAt = now;
+        if (receipt.HasValue) Pending = receipt;
+    }
 }
 
 public static class EntryMenuChoice

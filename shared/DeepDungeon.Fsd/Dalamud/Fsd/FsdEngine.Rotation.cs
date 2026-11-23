@@ -20,7 +20,7 @@ internal partial class FsdEngine
         bool inCombat = Service.Condition[ConditionFlag.InCombat];
         _ddHost?.Context?.ObserveCombatState(inCombat);
         var hintSuppression = MasterPlayer.MechanicRuntime.MechanicExecutionState.ActionsBlocked;
-        if (IsRunActive && MasterPlayer.MechanicRuntime.EncounterPlanningSnapshotRegistry.Read() is { Hints: { } hints } snapshot
+        if (IsRunActive && _encounters.Read().Encounter is { Hints: { } hints } snapshot
             && snapshot.Territory == (ushort)Service.ClientState.TerritoryType
             && DateTime.UtcNow - snapshot.CapturedAt <= TimeSpan.FromMilliseconds(500))
         {

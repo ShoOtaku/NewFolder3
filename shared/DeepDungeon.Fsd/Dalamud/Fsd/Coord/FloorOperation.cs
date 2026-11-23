@@ -34,7 +34,7 @@ internal readonly record struct OpAuthority(bool Held, float HeldDt, float Maske
 /// forever: Retryable consumes budget, Unreachable/Blocked end the attempt
 /// differently, Terminal kills the operation outright.
 /// </summary>
-internal enum FailureKind { Retryable, Unreachable, Blocked, Terminal }
+internal enum FailureKind { Retryable, Unreachable, Blocked, Terminal, PassageRemoved, PassageUnobserved, PassageNoTransfer }
 
 /// <summary>
 /// Movement request an operation hands to the arbiter each tick — an
@@ -55,14 +55,14 @@ public readonly record struct MoveClaim(
 }
 
 /// <summary>Outcome of a navigation request at the native boundary.</summary>
-public enum NavOutcome { Moving, Arrived, Pending, Failed }
+public enum NavOutcome { Moving, Arrived, Pending, Failed, Unreachable }
+internal readonly record struct NavResult(NavOutcome Outcome, NavigationRegionExhaustion? Exhaustion = null);
 
 /// <summary>
 /// Thin shell over the legacy/native boundary. Operations only see this —
 /// they never call Service.*, nav helpers, or game structs directly.
 /// </summary>
 /// <summary>Result of a domain room finish.</summary>
-internal enum RoomFinishResult { Done, Deferred, Rejected }
 
 internal interface INativeBoundary
 {
@@ -71,9 +71,10 @@ internal interface INativeBoundary
     /// Shared verbs are interpreted by the boundary itself; unknown/profile
     /// verbs must return Failed — never silently drop or reinterpret.
     /// </summary>
-    NavOutcome Execute(IClaimVerb? verb);
+    NavResult Execute(IClaimVerb? verb);
     NavOutcome Navigate(Vector3 dest, float arrivalRadius);
     void CancelMovement();
+    float? RemainingDistance(Vector3 destination, float arrivalRadius) => null;
 
     /// <summary>Why the surface's last Navigate reported Failed, when the
     /// backend tracks a reason (bitmap: unreachable/retargeted/no-progress/
@@ -86,7 +87,7 @@ internal interface INativeBoundary
     bool IsChestTargetMissing(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot? evidence);
     bool TryChestInteract(ChestInteractionAttempt attempt, FloorObjectEvidenceSnapshot evidence,
         out ChestLifecycleSnapshot snapshot, out bool retry);
-    float ChestOpenTimeoutSeconds(RoomWaypoint waypoint);
+    float ChestOpenTimeoutSeconds(ChestInteractionTarget waypoint);
 
     /// <summary>Existing silver precondition (e.g. player HP threshold)
     /// behind native acceptance — the op waits, the service decides.
@@ -105,22 +106,14 @@ internal interface INativeBoundary
         => ChestOvercapProgress.Ready;
 
         /// <summary>Domain search planner surface; null when no executor is live.</summary>
-    ISearchBoundary? Search { get; }
+    SiteSearchBoundary? Search { get; }
 
-    /// <summary>Current clearing-chase destination, if any — wraps the
-    /// legacy chase helper + preferred-aggro bookkeeping inside the real
-    /// boundary so ops only see a position.</summary>
-    /// <summary>The full chase target — immutable leg endpoint, live
-    /// position, hitbox and identity — never a frozen position copy.</summary>
+    /// <summary>Current clearing target identity and observed position.</summary>
     EnemyChaseTarget? ChaseTarget(Vector3 playerPos, bool allowNewTargets);
 
     (Vector3 Position, float Radius)? SelectEncounterTarget(EncounterPlanningSnapshot snapshot) =>
         snapshot.Hints is { HasTargetDirective: true, AttackTarget: { } target } ? (target.Position, target.Radius) : null;
     float EncounterAttackRange => 3f;
-    /// <summary>Complete the current navigation leg ONLY for the expected
-    /// target — a stale op never consumes a newer target's leg.</summary>
-    void CompleteChaseLeg(ulong expectedTargetId) { }
-
 }
 
 /// <summary>Native-side chest position facts for a claim-only op —
@@ -132,63 +125,6 @@ internal readonly record struct ChestPositionObservation(
 
 internal readonly record struct QuotaSearchRoom(int RoomIndex, Vector3 Center);
 internal readonly record struct QuotaSearchResult(bool Available, QuotaSearchRoom? Room);
-
-internal interface ISearchBoundary
-{
-    // Independent of productive site work; progress belongs to this floor.
-    QuotaSearchResult NextQuotaSearchRoom(Vector3 playerPosition) => default;
-    void CompleteQuotaSearchRoom(int roomIndex, bool reached) { }
-    bool ExecutorComplete { get; }
-    RoomWaypoint? CurrentWaypoint { get; }
-    int? ContextRoomIndex { get; }
-    bool TryStartNextRoomSearch(Vector3 playerPos, FloorObjectEvidenceSnapshot? evidence);
-
-    /// <summary>Stable key of the search driver's current work head —
-    /// lets a legacy adapter bind child work to identity, not to whatever
-    /// the head happens to be at retire time. Default null for fakes.</summary>
-    string? CurrentWorkKey => null;
-
-    /// <summary>Record the waypoint's outcome (feeds the room outcome
-    /// snapshot — bare advancing leaves hoard/chest outcomes unresolved and
-    /// defers every room finish), then advance to the next waypoint.</summary>
-    void AdvanceWaypoint(RoomWaypoint waypoint, WaypointOutcomeKind outcome, string reason);
-
-    /// <summary>Identity-guarded advance: only applies the outcome when
-    /// the caller's captured key+waypoint still matches the current head —
-    /// a discarded child can never advance a newer head's work. Default
-    /// implementation keeps fakes compiling.</summary>
-    void AdvanceWaypoint(string? expectedWorkKey, RoomWaypoint waypoint, WaypointOutcomeKind outcome, string reason)
-    {
-        if (CurrentWorkKey == expectedWorkKey && CurrentWaypoint is { } current && current == waypoint)
-            AdvanceWaypoint(waypoint, outcome, reason);
-    }
-    Vector3? RoomCenter(int roomIndex);
-    void ClearRoomContext();
-
-    /// <summary>
-    /// Domain room finish: outcome snapshot → progress marks → plan
-    /// regeneration → context clear (the legacy FinalizeRoomSearch path).
-    /// Deferred = pending evidence, keep exploring; Rejected = no active
-    /// objective execution to apply outcomes to (terminal for this room —
-    /// force-advance, not a wait).
-    /// </summary>
-    RoomFinishResult FinishRoom();
-
-    /// <summary>Drop the current plan head so a forced finish can't rebuild
-    /// the same room — the bounded escape when FinishRoom stays deferred.</summary>
-    bool SkipPlanHead();
-
-    /// <summary>Center of the NEXT planned room after the current one — the
-    /// productive destination while a room finish defers on pending hoard
-    /// evidence (keep exploring, don't hold).</summary>
-    Vector3? NextRoomCenter();
-
-    /// <summary>Center of the next-hop room on the room-graph route from
-    /// <paramref name="fromRoom"/> toward <paramref name="toRoom"/> — the
-    /// honest cross-room step instead of a straight line through walls.
-    /// Null when no route exists or the rooms are already adjacent-same.</summary>
-    Vector3? NextHopRoomCenter(int fromRoom, int toRoom);
-}
 
 /// <summary>
 /// One typed unit of floor work bound to an objective. Lifecycle is owned by

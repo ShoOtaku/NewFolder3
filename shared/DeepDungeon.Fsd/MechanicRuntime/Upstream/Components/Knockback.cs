@@ -27,7 +27,9 @@ public abstract class GenericKnockback(BossModule module, uint aid = default, in
         float minDistance = default, // irrelevant for knockbacks
         IReadOnlyList<SafeWall>? safeWalls = null,
         ulong actorID = default,
-        bool ignoreImmunes = false
+        bool ignoreImmunes = false,
+        uint actionID = 0,
+        bool activationIsEffect = false
     )
     {
         public readonly WPos Origin = origin;
@@ -40,6 +42,8 @@ public abstract class GenericKnockback(BossModule module, uint aid = default, in
         public readonly SafeWall[] SafeWalls = safeWalls != null ? [.. safeWalls] : [];
         public readonly ulong ActorID = actorID;
         public readonly bool IgnoreImmunes = ignoreImmunes;
+        public readonly uint ActionID = actionID;
+        public readonly bool ActivationIsEffect = activationIsEffect;
     }
 
     public readonly struct SafeWall(WPos vertex1, WPos vertex2)
@@ -69,12 +73,19 @@ public abstract class GenericKnockback(BossModule module, uint aid = default, in
 
     protected virtual uint PathDependentImmunityStatus => 0;
 
-    internal void AddKnockbackPredictions(int slot, Actor actor, AIHints hints)
+    internal void AddKnockbackPredictions(int slot, Actor actor, AIHints hints, int firstZone)
     {
         if (MaxCasts <= 0) return;
         var conditional = PathDependentImmunityStatus;
         foreach (ref readonly var source in ActiveKnockbacks(slot, actor))
         {
+            // This component's restrictions at the launch timestamp describe
+            // where to stand for that displacement, not a permanent floor hazard.
+            // Other components' AoEs and persistent zones keep their own lifetime.
+            if (source.Activation != default && source.Activation != DateTime.MaxValue)
+                for (var i = firstZone; i < hints.ForbiddenZones.Count; ++i)
+                    if (hints.ForbiddenZones[i].activation == source.Activation)
+                        hints.ForbiddenZones[i] = hints.ForbiddenZones[i] with { SingleImpact = true };
             if (conditional == 0 && !source.IgnoreImmunes && IsImmune(slot, source.Activation)) continue;
             hints.Knockbacks.Add(new(source, StopAtWall, StopAfterWall, actor.HitboxRadius, conditional));
         }
@@ -311,7 +322,7 @@ public class SimpleKnockbacks(BossModule module, uint aid, float distance, bool 
         if (spell.Action.ID == WatchedAction)
         {
             var minDist = KnockbackKind == Kind.TowardsOrigin ? (MinDistance + (MinDistanceBetweenHitboxes ? Raid.Player()!.HitboxRadius + caster.HitboxRadius : default)) : MinDistance;
-            Casters.Add(new(spell.LocXZ, Distance, Module.CastFinishAt(spell), Shape, spell.Rotation, KnockbackKind, minDist, [], caster.InstanceID, IgnoreImmunes));
+            Casters.Add(new(spell.LocXZ, Distance, Module.CastFinishAt(spell), Shape, spell.Rotation, KnockbackKind, minDist, [], caster.InstanceID, IgnoreImmunes, spell.Action.ID, true));
         }
     }
 
@@ -347,7 +358,7 @@ public class SimpleKnockbackGroups(BossModule module, uint[] aids, float distanc
             if (spell.Action.ID == AIDs[i])
             {
                 var minDist = KnockbackKind == Kind.TowardsOrigin ? (MinDistance + (MinDistanceBetweenHitboxes ? Raid.Player()!.HitboxRadius + caster.HitboxRadius : default)) : default;
-                Casters.Add(new(spell.LocXZ, Distance, Module.CastFinishAt(spell), Shape, spell.Rotation, KnockbackKind, minDist, [], caster.InstanceID, IgnoreImmunes));
+                Casters.Add(new(spell.LocXZ, Distance, Module.CastFinishAt(spell), Shape, spell.Rotation, KnockbackKind, minDist, [], caster.InstanceID, IgnoreImmunes, spell.Action.ID, true));
                 return;
             }
         }
