@@ -16,7 +16,8 @@ internal static class PromeRadarFloorMovementTests
         LoadingAndFloorset();
         MissingReloadAndUserChange();
         FailureAndTimeout();
-        Console.WriteLine("PASS MP floor policy: all Palace/HoH floors, queued switch acknowledgement, live ownership release, reverse/stop compensation, original-state restoration, transitions, provider reload, manual override and IPC timeout.");
+        SessionLifecycle();
+        Console.WriteLine("PASS MP floor policy: all Palace/HoH floors, queued session/switch acknowledgement, live ownership release, reverse/stop compensation, original-state restoration, transitions, provider reload, manual override and IPC timeout.");
     }
 
     private static DeepDungeonStateSnapshot Floor(uint dungeon, int floor) =>
@@ -131,6 +132,9 @@ internal static class PromeRadarFloorMovementTests
         manual.Update(true, Floor(1, 10));
         h.Enabled = true; // The user changed the confirmed switch.
         int writes = h.Writes.Count;
+        Check(!manual.Update(false, Floor(1, 10)) && h.Writes.Count == writes,
+            "Stop failed to wait for session release or overwrote a user change.");
+        h.Apply();
         Check(manual.Update(false, Floor(1, 10)) && h.Writes.Count == writes,
             "Stop overwrote a user change after the last acknowledged write.");
     }
@@ -155,6 +159,78 @@ internal static class PromeRadarFloorMovementTests
         Check(h.Enabled, "Ambiguous write failure was not compensated during cleanup.");
     }
 
+    private static void SessionLifecycle()
+    {
+        foreach (bool original in new[] { false, true })
+        {
+            var h = new Harness(original) { Session = false };
+            using (var policy = h.Create())
+            {
+                Check(!policy.Update(true, Floor(1, 151)) && h.SessionWrites.SequenceEqual(new[] { true }),
+                    "Palace normal travel started before MP acknowledged FSD floor responsibility.");
+                h.Apply();
+                Check(policy.Update(true, Floor(1, 151)) && h.Session && h.Enabled, "MP did not acknowledge the normal-floor session.");
+                policy.Update(true, Floor(1, 160));
+                h.Apply();
+                Check(policy.Update(true, Floor(1, 160)) && h.Session && !h.Enabled,
+                    "Spin released the FSD session or failed to disable movement.");
+                policy.Update(true, Floor(1, 161));
+                h.Apply();
+                Check(policy.Update(true, Floor(1, 161)) && h.Session && h.Enabled,
+                    "Returning to ordinary floors lost floor delegation.");
+                var loading = Floor(1, 161) with { IsTransitioning = true };
+                policy.Update(true, loading);
+                policy.Update(true, new(true, false, false, 0, 0, DeepDungeonFloorKind.Unknown, false, 2));
+                Check(h.SessionWrites.SequenceEqual(new[] { true }), "Loading or floorset transitions released the FSD session.");
+                Check(!policy.Update(false, Floor(1, 161)), "Stop accepted an unapplied session release.");
+                h.Apply();
+                Check(policy.Update(false, Floor(1, 161)) && !h.Session && h.Enabled == original,
+                    "Stop lost session release or the original switch state.");
+            }
+            h = new Harness(original) { Session = false };
+            using (var policy = h.Create())
+            {
+                policy.Update(true, Floor(2, 51));
+                policy.Update(false, Floor(2, 51));
+                h.Apply();
+                Check(!h.Session && h.Enabled == original && h.SessionWrites.SequenceEqual(new[] { true, false }),
+                    "Stop failed to compensate an unapplied session acquisition.");
+            }
+            h = new Harness(original) { Session = false };
+            using (var policy = h.Create()) policy.Update(true, Floor(1, 151));
+            h.Apply();
+            Check(!h.Session && h.Enabled == original, "Dispose left a queued session or switch acquisition.");
+        }
+        var timeout = new Harness(true) { Session = false };
+        var terminal = new Harness(true) { Session = false };
+        using (var policy = terminal.Create())
+        {
+            policy.Update(true, Floor(1, 200));
+            terminal.Apply();
+            Check(policy.Update(true, Floor(1, 200)) && terminal.Session, "Terminal floor lost the FSD session.");
+            policy.Update(false, Floor(1, 200));
+            terminal.Apply();
+            Check(policy.Update(false, Floor(1, 200)) && !terminal.Session, "Stopping on a terminal floor leaked session ownership.");
+        }
+        using (var policy = timeout.Create())
+        {
+            policy.Update(true, Floor(1, 151));
+            timeout.Now = timeout.Now.AddSeconds(10);
+            CheckThrows(() => policy.Update(true, Floor(1, 151)), "Unacknowledged FSD session did not time out.");
+        }
+        var reloaded = new Harness(true) { Session = false };
+        using (var policy = reloaded.Create())
+        {
+            policy.Update(true, Floor(1, 151));
+            reloaded.Apply();
+            policy.Update(true, Floor(1, 151));
+            reloaded.Build = "new-mp";
+            reloaded.Session = false;
+            Check(!policy.Update(true, Floor(1, 151)) && reloaded.SessionWrites.Count == 2,
+                "A new MP provider did not receive its own FSD session handshake.");
+        }
+    }
+
     private static void CheckThrows(Action action, string message)
     {
         try { action(); }
@@ -171,27 +247,39 @@ internal static class PromeRadarFloorMovementTests
     {
         internal bool Enabled = enabled;
         internal bool Active;
+        internal bool Session = true;
         internal bool Available = true;
         internal string Build = "original";
         internal bool FailRead;
         internal bool FailWrite;
         internal DateTime Now = new(2026, 11, 23, 0, 0, 0, DateTimeKind.Utc);
         internal readonly List<bool> Writes = [];
+        internal readonly List<bool> SessionWrites = [];
         private readonly Queue<bool> queue = new();
+        private readonly Queue<bool> sessions = new();
+        private bool sessionOwnsSwitch;
 
         internal PromeRadarFloorMovement Create() => new(
-            () => FailRead ? throw new InvalidOperationException("read failed") : new(Available, Enabled, Active, Build),
+            () => FailRead ? throw new InvalidOperationException("read failed") : new(Available, Enabled, Active, Build, Session),
             value =>
             {
                 Writes.Add(value);
                 queue.Enqueue(value);
                 if (FailWrite) throw new InvalidOperationException("write failed after queue");
             },
+            value => { SessionWrites.Add(value); sessions.Enqueue(value); },
             (_, _) => { }, () => Now);
 
         internal void Apply()
         {
-            while (queue.TryDequeue(out bool next)) Enabled = next;
+            while (sessions.TryDequeue(out bool next))
+            {
+                if (Session == next) continue;
+                Session = next;
+                if (next) { sessionOwnsSwitch = !Enabled; Enabled = true; }
+                else { if (sessionOwnsSwitch) Enabled = false; sessionOwnsSwitch = false; }
+            }
+            while (queue.TryDequeue(out bool next)) { Enabled = next; sessionOwnsSwitch = false; }
         }
     }
 }

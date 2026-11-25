@@ -196,14 +196,17 @@ internal static class ReviewBoundaryTests
     private static void MpFloorSwitch()
     {
         var mp = new MpHarness { Live = false };
-        mp.State = mp.State with { BuildMvid = "mp-floor-switch-test" };
+        mp.State = mp.State with { BuildMvid = "mp-floor-switch-test", FsdSessionActive = false };
         mp.Install();
         using var policy = new PromeRadarFloorMovement(mp.Interface, (_, _) => { });
         var boss = new DeepDungeonStateSnapshot(true, true, true, 1, 10,
             DeepDungeonFloorKind.Boss, false, 1);
         Check(!policy.Update(true, boss) && mp.SwitchRequests.SequenceEqual(new[] { false }),
             "Floor policy failed to request the real smart movement setter.");
+        Check(mp.Sessions.SequenceEqual(new[] { true }), "Palace floor policy did not acquire the real FSD session endpoint.");
         mp.Switch = false;
+        Check(!policy.Update(true, boss), "A switch acknowledgement incorrectly substituted for session acknowledgement.");
+        mp.State = mp.State with { FsdSessionActive = true };
         Check(policy.Update(true, boss), "Floor policy ignored the scalar switch acknowledgement.");
         mp.Live = true;
         Check(!policy.Update(true, boss), "Floor policy trusted disabled cached state over a live movement owner.");
@@ -214,11 +217,16 @@ internal static class ReviewBoundaryTests
         mp.StateAvailable = false;
         Check(!policy.Update(true, boss), "Partially registered MP endpoints were mistaken for a fully absent provider.");
         mp.StateAvailable = true;
+        mp.SessionAvailable = false;
+        Check(!policy.Update(true, boss), "A missing FSD session endpoint was treated as ready.");
+        mp.SessionAvailable = true;
         Check(policy.Update(true, boss), "Healthy IPC did not recover after a temporary state failure.");
         policy.Update(false, boss);
+        Check(mp.Sessions.SequenceEqual(new[] { true, false }), "Stop failed to release the real FSD session endpoint.");
         Check(mp.SwitchRequests.SequenceEqual(new[] { false, true }),
             "Real IPC cleanup did not restore the original enabled switch.");
         mp.Switch = true;
+        mp.State = mp.State with { FsdSessionActive = false };
         Check(policy.Update(false, boss), "Restored IPC state was not acknowledged.");
     }
 
@@ -421,7 +429,7 @@ internal static class ReviewBoundaryTests
 
     private sealed class MpHarness
     {
-        internal bool Live = true, LiveAvailable = true, StateAvailable = true, FailLive, FailJson, FailSuspend;
+        internal bool Live = true, LiveAvailable = true, StateAvailable = true, SessionAvailable = true, FailLive, FailJson, FailSuspend;
         internal string? JsonOverride;
         internal int Suspensions;
         internal bool Switch = true;
@@ -447,7 +455,8 @@ internal static class ReviewBoundaryTests
                     else Sessions.Add((bool)values[0]!);
                     return null;
                 }
-                if (call.Name == "get_HasAction") return endpoint == "PromeRadar.SetSmartMovementEnabled";
+                if (call.Name == "get_HasAction") return endpoint == "PromeRadar.SetSmartMovementEnabled"
+                    || endpoint == "PromeRadar.SetFsdSessionActive" && SessionAvailable;
                 if (call.Name == "get_HasFunction") return endpoint == "PromeRadar.GetState" ? StateAvailable : LiveAvailable;
                 if (call.Name == "InvokeFunc")
                 {
